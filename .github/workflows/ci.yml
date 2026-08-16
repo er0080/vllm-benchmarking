@@ -149,8 +149,14 @@ jobs:
         #
         # --load-format dummy skips weight download; the field names and metric names
         # under test do not depend on the weights being real.
+        #
+        # --shm-size is required, not tuning. vLLM's engine core communicates over
+        # shared memory, and Docker's 64 MB default makes it fail at startup with an
+        # opaque "Engine core initialization failed". Colima's default is larger, which
+        # is why this passed locally and failed on the first CI run.
         run: |
           docker run -d --name vllm-cpu -p 8100:8000 \
+            --shm-size=4g \
             -e VLLM_CPU_KVCACHE_SPACE=2 \
             vllm/vllm-openai-cpu:v${{ steps.vllm.outputs.version }} \
             facebook/opt-125m --load-format dummy --max-model-len 512 \
@@ -166,7 +172,10 @@ jobs:
             fi
             if ! docker ps -q --filter name=vllm-cpu --filter status=running | grep -q .; then
               echo "::error::vLLM container exited during startup"
-              docker logs vllm-cpu | tail -50
+              echo "--- root cause (first error) ---"
+              docker logs vllm-cpu 2>&1 | grep -m5 -B2 -A8 -E "Error|error:|Exception" || true
+              echo "--- tail ---"
+              docker logs vllm-cpu 2>&1 | tail -40
               exit 1
             fi
             sleep 5
