@@ -47,7 +47,6 @@ from vllmbench_db.enums import (
     InitiatedBy,
     RunStatus,
     SweepStatus,
-    SyntheticSource,
 )
 
 
@@ -92,8 +91,15 @@ class GpuHost(Base):
 
     created_at: Mapped[dt.datetime] = created_at_column()
 
+    # lazy="raise_on_sql" throughout: under the async engine an implicit lazy load
+    # raises MissingGreenlet at runtime, in whatever request happens to touch it. This
+    # turns that into an immediate, obvious error at the point of the mistake and forces
+    # callers to say what they want loaded.
     devices: Mapped[list[GpuDevice]] = relationship(
-        back_populates="host", cascade="all, delete-orphan", order_by="GpuDevice.device_index"
+        back_populates="host",
+        cascade="all, delete-orphan",
+        order_by="GpuDevice.device_index",
+        lazy="raise_on_sql",
     )
 
 
@@ -213,7 +219,7 @@ class Sweep(Base):
     finished_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
     error: Mapped[str | None] = mapped_column(Text)
 
-    runs: Mapped[list[Run]] = relationship(back_populates="sweep")
+    runs: Mapped[list[Run]] = relationship(back_populates="sweep", lazy="raise_on_sql")
 
 
 class Run(Base):
@@ -283,9 +289,11 @@ class Run(Base):
         default=BenchClientLocation.LOOPBACK,
     )
     is_synthetic: Mapped[bool] = mapped_column(default=False, index=True)
-    synthetic_source: Mapped[SyntheticSource | None] = mapped_column(
-        _enum(SyntheticSource, "synthetic_source")
-    )
+    # Free text rather than an enum, deliberately. SyntheticSource lists the fakes we
+    # know about, but an agent reporting an unfamiliar one must still be quarantined —
+    # and with a native enum that insert would fail instead, turning "I do not recognise
+    # this fake" into "the run errors". Failing closed here means recording it.
+    synthetic_source: Mapped[str | None] = mapped_column(String(32))
 
     initiated_by: Mapped[InitiatedBy] = mapped_column(_enum(InitiatedBy, "initiated_by"))
     initiated_by_client: Mapped[str | None] = mapped_column(String(128))
@@ -295,9 +303,12 @@ class Run(Base):
     error: Mapped[str | None] = mapped_column(Text)
     log_excerpt: Mapped[str | None] = mapped_column(Text)
 
-    sweep: Mapped[Sweep | None] = relationship(back_populates="runs")
+    sweep: Mapped[Sweep | None] = relationship(back_populates="runs", lazy="raise_on_sql")
     summary: Mapped[RunSummary | None] = relationship(
-        back_populates="run", cascade="all, delete-orphan", uselist=False
+        back_populates="run",
+        cascade="all, delete-orphan",
+        uselist=False,
+        lazy="raise_on_sql",
     )
 
 
@@ -351,7 +362,7 @@ class RunSummary(Base):
 
     extra: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
 
-    run: Mapped[Run] = relationship(back_populates="summary")
+    run: Mapped[Run] = relationship(back_populates="summary", lazy="raise_on_sql")
 
 
 # ---------------------------------------------------------------------------

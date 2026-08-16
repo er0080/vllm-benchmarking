@@ -69,6 +69,10 @@ async def client(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[httpx.AsyncCl
     api_app.state.settings = ApiSettings(token=TOKEN)
 
     async with engine.begin() as connection:
+        # Order matters: runs reference hosts, and runs are measurements that outlive
+        # the host record by design.
+        await connection.execute(text("DELETE FROM run_summary"))
+        await connection.execute(text("DELETE FROM run"))
         await connection.execute(text("DELETE FROM gpu_device"))
         await connection.execute(text("DELETE FROM gpu_host"))
 
@@ -191,3 +195,41 @@ class TestRefresh:
     async def test_refresh_of_unknown_host_is_404(self, client: httpx.AsyncClient) -> None:
         missing = "00000000-0000-0000-0000-000000000000"
         assert (await client.post(f"/api/hosts/{missing}/refresh")).status_code == 404
+
+
+class TestDeletion:
+    async def test_deleting_an_unused_host_works(self, client: httpx.AsyncClient) -> None:
+        created = (
+            await client.post("/api/hosts", json={"name": "disposable", "agent_url": MOCK_URL})
+        ).json()
+        assert (await client.delete(f"/api/hosts/{created['id']}")).status_code == 204
+
+    async def test_a_host_with_runs_cannot_be_deleted(self, client: httpx.AsyncClient) -> None:
+        """Measurements outlive the hardware that produced them.
+
+        Cascading would delete recorded results; allowing the FK error through would be
+        a 500. Refusing with a reason is the only option that keeps invariant 6 intact —
+        a run must always be able to say what produced it.
+        """
+        host = (
+            await client.post("/api/hosts", json={"name": "in-use", "agent_url": MOCK_URL})
+        ).json()
+        config = (
+            await client.post("/api/configs", json={"name": "c", "yaml": "model: m\n"})
+        ).json()
+        workload = (
+            await client.post("/api/workloads", json={"name": "w", "num_prompts": 8})
+        ).json()
+        run = await client.post(
+            "/api/runs",
+            json={
+                "gpu_host_id": host["id"],
+                "server_config_id": config["id"],
+                "workload_id": workload["id"],
+            },
+        )
+        assert run.status_code == 202
+
+        response = await client.delete(f"/api/hosts/{host['id']}")
+        assert response.status_code == 409
+        assert "recorded run" in response.json()["detail"]

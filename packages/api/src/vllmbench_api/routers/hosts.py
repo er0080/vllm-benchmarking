@@ -13,7 +13,7 @@ import logging
 import uuid
 
 from fastapi import APIRouter, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -21,7 +21,7 @@ from sqlalchemy.orm import selectinload
 from vllmbench_api.deps import SessionDep, SettingsDep
 from vllmbench_api.reference import reference_vllm_version
 from vllmbench_api.schemas import HostCreate, HostFacts, HostOut
-from vllmbench_db.models import GpuDevice, GpuHost
+from vllmbench_db.models import GpuDevice, GpuHost, Run
 from vllmbench_protocol import (
     AgentAuthError,
     AgentClient,
@@ -154,6 +154,22 @@ async def delete_host(host_id: uuid.UUID, session: SessionDep) -> None:
     host = await session.get(GpuHost, host_id)
     if host is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="host not found")
+
+    # Runs are measurements. Deleting a host must never delete them, and it must not
+    # orphan their provenance either — a run has to keep being able to say what produced
+    # it (invariant 6). So this refuses rather than cascading.
+    run_count = await session.scalar(
+        select(func.count()).select_from(Run).where(Run.gpu_host_id == host_id)
+    )
+    if run_count:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"host has {run_count} recorded run(s) and cannot be deleted. "
+                "Runs are measurements; removing the host would strip their provenance."
+            ),
+        )
+
     await session.delete(host)
     await session.commit()
 

@@ -249,3 +249,95 @@ button.primary:hover:not(:disabled) {
   color: var(--text-muted);
   font-size: 0.85rem;
 }
+
+/* --- runs ------------------------------------------------------------------ */
+
+h3 {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  margin: 1.25rem 0 0.5rem;
+}
+
+.field-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+label.stacked {
+  margin-bottom: 0.75rem;
+}
+
+select,
+textarea {
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 0.9rem;
+  font-family: inherit;
+  width: 100%;
+}
+
+textarea {
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  resize: vertical;
+}
+
+tr.clickable {
+  cursor: pointer;
+}
+
+tr.clickable:hover td {
+  color: var(--accent);
+}
+
+/* Status colours carry meaning, so they must not be the only signal — the label is
+   always present alongside. */
+.status-queued,
+.status-starting,
+.status-benchmarking {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  color: var(--accent);
+}
+
+.status-succeeded {
+  background: color-mix(in srgb, #17803d 14%, transparent);
+  border-color: color-mix(in srgb, #17803d 45%, transparent);
+  color: #17803d;
+}
+
+:root:not([data-theme="light"]) {
+  @media (prefers-color-scheme: dark) {
+    .status-succeeded {
+      color: #4ade80;
+      border-color: color-mix(in srgb, #4ade80 40%, transparent);
+    }
+  }
+}
+
+:root[data-theme="dark"] .status-succeeded {
+  color: #4ade80;
+  border-color: color-mix(in srgb, #4ade80 40%, transparent);
+}
+
+.status-failed,
+.status-cancelled {
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  border-color: color-mix(in srgb, var(--danger) 45%, transparent);
+  color: var(--danger);
+}

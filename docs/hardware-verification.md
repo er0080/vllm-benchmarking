@@ -79,3 +79,49 @@ Check each field against `nvidia-smi` by hand. Specifically:
 
 A mismatch in any of these is a provenance bug, which under invariant 6 makes every run
 from that host invalid rather than merely mislabelled.
+
+---
+
+## 0.2.0 — Single run, end to end
+
+### vLLM server launch and readiness
+**File:** `packages/agent/src/vllmbench_agent/vllm_server.py`
+
+- **Verified:** the whole state machine against a fake `vllm` binary — start, readiness
+  polling, crash during load, never-becoming-ready, refusal of a second server, and
+  teardown including SIGKILL escalation. Also verified end to end against the mock agent.
+- **Not verified:** that a real `vllm serve --config` accepts the YAML we write, that a
+  real engine's `/v1/models` appears when we expect, and how long a genuine model load
+  takes relative to the 900s default timeout.
+- **How it could fail:** a config vLLM rejects would surface as "exited with code N"
+  with the reason only in the log tail. Worth reading that tail on the first real run.
+
+### Teardown actually frees VRAM
+**File:** `vllm_server.py`, `reaper.py`
+
+- **Verified:** the process tree is signalled and reaped; no process survives.
+- **Not verified:** that VRAM is actually released. Process exit and memory release are
+  not the same event, and a driver that holds allocations after exit would look identical
+  from the agent's side.
+- **How to check:** watch `nvidia-smi --query-gpu=memory.used --format=csv -l 1` across a
+  full run and confirm it returns to baseline after teardown.
+
+### Orphan reaping on a real host
+**File:** `reaper.py`
+
+- **Verified:** reaping, the stale-record path, and the refusal to kill an unverifiable
+  or recycled pid — all with fake processes.
+- **Not verified:** against a real multi-process vLLM. The worker processes are children
+  of the server, so signalling the group should cover them, but that has only been tested
+  against a single-process fake.
+- **How to check:** start a run, `kill -9` the agent, restart it, and confirm both the
+  server *and* its per-device workers are gone and VRAM is released.
+
+### Topology reporting
+**File:** `runner.py`, `vllm_server.py`
+
+- **Not verified:** the real agent does not yet extract `tensor_parallel_size` or device
+  indices from a running engine — only the mock echoes them. On real hardware a TP run
+  would currently record TP=1 unless the config is read back.
+- **This is a known gap, not a bug to discover.** It needs the engine's own report, and
+  the shape of that comes from seeing a real multi-GPU startup.

@@ -1,4 +1,4 @@
-import type { Host } from "./types";
+import type { Config, Host, Run, Workload } from "./types";
 
 const BASE = "/api";
 
@@ -51,3 +51,29 @@ export const api = {
 };
 
 export { RequestError };
+
+export const configsApi = {
+  list: () => request<Config[]>("/configs"),
+  create: (name: string, yaml: string) =>
+    request<Config>("/configs", { method: "POST", body: JSON.stringify({ name, yaml }) }),
+};
+
+export const workloadsApi = {
+  list: () => request<Workload[]>("/workloads"),
+  create: (body: Partial<Workload> & { name: string }) =>
+    request<Workload>("/workloads", { method: "POST", body: JSON.stringify(body) }),
+};
+
+export const runsApi = {
+  list: () => request<Run[]>("/runs"),
+  get: (id: string) => request<Run>(`/runs/${id}`),
+  create: (gpuHostId: string, serverConfigId: string, workloadId: string) =>
+    request<Run>("/runs", {
+      method: "POST",
+      body: JSON.stringify({
+        gpu_host_id: gpuHostId,
+        server_config_id: serverConfigId,
+        workload_id: workloadId,
+      }),
+    }),
+};
