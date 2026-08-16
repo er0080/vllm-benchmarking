@@ -17,3 +17,16 @@ class AgentSettings(BaseSettings):
     port: int = 9110
 
     log_level: str = "INFO"
+
+    # Absolute path to the `vllm` executable, for the case where the agent is installed
+    # somewhere other than the vLLM environment.
+    #
+    # Normally leave this unset and install the agent into the vLLM venv — every one of
+    # the agent's dependencies is already there (vLLM's server is itself a FastAPI and
+    # uvicorn app using pydantic, psutil and NVML), so it adds two pure-Python packages
+    # and pulls in nothing new.
+    #
+    # When isolation is genuinely required, set this rather than manipulating PATH. PATH
+    # is invisible in `ps`, silently lost across systemd units, tmux sessions and
+    # reboots, and when wrong it produces a confusing null version rather than an error.
+    vllm_bin: str = ""

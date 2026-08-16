@@ -27,7 +27,7 @@ from pathlib import Path
 
 import httpx
 
-from vllmbench_agent.hardware import devices_for_process
+from vllmbench_agent.hardware import devices_for_process, resolve_vllm_binary
 from vllmbench_agent.reaper import TERM_GRACE_SECONDS, ProcessRegistry
 from vllmbench_protocol.wire import ServerState, ServerStatus
 
@@ -89,8 +89,9 @@ class VllmServer:
     measure the contention rather than either configuration.
     """
 
-    def __init__(self, registry: ProcessRegistry | None = None) -> None:
+    def __init__(self, registry: ProcessRegistry | None = None, vllm_bin: str = "") -> None:
         self._registry = registry or ProcessRegistry()
+        self._vllm_bin = vllm_bin
         self._lock = asyncio.Lock()
 
         self._process: subprocess.Popen[str] | None = None
@@ -105,6 +106,7 @@ class VllmServer:
         self._ready_at: float | None = None
         self._error: str | None = None
         self._engine_version: str | None = None
+        self._served_model_name: str | None = None
         self._device_indices: list[int] | None = None
         self._declared_tp: int | None = None
         self._declared_pp: int | None = None
@@ -126,6 +128,7 @@ class VllmServer:
             error=self._error,
             log_tail=list(self._log),
             vllm_version=self._engine_version,
+            served_model_name=self._served_model_name,
             device_indices=self._device_indices,
             tensor_parallel_size=self._declared_tp,
             pipeline_parallel_size=self._declared_pp,
@@ -159,11 +162,12 @@ class VllmServer:
                     "stop it before starting another"
                 )
 
-            executable = shutil.which("vllm")
+            executable = resolve_vllm_binary(self._vllm_bin)
             if executable is None:
                 raise ServerError(
-                    "`vllm` not found on PATH. The agent must be installed into the same "
-                    "environment as vLLM."
+                    "no `vllm` executable found. Install the agent into the vLLM "
+                    "environment (it adds no new dependencies), or set VLLMBENCH_VLLM_BIN "
+                    "to the absolute path of the vllm executable."
                 )
 
             self._reset()
@@ -333,6 +337,10 @@ class VllmServer:
                         # registered, and benchmarking then measures the loader.
                         models = await client.get(f"{url}/v1/models")
                         if models.status_code == 200 and models.json().get("data"):
+                            # Captured here rather than parsed from the config: a config
+                            # with `served-model-name` answers under the alias, and
+                            # requesting the HF id would 404 every benchmark.
+                            self._served_model_name = models.json()["data"][0]["id"]
                             self._state = ServerState.READY
                             self._ready_at = time.time()
                             elapsed = self._ready_at - (self._started_at or self._ready_at)

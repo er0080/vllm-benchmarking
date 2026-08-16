@@ -313,3 +313,52 @@ class TestClaiming:
         second = await claim_next_run(session)
         assert first is not None
         assert second is None
+
+
+class TestServedModelName:
+    """A config's `model:` is not necessarily the name the API answers to.
+
+    Taken from a real config on the first GPU host: `model: Qwen/Qwen3.8-27B-FP8` with
+    `served-model-name: Qwen3.8-27B`. The server's /v1/models reports only the alias, so
+    benchmarking the HF id would 404 every run. The mock never produced this because its
+    configs had no alias.
+    """
+
+    async def test_alias_is_preferred_over_the_weights_path(
+        self, session: AsyncSession, route_to_mock
+    ) -> None:
+        route_to_mock(create_mock_app(token=TOKEN))
+        run = await _seed(session)
+        config = await session.get(ServerConfig, run.server_config_id)
+        assert config is not None
+        config.yaml = (
+            "model: Qwen/Qwen3.8-27B-FP8\nserved-model-name: Qwen3.8-27B\ntensor-parallel-size: 2\n"
+        )
+        await session.commit()
+
+        claimed = await claim_next_run(session)
+        assert claimed is not None
+        await execute_run(session, claimed, TOKEN)
+
+        finished = await session.get(Run, claimed.id)
+        assert finished is not None
+        assert finished.status is RunStatus.SUCCEEDED, finished.error
+        assert finished.raw_result is not None
+        # The benchmark ran against the alias the engine actually serves.
+        assert finished.raw_result["model_id"] == "Qwen3.8-27B"
+
+    async def test_hyphenated_keys_are_understood(self) -> None:
+        # Real vLLM configs use hyphens; ours used underscores. Both are accepted by
+        # vLLM, so both must be accepted here.
+        from vllmbench_orchestrator.runner import _model_from_config
+
+        config = ServerConfig(
+            config_hash="a" * 64, name="c", yaml="served-model-name: aliased\nmodel: w/p\n"
+        )
+        assert _model_from_config(config) == "aliased"
+
+    async def test_plain_model_still_works(self) -> None:
+        from vllmbench_orchestrator.runner import _model_from_config
+
+        config = ServerConfig(config_hash="b" * 64, name="c", yaml="model: facebook/opt-125m\n")
+        assert _model_from_config(config) == "facebook/opt-125m"

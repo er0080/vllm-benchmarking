@@ -144,12 +144,27 @@ this framework exists to answer. Multi-node deployments are out of scope for 1.0
 > Not yet implemented — see [ROADMAP.md](ROADMAP.md) milestone 0.2.0.
 > This section describes the intended interface.
 
-**On the GPU host**, install and start the agent inside the vLLM environment:
+**On the GPU host**, install the agent **into the vLLM environment**:
 
 ```bash
-uv pip install vllmbench-agent
-vllmbench-agent serve --host 0.0.0.0 --port 9110 --token "$VLLMBENCH_TOKEN"
+git clone https://github.com/er0080/vllm-benchmarking.git
+cd vllm-benchmarking
+source /path/to/your/vllm-env/.venv/bin/activate
+uv pip install ./packages/protocol ./packages/agent
+
+VLLMBENCH_TOKEN=... vllmbench-agent
 ```
+
+Installing into the vLLM environment rather than beside it is deliberate, and it adds
+nothing: vLLM's server is itself a FastAPI and uvicorn application using pydantic,
+psutil and NVML, so every one of the agent's dependencies is already present. Only the
+two small pure-Python packages above get added.
+
+If isolation is genuinely required — a shared host, an immutable environment — install
+the agent elsewhere and set `VLLMBENCH_VLLM_BIN` to the absolute path of the `vllm`
+executable. Do **not** solve it by putting the vLLM venv on `PATH`: that is invisible in
+`ps`, silently lost across systemd units, tmux sessions and reboots, and when wrong it
+yields a confusing null version rather than an error.
 
 **On the control host**, bring up the stack:
 

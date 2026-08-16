@@ -124,6 +124,9 @@ def create_app(token: str | None = None, protocol_version: int = PROTOCOL_VERSIO
             ready_at=state["ready_at"],  # type: ignore[arg-type]
             log_tail=["INFO synthetic vLLM: no real engine was started"],
             vllm_version=MOCK_VLLM_VERSION if state["state"] is ServerState.READY else None,
+            served_model_name=_served_name_from_config(state["config_yaml"])  # type: ignore[arg-type]
+            if state["state"] is ServerState.READY
+            else None,
             tensor_parallel_size=_tp_from_config(state["config_yaml"]),  # type: ignore[arg-type]
             pipeline_parallel_size=1,
             # Mirrors the real agent: devices are the ones "observed" to be in use, and
@@ -192,6 +195,28 @@ def create_app(token: str | None = None, protocol_version: int = PROTOCOL_VERSIO
         )
 
     return app
+
+
+def _served_name_from_config(config_yaml: str | None) -> str | None:
+    """Echo the alias a real engine would serve under.
+
+    The real agent reads this from /v1/models. The mock has no engine, so it derives the
+    same answer from the config — which keeps the control plane's "prefer the served
+    name" path exercised without hardware.
+    """
+    if not config_yaml:
+        return None
+    found: dict[str, str] = {}
+    for line in config_yaml.splitlines():
+        key, sep, value = line.partition(":")
+        if not sep:
+            continue
+        name = key.strip().replace("-", "_")
+        if name in ("model", "served_model_name"):
+            cleaned = value.strip().strip("\"'")
+            if cleaned:
+                found[name] = cleaned
+    return found.get("served_model_name") or found.get("model")
 
 
 def _tp_from_config(config_yaml: str | None) -> int:

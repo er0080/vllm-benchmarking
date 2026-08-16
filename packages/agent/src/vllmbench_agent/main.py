@@ -47,7 +47,7 @@ def create_app(settings: AgentSettings | None = None) -> FastAPI:
     settings = settings or AgentSettings()  # type: ignore[call-arg]
     started_at = time.monotonic()
     require_token = token_dependency(settings.token)
-    server = VllmServer()
+    server = VllmServer(vllm_bin=settings.vllm_bin)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -90,7 +90,7 @@ def create_app(settings: AgentSettings | None = None) -> FastAPI:
             # control plane decides what to do with a host that reports no devices.
             log.warning("no NVIDIA devices detected on this host")
 
-        vllm_version, probe_detail = probe_vllm_version()
+        vllm_version, probe_detail = probe_vllm_version(settings.vllm_bin)
         return HostInfo(
             protocol_version=PROTOCOL_VERSION,
             agent_version=__version__,
@@ -147,7 +147,9 @@ def create_app(settings: AgentSettings | None = None) -> FastAPI:
             await server.reset_caches()
 
         try:
-            return await run_benchmark(request, base_url=server.base_url())
+            return await run_benchmark(
+                request, base_url=server.base_url(), vllm_bin=settings.vllm_bin
+            )
         except BenchError as exc:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
