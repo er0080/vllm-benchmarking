@@ -163,16 +163,20 @@ jobs:
         # float32 works everywhere, and opt-125m is small enough that the cost is
         # irrelevant. Nothing under test depends on the dtype.
         #
-        # Thread count is pinned. vLLM's CPU backend sizes its OpenMP pool from the
-        # visible core count, which on a shared 4-core runner oversubscribes badly; the
-        # worker then dies during startup and the engine core reports only a downstream
-        # "cancelled" from its shared-memory read. Locally this never reproduces, which
-        # is itself the evidence: 6 idle cores versus 4 contended ones.
+        # SYS_NICE is load-bearing, not tuning. vLLM's CPU backend binds NUMA memory
+        # during worker init via set_mempolicy and migrate_pages, which Docker's default
+        # seccomp profile gates on CAP_SYS_NICE. Denied, they log only as warnings — and
+        # then the worker dies during "Warming up model for the compilation" with no
+        # further explanation, which is why three earlier rounds of diagnosis pointed at
+        # the wrong things. vLLM's own docs reach for a much broader grant here; this is
+        # the narrow capability that actually covers those syscalls.
         #
-        # --enforce-eager removes torch.compile from the startup path. It saves only ~3s
-        # locally, but it removes a source of variance rather than a source of latency.
+        # Thread count is pinned so the OpenMP pool does not size itself from a shared
+        # runner's core count, and --enforce-eager keeps torch.compile out of the startup
+        # path. Both reduce variance rather than latency.
         run: |
           docker run -d --name vllm-cpu -p 8100:8000 \
+            --cap-add=SYS_NICE \
             --shm-size=4g \
             -e VLLM_CPU_KVCACHE_SPACE=2 \
             -e VLLM_CPU_OMP_THREADS_BIND=0-1 \
