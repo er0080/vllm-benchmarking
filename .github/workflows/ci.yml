@@ -154,13 +154,21 @@ jobs:
         # shared memory, and Docker's 64 MB default makes it fail at startup with an
         # opaque "Engine core initialization failed". Colima's default is larger, which
         # is why this passed locally and failed on the first CI run.
+        #
+        # --dtype float32, not bfloat16. The CPU-feature question that the multi-arch
+        # image was supposed to settle reappears here: oneDNN cannot build a bf16 matmul
+        # primitive on CPUs without bf16 support, and the worker dies with a message
+        # that names oneDNN rather than the dtype. Apple Silicon has bf16, GitHub's x86
+        # runners do not — the same split that made the first two failures local-only.
+        # float32 works everywhere, and opt-125m is small enough that the cost is
+        # irrelevant. Nothing under test depends on the dtype.
         run: |
           docker run -d --name vllm-cpu -p 8100:8000 \
             --shm-size=4g \
             -e VLLM_CPU_KVCACHE_SPACE=2 \
             vllm/vllm-openai-cpu:v${{ steps.vllm.outputs.version }} \
             facebook/opt-125m --load-format dummy --max-model-len 512 \
-            --max-num-seqs 8 --dtype bfloat16
+            --max-num-seqs 8 --dtype float32
 
       - name: Wait for readiness
         # Poll /health rather than sleeping. Model load time varies with runner load,
