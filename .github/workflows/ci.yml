@@ -181,6 +181,7 @@ jobs:
             -e VLLM_CPU_KVCACHE_SPACE=2 \
             -e VLLM_CPU_OMP_THREADS_BIND=0-1 \
             -e OMP_NUM_THREADS=2 \
+            -e ONEDNN_MAX_CPU_ISA=AVX2 \
             vllm/vllm-openai-cpu:v${{ steps.vllm.outputs.version }} \
             facebook/opt-125m --load-format dummy --max-model-len 256 \
             --max-num-seqs 4 --dtype float32 --enforce-eager
