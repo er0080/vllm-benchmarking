@@ -1,0 +1,247 @@
+name: CI
+
+# Two tiers, neither needing a GPU. See CLAUDE.md, "Testing".
+#
+# There is deliberately no hardware tier and no self-hosted runner: the GPU host is the
+# system under test, and anything running there during a sweep corrupts the measurement
+# in flight.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  UV_VERSION: "0.12.1"
+
+jobs:
+  # --- Tier 1 -------------------------------------------------------------------
+  # Lint, types, unit tests. No services. Fast enough to gate every push.
+
+  tier1:
+    name: Tier 1 — lint, types, unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install
+        run: |
+          uv sync --all-packages --frozen
+          cd web && npm ci
+
+      - name: Package versions match VERSION
+        run: python3 scripts/check_versions.py
+
+      - name: Lint
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+
+      - name: Types
+        run: |
+          uv run pyright
+          cd web && npx tsc --noEmit
+
+      - name: Unit tests
+        run: uv run pytest -m "not integration and not vllm_cpu"
+
+      - name: Web build
+        run: cd web && npm run build
+
+  # --- Tier 2a ------------------------------------------------------------------
+  # Real Postgres. Migrations from empty, then integration tests.
+
+  integration:
+    name: Tier 2 — postgres and migrations
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: vllmbench
+          POSTGRES_PASSWORD: vllmbench
+          POSTGRES_DB: vllmbench
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U vllmbench -d vllmbench"
+          --health-interval 3s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgresql+psycopg://vllmbench:vllmbench@localhost:5432/vllmbench
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+
+      - name: Install
+        run: uv sync --all-packages --frozen
+
+      - name: Migrate from empty
+        working-directory: packages/db
+        run: uv run alembic upgrade head
+
+      - name: Migrations are idempotent
+        working-directory: packages/db
+        run: uv run alembic upgrade head
+
+      - name: No un-migrated model changes
+        working-directory: packages/db
+        # A model edited without a migration passes every test locally and then fails on
+        # a fresh database. Autogenerate must find nothing to do.
+        run: |
+          uv run alembic check
+
+      - name: Integration tests
+        run: uv run pytest -m integration
+
+  # --- Tier 2b ------------------------------------------------------------------
+  # Real vLLM on the CPU backend. The only automated check against actual vLLM
+  # anywhere in this project, so a failure here is blocking, not flaky.
+
+  vllm-contract:
+    name: Tier 2 — real vLLM contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+
+      - name: Install
+        run: uv sync --all-packages --frozen
+
+      - name: Read pinned vLLM version
+        id: vllm
+        run: |
+          VERSION=$(grep -v '^#' VLLM_REFERENCE_VERSION | grep -v '^$' | head -1 | tr -d '[:space:]')
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Pinned to vLLM ${VERSION}"
+
+      - name: Start vLLM CPU backend
+        # The published multi-arch image rather than CPU wheels: it sidesteps runner
+        # CPU-feature detection entirely and is the same artifact developers run locally
+        # on Apple Silicon.
+        #
+        # --load-format dummy skips weight download; the field names and metric names
+        # under test do not depend on the weights being real.
+        run: |
+          docker run -d --name vllm-cpu -p 8100:8000 \
+            -e VLLM_CPU_KVCACHE_SPACE=2 \
+            vllm/vllm-openai-cpu:v${{ steps.vllm.outputs.version }} \
+            facebook/opt-125m --load-format dummy --max-model-len 512 \
+            --max-num-seqs 8 --dtype bfloat16
+
+      - name: Wait for readiness
+        # Poll /health rather than sleeping. Model load time varies with runner load,
+        # and a fixed sleep is either flaky or wasteful.
+        run: |
+          for i in $(seq 1 120); do
+            if [ "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8100/health)" = "200" ]; then
+              echo "ready after ~$((i*5))s"; exit 0
+            fi
+            if ! docker ps -q --filter name=vllm-cpu --filter status=running | grep -q .; then
+              echo "::error::vLLM container exited during startup"
+              docker logs vllm-cpu | tail -50
+              exit 1
+            fi
+            sleep 5
+          done
+          echo "::error::vLLM did not become ready"
+          docker logs vllm-cpu | tail -50
+          exit 1
+
+      - name: Produce a real benchmark result
+        run: |
+          docker exec vllm-cpu vllm bench serve \
+            --backend vllm --model facebook/opt-125m \
+            --dataset-name random --num-prompts 8 \
+            --random-input-len 32 --random-output-len 16 \
+            --max-concurrency 2 \
+            --save-result --result-filename /tmp/bench.json
+          docker cp vllm-cpu:/tmp/bench.json "${RUNNER_TEMP}/bench.json"
+
+      - name: Contract tests
+        env:
+          VLLM_CPU_BASE_URL: http://localhost:8100
+          VLLM_BENCH_RESULT: ${{ runner.temp }}/bench.json
+        run: uv run pytest -m vllm_cpu
+
+      - name: Upload the live payload
+        # Kept as an artifact so a contract failure can be diagnosed from the actual
+        # bytes rather than by re-running and hoping to reproduce.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vllm-bench-result
+          path: ${{ runner.temp }}/bench.json
+          if-no-files-found: warn
+
+      - name: vLLM logs on failure
+        if: failure()
+        run: docker logs vllm-cpu | tail -100
+
+  # --- Tier 2c ------------------------------------------------------------------
+  # Image builds. The only thing that validates the inter-package dependency graph:
+  # `uv sync --all-packages` puts everything in one venv locally, so a package that
+  # imports another without declaring it resolves fine until it is built alone.
+
+  images:
+    name: Tier 2 — image builds
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [vllmbench-db, vllmbench-api, vllmbench-orchestrator, vllmbench-mockagent]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v3
+      - name: Build ${{ matrix.package }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/python.Dockerfile
+          build-args: PACKAGE=${{ matrix.package }}
+          push: false
+          cache-from: type=gha,scope=${{ matrix.package }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.package }}
+
+  web-image:
+    name: Tier 2 — web image
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/web.Dockerfile
+          push: false
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,mode=max,scope=web

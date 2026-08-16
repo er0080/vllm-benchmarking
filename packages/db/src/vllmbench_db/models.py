@@ -316,6 +316,7 @@ class RunSummary(Base):
     )
 
     successful_requests: Mapped[int | None] = mapped_column(Integer)
+    failed_requests: Mapped[int | None] = mapped_column(Integer)
     benchmark_duration_sec: Mapped[float | None] = mapped_column()
     total_input_tokens: Mapped[int | None] = mapped_column(BigInteger)
     total_generated_tokens: Mapped[int | None] = mapped_column(BigInteger)
@@ -323,6 +324,8 @@ class RunSummary(Base):
     request_throughput_req_sec: Mapped[float | None] = mapped_column()
     output_token_throughput_tok_sec: Mapped[float | None] = mapped_column()
     total_token_throughput_tok_sec: Mapped[float | None] = mapped_column()
+    peak_output_token_throughput_tok_sec: Mapped[float | None] = mapped_column()
+    peak_concurrent_requests: Mapped[float | None] = mapped_column()
 
     # Invariant 8. Stored rather than computed at read time so that every consumer —
     # UI, MCP tools, CSV export — gets the same normalization instead of each dividing
@@ -334,14 +337,17 @@ class RunSummary(Base):
     ttft_ms_mean: Mapped[float | None] = mapped_column()
     ttft_ms_median: Mapped[float | None] = mapped_column()
     ttft_ms_p99: Mapped[float | None] = mapped_column()
+    ttft_ms_std: Mapped[float | None] = mapped_column()
 
     tpot_ms_mean: Mapped[float | None] = mapped_column()
     tpot_ms_median: Mapped[float | None] = mapped_column()
     tpot_ms_p99: Mapped[float | None] = mapped_column()
+    tpot_ms_std: Mapped[float | None] = mapped_column()
 
     itl_ms_mean: Mapped[float | None] = mapped_column()
     itl_ms_median: Mapped[float | None] = mapped_column()
     itl_ms_p99: Mapped[float | None] = mapped_column()
+    itl_ms_std: Mapped[float | None] = mapped_column()
 
     extra: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
 
@@ -368,10 +374,15 @@ class EngineSample(Base):
     sampled_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True))
 
     kv_cache_usage_pct: Mapped[float | None] = mapped_column()
-    prefix_cache_hit_rate: Mapped[float | None] = mapped_column()
     num_requests_running: Mapped[int | None] = mapped_column(Integer)
     num_requests_waiting: Mapped[int | None] = mapped_column(Integer)
+
+    # Counters, stored raw. vLLM exposes no hit-rate gauge — only these two totals — and
+    # storing a rate computed at sample time would discard the information needed to
+    # difference it across an arbitrary window later.
     num_preemptions_total: Mapped[int | None] = mapped_column(BigInteger)
+    prefix_cache_queries_total: Mapped[int | None] = mapped_column(BigInteger)
+    prefix_cache_hits_total: Mapped[int | None] = mapped_column(BigInteger)
 
     raw: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
 
