@@ -33,15 +33,38 @@ This framework:
 The stack is split across two hosts by design. The control plane carries no GPU
 dependency and imposes no measurable load on the system under test.
 
-```
-CONTROL HOST  (Docker Compose, no GPU)          GPU HOST  (uv/venv, no Docker)
-┌───────────────────────────────────────┐       ┌─────────────────────────────────┐
-│  web            React + Vite + ECharts│       │  vllmbench-agent   (FastAPI)    │
-│  api            FastAPI, JSON only    │◄─────►│    ├─ vllm serve      subprocess│
-│  orchestrator   sweep state machine   │ HTTP  │    ├─ vllm bench serve subprocess│
-│  postgres       results + configs     │ +token│    ├─ /metrics scraper          │
-│  migrate        one-shot schema init  │       │    └─ NVML sampler              │
-└───────────────────────────────────────┘       └─────────────────────────────────┘
+```mermaid
+flowchart LR
+  subgraph control["Control Host — Docker Compose, no GPU"]
+    direction TB
+    web["web<br/>React + Vite + ECharts"]
+    api["api<br/>FastAPI, JSON only"]
+    orch["orchestrator<br/>sweep state machine"]
+    migrate["migrate<br/>one-shot schema init"]
+    pg[("postgres<br/>results + configs")]
+    web --> api
+    api --> pg
+    api <--> orch
+    orch --> pg
+    migrate --> pg
+  end
+
+  subgraph gpuhost["GPU Host — uv/venv, no Docker, 1..N GPUs"]
+    direction TB
+    agent["vllmbench-agent<br/>FastAPI"]
+    serve["vllm serve<br/>subprocess"]
+    bench["vllm bench serve<br/>subprocess"]
+    scraper["metrics scraper"]
+    nvml["NVML sampler<br/>per GPU"]
+    agent --> serve
+    agent --> bench
+    agent --> scraper
+    agent --> nvml
+    bench -.->|loopback| serve
+    scraper -.->|"/metrics"| serve
+  end
+
+  orch <-->|"HTTP + token"| agent
 ```
 
 ### Why this split
@@ -76,9 +99,13 @@ Sampled from the vLLM `/metrics` Prometheus endpoint for the duration of each ru
 - Preemption counts
 
 ### GPU telemetry
-Sampled via NVML on the GPU host:
+Sampled via NVML for **every GPU** participating in the run, attributed per device:
 
 - SM utilization, memory used, power draw, temperature, clock speeds
+
+Per-device attribution is what makes tensor parallelism analyzable. A TP=4 run where one
+device sits at 60% utilization while three sit at 95% is telling you something a
+host-level average would hide entirely.
 
 The last two categories are the point. A p99 TTFT number tells you a configuration lost.
 KV cache pressure and queue depth tell you *why*, which is what makes the next
@@ -100,12 +127,13 @@ colima start --cpu 4 --memory 8 --disk 60
 ```
 
 ### GPU host
-- NVIDIA GPU with a working driver
+- One or more NVIDIA GPUs on a single host, with a working driver
 - Python environment managed by `uv` with vLLM installed
 - Network reachability from the control host on the agent port
 
-Single-GPU targets are the supported configuration. Multi-GPU and multi-host are out of
-scope for 1.0.0.
+Single-host multi-GPU is supported, and **tensor parallel size is a first-class sweep
+dimension** — "is TP=2 on two GPUs better than two independent TP=1 servers" is a question
+this framework exists to answer. Multi-node deployments are out of scope for 1.0.0.
 
 ---
 
@@ -129,24 +157,6 @@ docker compose up -d
 ```
 
 Open http://localhost:8080, register the GPU host, and author your first sweep.
-
----
-
-## Repository layout
-
-```
-.
-├── agent/          vllmbench-agent — uv package deployed to the GPU host
-├── api/            FastAPI control-plane service
-├── orchestrator/   sweep execution state machine
-├── web/            React + Vite + ECharts frontend
-├── db/             schema migrations
-├── configs/        vLLM YAML server configurations
-├── docs/           standard work, tuning playbook, ADRs
-├── compose.yaml
-├── CLAUDE.md       working agreements for AI-assisted development
-└── ROADMAP.md      milestones to 1.0.0
-```
 
 ---
 
