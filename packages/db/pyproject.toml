@@ -1,0 +1,17 @@
+[project]
+name = "vllmbench-db"
+version = "0.1.0"
+description = "SQLAlchemy models and Alembic migrations for the results store"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "sqlalchemy[asyncio]>=2.0",
+    "alembic>=1.14",
+    "psycopg[binary]>=3.2",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/vllmbench_db"]

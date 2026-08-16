@@ -1,0 +1,91 @@
+[project]
+name = "vllm-benchmarking"
+version = "0.1.0"
+description = "Benchmarking and tuning framework for locally-hosted LLMs served by vLLM"
+requires-python = ">=3.11,<3.14"
+dependencies = []
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[tool.uv.sources]
+vllmbench-protocol = { workspace = true }
+vllmbench-db = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "ruff>=0.14",
+    "pyright>=1.1.400",
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=6.0",
+    "httpx>=0.28",
+]
+
+# ---------------------------------------------------------------------------
+# Lint and format
+# ---------------------------------------------------------------------------
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["packages/*/src"]
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # pyflakes
+    "I",      # isort
+    "B",      # bugbear
+    "UP",     # pyupgrade
+    "ASYNC",  # async correctness
+    "S",      # bandit
+    "DTZ",    # naive datetime use
+    "RUF",
+]
+ignore = [
+    "S101",  # assert is fine in tests
+]
+
+[tool.ruff.lint.per-file-ignores]
+"**/tests/**" = ["S", "B011"]
+
+[tool.ruff.lint.isort]
+known-first-party = [
+    "vllmbench_protocol",
+    "vllmbench_db",
+    "vllmbench_api",
+    "vllmbench_orchestrator",
+    "vllmbench_agent",
+    "vllmbench_mockagent",
+]
+
+# ---------------------------------------------------------------------------
+# Types
+# ---------------------------------------------------------------------------
+
+[tool.pyright]
+pythonVersion = "3.11"
+typeCheckingMode = "standard"
+include = ["packages"]
+exclude = ["**/__pycache__", "**/.venv"]
+reportMissingImports = "error"
+reportUnnecessaryTypeIgnoreComment = "warning"
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["packages"]
+addopts = "-q --strict-markers"
+markers = [
+    "integration: requires postgres or a running service",
+    "vllm_cpu: requires the vLLM CPU backend container",
+]
+filterwarnings = ["error::DeprecationWarning"]
