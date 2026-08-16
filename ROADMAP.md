@@ -171,6 +171,11 @@ produced inside it can be handed to someone who does not run it.
 
 ## 0.9.0 — Hardening
 
+Process rigor steps up here too: from this milestone every PR traces to a labeled,
+milestoned issue. Through 0.8.0 issues are optional, favoring iteration speed while the
+architecture is still moving.
+
+- [ ] Issue-driven change management in effect — see CLAUDE.md
 - [ ] Schema stabilized; forward-only migrations from here
 - [ ] Failure handling: agent unreachable, vLLM OOM, model load failure, benchmark timeout
 - [ ] Disk and retention management for raw results and logs
