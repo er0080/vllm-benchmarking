@@ -4,6 +4,9 @@ version = "0.1.0"
 description = "SQLAlchemy models and Alembic migrations for the results store"
 requires-python = ">=3.11,<3.14"
 dependencies = [
+    # Not just for __version__: lockstep versioning means the results store and the wire
+    # protocol are released together, and db reuses protocol's version as its own.
+    "vllmbench-protocol",
     "sqlalchemy[asyncio]>=2.0",
     "alembic>=1.14",
     "psycopg[binary]>=3.2",
