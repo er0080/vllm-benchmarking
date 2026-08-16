@@ -106,8 +106,14 @@ async def execute_run(session: AsyncSession, run: Run, token: str) -> None:
         run.status = RunStatus.BENCHMARKING
         await session.commit()
 
-        log.info("run %s: benchmarking", run.id)
-        response = await client_bench(client, workload, model=_model_from_config(config))
+        # The engine's own served name wins over anything read from the config. A
+        # config with `served-model-name` answers under that alias, so benchmarking the
+        # `model:` line would 404 — a failure real configs produce and the mock never
+        # would.
+        model = status.served_model_name or _model_from_config(config)
+
+        log.info("run %s: benchmarking model %s", run.id, model)
+        response = await client_bench(client, workload, model=model)
 
         if response.device_indices:
             run.device_indices = response.device_indices
@@ -185,12 +191,23 @@ def _model_from_config(config: ServerConfig) -> str:
     config is the only place it is written. Deliberately a narrow read rather than a full
     parse: invariant 5 keeps the config opaque otherwise.
     """
+    # served-model-name first: when present it is the alias the API answers to, and the
+    # `model:` line is only the weights to load. Hyphens and underscores are both
+    # accepted because vLLM accepts both spellings.
+    found: dict[str, str] = {}
     for line in config.yaml.splitlines():
         key, sep, value = line.partition(":")
-        if sep and key.strip() in ("model", "model_tag", "served_model_name"):
-            model = value.strip().strip("\"'")
-            if model:
-                return model
+        if not sep:
+            continue
+        name = key.strip().replace("-", "_")
+        if name in ("model", "served_model_name"):
+            cleaned = value.strip().strip("\"'")
+            if cleaned:
+                found[name] = cleaned
+
+    for preferred in ("served_model_name", "model"):
+        if preferred in found:
+            return found[preferred]
     raise RunFailed(
         "could not find a `model:` entry in the server config; "
         "`vllm bench serve` needs one to know what to request"

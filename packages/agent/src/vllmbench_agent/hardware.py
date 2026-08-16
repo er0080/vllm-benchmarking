@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import functools
 import logging
+import os
 import shutil
 import subprocess
+from pathlib import Path
 
 from vllmbench_protocol.wire import GpuInfo
 
@@ -22,6 +24,14 @@ log = logging.getLogger(__name__)
 # original value and it produced a null version on a real dual-3090 box, which under
 # invariant 6 makes every run from that host invalid.
 _PROBE_TIMEOUT_SECONDS = 120
+
+
+def resolve_vllm_binary(configured: str = "") -> str | None:
+    """Locate the `vllm` executable: explicit setting first, then PATH."""
+    if configured:
+        path = Path(configured)
+        return str(path) if path.is_file() and os.access(path, os.X_OK) else None
+    return shutil.which("vllm")
 
 
 def _decode(value: object) -> str | None:
@@ -108,7 +118,7 @@ def probe_cuda_version() -> str | None:
 
 
 @functools.cache
-def probe_vllm_version() -> tuple[str | None, str]:
+def probe_vllm_version(configured_bin: str = "") -> tuple[str | None, str]:
     """Report the vLLM version in the agent's own environment.
 
     Read by importing rather than shelling out where possible: the agent is installed
@@ -136,11 +146,12 @@ def probe_vllm_version() -> tuple[str | None, str]:
     except ImportError:
         pass
 
-    executable = shutil.which("vllm")
+    executable = resolve_vllm_binary(configured_bin)
     if executable is None:
         return None, (
-            "vLLM is not importable here and `vllm` is not on PATH. If the agent runs in "
-            "its own venv, start it with the vLLM venv's bin directory on PATH."
+            "vLLM is not importable here and no `vllm` executable was found. "
+            "Install the agent into the vLLM environment (it adds no new dependencies), "
+            "or set VLLMBENCH_VLLM_BIN to the absolute path of the vllm executable."
         )
 
     try:

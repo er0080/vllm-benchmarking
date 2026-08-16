@@ -130,6 +130,12 @@ class ServerStatus(_Wire):
     # live in a different venv, and it is the engine that produced the numbers.
     vllm_version: str | None = None
 
+    # What the engine actually serves, read from its own /v1/models. This is NOT the
+    # `model:` line in the config: a config setting `served-model-name` serves under
+    # that alias instead, and benchmarking the HF id would simply 404. The engine is the
+    # only thing that knows which name its API answers to.
+    served_model_name: str | None = None
+
     # Attributed by NVML from the server's process tree — the devices the engine is
     # genuinely occupying, not the ones the config asked for. Per-GPU normalization
     # divides by this count, so a config requesting more devices than the host can give

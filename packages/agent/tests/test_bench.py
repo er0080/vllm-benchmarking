@@ -91,7 +91,7 @@ class TestArgumentConstruction:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("PATH", str(tmp_path / "empty"))
-        with pytest.raises(BenchError, match="same environment as vLLM"):
+        with pytest.raises(BenchError, match="VLLMBENCH_VLLM_BIN"):
             build_argv(BenchRequest(model="m"), base_url="http://x", result_path=tmp_path / "r")
 
 

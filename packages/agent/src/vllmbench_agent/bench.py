@@ -20,6 +20,7 @@ import time
 from collections import deque
 from pathlib import Path
 
+from vllmbench_agent.hardware import resolve_vllm_binary
 from vllmbench_protocol.wire import BenchRequest, BenchResponse
 
 log = logging.getLogger(__name__)
@@ -31,7 +32,9 @@ class BenchError(RuntimeError):
     """The benchmark did not produce a usable result."""
 
 
-def build_argv(request: BenchRequest, *, base_url: str, result_path: Path) -> list[str]:
+def build_argv(
+    request: BenchRequest, *, base_url: str, result_path: Path, vllm_bin: str = ""
+) -> list[str]:
     """Translate a request into a ``vllm bench serve`` command line.
 
     Split out from execution so the mapping is testable without running anything — the
@@ -39,11 +42,11 @@ def build_argv(request: BenchRequest, *, base_url: str, result_path: Path) -> li
     never gets applied) turns into a benchmark that measures something other than what
     was asked for.
     """
-    executable = shutil.which("vllm")
+    executable = resolve_vllm_binary(vllm_bin)
     if executable is None:
         raise BenchError(
-            "`vllm` not found on PATH. The agent must be installed into the same "
-            "environment as vLLM."
+            "no `vllm` executable found. Install the agent into the vLLM environment "
+            "(it adds no new dependencies), or set VLLMBENCH_VLLM_BIN."
         )
 
     argv = [
@@ -88,11 +91,13 @@ def build_argv(request: BenchRequest, *, base_url: str, result_path: Path) -> li
     return argv
 
 
-async def run_benchmark(request: BenchRequest, *, base_url: str) -> BenchResponse:
+async def run_benchmark(
+    request: BenchRequest, *, base_url: str, vllm_bin: str = ""
+) -> BenchResponse:
     """Run one benchmark and return its verbatim result."""
     workdir = Path(tempfile.mkdtemp(prefix="vllmbench-bench-"))
     result_path = workdir / "result.json"
-    argv = build_argv(request, base_url=base_url, result_path=result_path)
+    argv = build_argv(request, base_url=base_url, result_path=result_path, vllm_bin=vllm_bin)
 
     log.info("running benchmark: %s", " ".join(argv))
     started = time.monotonic()

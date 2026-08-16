@@ -140,7 +140,7 @@ class TestStartup:
     ) -> None:
         monkeypatch.setenv("PATH", str(tmp_path / "empty"))
         server = VllmServer(registry=ProcessRegistry(state_dir=tmp_path / "state"))
-        with pytest.raises(ServerError, match="same environment as vLLM"):
+        with pytest.raises(ServerError, match="VLLMBENCH_VLLM_BIN"):
             await server.start(
                 config_yaml=CONFIG,
                 config_hash=CONFIG_HASH,

@@ -181,7 +181,7 @@ class TestVllmVersionProbe:
         probe_vllm_version.cache_clear()
 
         assert version is None
-        assert "PATH" in detail
+        assert "VLLMBENCH_VLLM_BIN" in detail
 
     def test_version_is_reported_with_its_source(
         self, tmp_path, monkeypatch: pytest.MonkeyPatch
