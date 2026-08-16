@@ -122,7 +122,11 @@ jobs:
 
   vllm-contract:
     name: Tier 2 — real vLLM contract
-    runs-on: ubuntu-latest
+    # arm64, not x86_64. The x86 runners are AMD EPYC Zen 5, where the prebuilt CPU
+    # image's worker dies silently during warmup — bf16 fails in oneDNN outright and
+    # fp32 crashes with no diagnostic at all. The arm64 image is the one verified to
+    # work locally on Apple Silicon, and arm64 runners are free for public repos.
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v5
@@ -155,20 +159,32 @@ jobs:
         # opaque "Engine core initialization failed". Colima's default is larger, which
         # is why this passed locally and failed on the first CI run.
         #
-        # --dtype float32, not bfloat16. The CPU-feature question that the multi-arch
-        # image was supposed to settle reappears here: oneDNN cannot build a bf16 matmul
-        # primitive on CPUs without bf16 support, and the worker dies with a message
-        # that names oneDNN rather than the dtype. Apple Silicon has bf16, GitHub's x86
-        # runners do not — the same split that made the first two failures local-only.
-        # float32 works everywhere, and opt-125m is small enough that the cost is
-        # irrelevant. Nothing under test depends on the dtype.
+        # SYS_NICE is load-bearing, not tuning. vLLM's CPU backend binds NUMA memory
+        # during worker init via set_mempolicy and migrate_pages, which Docker's default
+        # seccomp profile gates on CAP_SYS_NICE. Denied, they log only as warnings and
+        # the worker dies later with no further explanation.
+        #
+        # --dtype float32 rather than bfloat16, and pinned threads, and --enforce-eager:
+        # all three reduce variance rather than latency, and float32 keeps this working
+        # if the runner arch ever changes again. opt-125m is small enough that the cost
+        # is irrelevant, and nothing under test depends on the dtype.
+        #
+        # For the record, because two of these comments previously claimed otherwise:
+        # the x86 failures were NOT a missing CPU feature. Those runners are AMD EPYC
+        # Zen 5 and have both AVX512 and bf16. The prebuilt x86_64 image simply picks
+        # oneDNN kernels that die on that CPU — silently under fp32, and with a matmul
+        # primitive error under bf16. Forcing ONEDNN_MAX_CPU_ISA did not help either.
+        # Switching arch is what fixed it.
         run: |
           docker run -d --name vllm-cpu -p 8100:8000 \
+            --cap-add=SYS_NICE \
             --shm-size=4g \
             -e VLLM_CPU_KVCACHE_SPACE=2 \
+            -e VLLM_CPU_OMP_THREADS_BIND=0-1 \
+            -e OMP_NUM_THREADS=2 \
             vllm/vllm-openai-cpu:v${{ steps.vllm.outputs.version }} \
-            facebook/opt-125m --load-format dummy --max-model-len 512 \
-            --max-num-seqs 8 --dtype float32
+            facebook/opt-125m --load-format dummy --max-model-len 256 \
+            --max-num-seqs 4 --dtype float32 --enforce-eager
 
       - name: Wait for readiness
         # Poll /health rather than sleeping. Model load time varies with runner load,
@@ -180,10 +196,17 @@ jobs:
             fi
             if ! docker ps -q --filter name=vllm-cpu --filter status=running | grep -q .; then
               echo "::error::vLLM container exited during startup"
-              echo "--- root cause (first error) ---"
-              docker logs vllm-cpu 2>&1 | grep -m5 -B2 -A8 -E "Error|error:|Exception" || true
-              echo "--- tail ---"
-              docker logs vllm-cpu 2>&1 | tail -40
+              echo "--- exit status ---"
+              # 128+n means killed by signal n. 132 is SIGILL, 139 is SIGSEGV. The
+              # worker dies with no Python traceback, so the signal is the only thing
+              # that distinguishes an unsupported CPU instruction from a crash.
+              docker inspect vllm-cpu --format 'exit={{.State.ExitCode}} oom={{.State.OOMKilled}} err={{.State.Error}}'
+              echo "--- cpu capabilities ---"
+              lscpu | grep -iE "model name|^flags" | cut -c1-400
+              echo "--- full container log ---"
+              docker logs vllm-cpu 2>&1
+              echo "--- host resources ---"
+              nproc; free -h; df -h /dev/shm
               exit 1
             fi
             sleep 5
@@ -220,7 +243,10 @@ jobs:
 
       - name: vLLM logs on failure
         if: failure()
-        run: docker logs vllm-cpu | tail -100
+        run: |
+          docker logs vllm-cpu 2>&1 || true
+          echo "--- host resources ---"
+          nproc; free -h; df -h /dev/shm
 
   # --- Tier 2c ------------------------------------------------------------------
   # Image builds. The only thing that validates the inter-package dependency graph:

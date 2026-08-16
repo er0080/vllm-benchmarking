@@ -31,8 +31,7 @@ Scaffolding only. Nothing measures anything yet.
 - [x] `pre-commit` with ruff, pyright, tsc
 - [x] CI tier 1 (lint, types, unit) and tier 2 (postgres, mock agent, real vLLM on the CPU
       backend, image builds)
-- [ ] Branch protection on `main` requiring green — pending the first successful run,
-      since required checks must exist before they can be required
+- [x] Branch protection on `main` requiring green — all eight CI jobs required
 - [x] `VLLM_REFERENCE_VERSION` pinned at the repo root
 - [x] Verified on macOS/Colima `aarch64` locally, including the `vllm-openai-cpu`
       container; native Linux `x86_64` is covered by CI on ubuntu-latest
@@ -41,6 +40,11 @@ Scaffolding only. Nothing measures anything yet.
 **Done when:** `docker compose up` succeeds on both Linux and macOS/Colima, the UI shows
 live facts read from a real GPU host through the agent, and the full CI suite passes
 without any GPU.
+
+**Status:** complete except for the real-GPU half of the done-when clause. Verified
+end to end against the mock agent; the paths that need actual hardware are itemised in
+[docs/hardware-verification.md](docs/hardware-verification.md) rather than assumed
+working.
 
 ---
 
