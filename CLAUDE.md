@@ -251,10 +251,21 @@ test, and anything running there during a sweep corrupts the measurement in flig
   reaches the database. This is the *only* automated check against real vLLM anywhere in
   the project, so treat a failure here as blocking rather than flaky.
 
-  Use the official `vllm/vllm-openai-cpu` image as a service container rather than
-  installing CPU wheels. It publishes both `latest-x86_64` and `latest-arm64` tags, which
-  sidesteps the question of whether GitHub-hosted runners expose AVX512 and makes this
-  tier runnable locally on an Apple Silicon Mac.
+  Use the official `vllm/vllm-openai-cpu` image, pinned to `VLLM_REFERENCE_VERSION`, and
+  **run it on an arm64 runner** (`ubuntu-24.04-arm`, free for public repos).
+
+  This is not arbitrary. The x86_64 image does not work on GitHub's x86 runners: they are
+  AMD EPYC Zen 5, and the image picks oneDNN kernels that kill the worker during model
+  warmup — silently under fp32, and with a matmul primitive error under bf16. It is not a
+  missing CPU feature; those chips have AVX512 and bf16, and forcing a conservative
+  `ONEDNN_MAX_CPU_ISA` did not help. Five hypotheses on that axis failed before changing
+  arch fixed it in one attempt.
+
+  The arm64 image is also what developers run locally on Apple Silicon, so CI and local
+  development exercise the same artifact. Two flags are required rather than tuning:
+  `--shm-size` (the engine core communicates over shared memory, and Docker's 64 MB
+  default kills it) and `--cap-add=SYS_NICE` (NUMA binding syscalls are seccomp-gated on
+  that capability, and denial surfaces only as a warning before the worker dies).
 
 ---
 
