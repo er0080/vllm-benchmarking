@@ -144,28 +144,46 @@ The agent runs on the machine under test. Its resource footprint is part of its 
 
 ## Development workflow
 
-### Everything starts as an issue
+### Issues: optional now, required from 0.9.0
 
-All development, pre- and post-1.0.0, is driven by GitHub Issues. GitHub is the system of
-record for change management, not a mirror of decisions made elsewhere.
+Process rigor is staged deliberately. Core development (**0.1.0 through 0.8.0**) favors
+rapid iteration; hardening and release posture (**0.9.0 onward**) favors an auditable
+trail. The rules change at that boundary, and only there.
 
-- **No PR without an issue.** If work is worth doing, it is worth an issue first. Open one
-  rather than skipping the step.
-- **Label every issue** — at minimum a type (`enhancement`, `bug`, `documentation`) and
-  the target milestone.
-- **Milestones map to roadmap versions** (`0.1.0`, `0.2.0`, …). An issue with no milestone
-  is unscheduled work, and that should be a deliberate state rather than an oversight.
-- **Cross-link in both directions.** PR bodies use closing keywords (`Closes #12`) so the
-  issue closes on merge. When a PR partially addresses an issue, say which part and link
-  without a closing keyword.
-- **Design discussion belongs in the issue**, not the PR. The issue is where a decision
-  and its rejected alternatives are recorded; the PR is where the implementation of that
-  decision is reviewed. Decisions that outlive the issue graduate to `docs/adr/`.
+**Through 0.8.0 — issues are optional.** Open one when it earns its keep:
+
+- Design work with real alternatives to weigh
+- External feedback or a bug report
+- Work spanning several PRs that needs a place to be tracked
+
+Otherwise go straight to a branch and a PR. A one-line issue that exists only to be
+referenced by a PR is bureaucracy, not change management.
+
+**From 0.9.0 — every PR traces to an issue**, labeled with a type (`enhancement`, `bug`,
+`documentation`) and a milestone, cross-linked with closing keywords (`Closes #12`). By
+then the schema is stable, migrations are forward-only, and knowing why a change landed
+matters more than the speed of landing it.
+
+### Where the "why" lives when there is no issue
+
+This is the part that makes the relaxation safe rather than merely faster. Rationale does
+not become optional just because issues do — it moves.
+
+- **The PR body carries the reasoning.** What was tried, what was rejected, and what the
+  reader would otherwise have to reconstruct. A PR whose body is a restatement of its diff
+  has thrown away the only durable record of intent.
+- **Binding decisions go to `docs/adr/`**, regardless of milestone or whether an issue
+  existed. An ADR is not a heavier issue; it is the record of a decision that outlives the
+  work, and it is required whenever one is made.
+
+Squash merge means the PR body becomes the permanent commit record. It is the artifact
+someone reads in a year, so write it for them.
 
 ### Branching
 
-- Short-lived feature branches off `main`, named `<type>/<issue-number>-<slug>` — for
-  example `feat/14-sweep-orchestrator` or `docs/1-initial-feedback`.
+- Short-lived feature branches off `main`, named `<type>/<slug>`, or
+  `<type>/<issue-number>-<slug>` when an issue exists — for example
+  `feat/sweep-orchestrator` or `docs/1-initial-feedback`.
 - `main` is protected: PRs required, linear history, no force pushes.
 - Pull requests are required. Self-merge is fine; merging without green CI is not.
 - Conventional Commits (`feat:`, `fix:`, `chore:`, `docs:`, `refactor:`, `test:`). The
