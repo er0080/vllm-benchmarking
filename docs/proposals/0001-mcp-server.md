@@ -1,6 +1,6 @@
 # Proposal 0001 — MCP server for agent-driven benchmarking
 
-- **Status:** proposed
+- **Status:** proposed, decisions locked
 - **Issue:** #2
 - **Target:** pre-1.0.0
 - **Supersedes:** nothing
@@ -14,9 +14,12 @@ Expose the framework over the Model Context Protocol so Claude Code and comparab
 harnesses can author configurations, launch sweeps, and analyze results through a
 standards-based interface rather than screen-scraping a UI or hand-rolling HTTP calls.
 
-Recommendation, in one line: **mount a Streamable HTTP MCP server at `/mcp` on the
-existing `api` service, with a bearer token, a summary-first tool surface, and writes
-disabled by default.**
+Decided, in one line: **mount a Streamable HTTP MCP server at `/mcp` on the existing `api`
+service, targeting the 2026-07-28 specification, authenticated by bearer token, shipping
+read and write tools together.**
+
+Every option below is recorded with its rejected alternatives. Rejections are as much a
+part of the record as the choices.
 
 ---
 
@@ -40,7 +43,7 @@ Target the **2026-07-28** specification. Relevant properties:
 - **Stateless protocol core.** Fits a containerized service behind a proxy with no session
   affinity.
 - **Two standard transports** — stdio and Streamable HTTP. The legacy SSE transport is
-  superseded and should not be implemented.
+  superseded and is not implemented.
 - **`Mcp-Method` and `Mcp-Name` headers** mirror body fields so intermediaries can route
   and rate-limit without parsing JSON. Free observability: our own logs can report which
   tool was called without inspecting payloads.
@@ -50,32 +53,109 @@ Target the **2026-07-28** specification. Relevant properties:
 
 ---
 
-## Option 1 — Where the server lives
+## Decision 1 — Where the server lives
 
-| Option | Description | Assessment |
-| --- | --- | --- |
-| **A. Mounted on `api` at `/mcp`** | MCP is a second protocol over the same domain layer, in the same process. | **Recommended.** One deployment, one auth story, and — decisively — no way for the MCP surface to drift from the REST surface, because both call the same functions. |
-| B. Separate `mcp` compose service | Standalone service calling `api` over HTTP. | Cleanest isolation and independently disableable, but adds a network hop, a second auth boundary, and duplicated DTOs. The isolation benefit is achievable in option A with a feature flag. |
-| C. Local stdio server | User runs a stdio binary via `uvx`; it talks to the API. | Contradicts the self-contained-stack goal and requires installation outside compose. Worth revisiting only if a target client cannot do remote HTTP; Claude Code can. |
-
-Option A, with the whole MCP surface behind `VLLMBENCH_MCP_ENABLED` so it can be switched
-off entirely.
-
-## Option 2 — Authentication
-
-The spec answer for remote servers is OAuth 2.1, with the server as a Resource Server
-advertising an authorization server via `.well-known` endpoints. That is the right answer
-for a multi-tenant public server and the wrong answer for this one, at least now.
+**Mounted on the existing `api` service at `/mcp`**, behind `VLLMBENCH_MCP_ENABLED` so the
+entire surface can be switched off.
 
 | Option | Assessment |
 | --- | --- |
-| **Bearer token** | **Recommended pre-1.0.** Reuses the `VLLMBENCH_TOKEN` pattern already established for the agent. One environment variable, no authorization server to run. |
-| OAuth 2.1 | Correct and standards-aligned, but requires an authorization server, discovery endpoints, and token lifecycle for a single-user LAN tool. Defer until there is a second user or an exposure requirement. |
+| **A. Mounted on `api` at `/mcp`** | **Chosen.** One deployment, one auth story, and — decisively — no way for the MCP surface to drift from the REST surface, because both call the same domain functions. |
+| B. Separate `mcp` compose service | Rejected. Cleanest isolation and independently disableable, but adds a network hop, a second auth boundary, and duplicated DTOs. The isolation benefit is achievable in option A with a feature flag. |
+| C. Local stdio server | Rejected. Contradicts the self-contained-stack goal and requires installation outside compose. Revisit only if a target client cannot do remote HTTP; Claude Code can. |
+
+## Decision 2 — Authentication
+
+**Bearer token**, reusing the `VLLMBENCH_TOKEN` pattern established for the agent.
+
+| Option | Assessment |
+| --- | --- |
+| **Bearer token** | **Chosen for pre-1.0.** One environment variable, no authorization server to run. |
+| OAuth 2.1 | Deferred, not rejected. Correct and standards-aligned — the spec's answer for remote servers — but requires an authorization server, discovery endpoints, and token lifecycle for a single-user LAN tool. Revisit at 1.0.0 or on the first request to reach the stack remotely. |
 
 **This is a real constraint, not a footnote:** a bearer token is adequate on a trusted LAN
 and inadequate on the public internet. The documentation must say plainly that `/mcp` is
-not to be exposed beyond the local network, and the default bind should make accidental
-exposure hard. Revisit at 1.0.0 or on the first request to reach the stack remotely.
+not to be exposed beyond the local network, and the default bind must make accidental
+exposure hard.
+
+---
+
+## Decision 3 — Input format: YAML or structured
+
+This looked like one question and is actually two, because `create_config` and
+`create_sweep` take fundamentally different things.
+
+**A single server config is a vLLM artifact.** Invariant 5 settles it: native YAML,
+validate don't transform. There is a second reason beyond the invariant — vLLM has
+hundreds of flags that change between versions, so any structured schema enumerating them
+begins rotting the day it is written and needs maintenance on every
+`VLLM_REFERENCE_VERSION` bump. YAML passthrough never rots.
+
+**A sweep matrix is not a vLLM artifact.** `{max_num_seqs: [32, 64, 128],
+tensor_parallel_size: [1, 2]}` is not a config, it is a generator of configs, and the
+concept is entirely ours. Expressing it as YAML would mean inventing a non-vLLM YAML
+schema — precisely the conflation invariant 5 warns against. It would also forfeit the
+single largest reliability lever available: **MCP tools declare JSON Schema for their
+inputs.** A structured `axes` parameter constrains the model at the protocol level, for
+free. A YAML string gets no such help.
+
+| Tool | Input | Rationale |
+| --- | --- | --- |
+| `create_config` | raw YAML string | Lossless, invariant 5, immune to vLLM version drift |
+| `create_sweep` | `base_config_id` + structured `axes` | Schema-constrained, and the matrix is our concept anyway |
+
+### Why the override merge does not violate invariant 5
+
+Each sweep point applies its axis overrides onto the base YAML and stores the **resulting
+YAML**, which is content-addressed like any other config. The stored artifact is native
+vLLM YAML that runs unmodified. That is generation, not translation: nothing is
+round-tripped through an intermediate schema, and no fidelity is lost.
+
+### A consequence: `validate_config` is a first-class tool
+
+Models are unreliable at YAML — indentation, and type coercion such as `no` parsing as
+boolean false — but they are good at fixing errors when told precisely what is wrong. A
+free, safe, repeatable validation call gives them that loop. Validation must therefore be
+available as a no-side-effect read tool, not only as a step buried inside `create_config`,
+so the only way to check YAML is not to create something.
+
+---
+
+## Decision 4 — Cost estimation before a sweep runs
+
+Estimates depend on **run history**, which begins accumulating at 0.2.0 — not on 0.5.0,
+which delivers the analysis UI, a different thing.
+
+Decomposing what an estimate actually is:
+
+- **Rate-limited benchmark duration is arithmetic.** A run with `--num-prompts N
+  --request-rate R` takes roughly N/R seconds regardless of hardware. No history needed.
+- **Saturation runs are not.** `--request-rate inf --max-concurrency C` runs as fast as the
+  configuration allows, which is the thing being measured. Genuinely unknown a priori.
+- **Model load and server startup** need history, but are highly consistent per model and
+  TP size on a given host. A few observations produce a good number.
+
+Three rules follow.
+
+**1. Exact counts always, from day one.** The genuinely useful pre-flight number is not
+duration:
+
+> This sweep is 96 configurations × 3 replicates = **288 runs**.
+
+That is exact, needs zero history, and is what a human actually needs to decide whether to
+approve. Duration is the refinement layered on top.
+
+**2. The estimate that matters is the live one.** After a few points complete,
+extrapolating from observed durations is accurate, needs no historical model, and is
+available in every sweep regardless of accumulated history. `get_sweep` returns
+`estimated_remaining` derived from completed points. This is where the engineering effort
+belongs — not in a priori prediction.
+
+**3. Never return a bare number.** A priori estimates are structured, carrying
+`confidence`, `basis` (what data supported it, and how many samples), and a decomposition
+into startup and benchmark components. A confidently wrong "about 20 minutes" on a sweep
+that runs for nine hours is worse than an honest "unknown." Making the uncertainty
+machine-readable lets the agent relay it instead of rounding it into a claim.
 
 ---
 
@@ -84,27 +164,34 @@ exposure hard. Revisit at 1.0.0 or on the first request to reach the stack remot
 Split by side effect, because the safety story depends on the split being visible rather
 than implied.
 
-### Read tools — always available
+### Read tools
 
 | Tool | Returns |
 | --- | --- |
 | `list_hosts` | GPU hosts, device inventory, driver and vLLM versions |
 | `list_configs` / `get_config` | vLLM YAML server configs, with lineage |
+| `validate_config` | Structured, actionable errors for a candidate YAML. No side effects. |
 | `list_workloads` | Workload definitions |
-| `list_sweeps` / `get_sweep` | Sweep definitions, status, progress, points remaining |
+| `list_sweeps` / `get_sweep` | Definition, status, progress, points remaining, `estimated_remaining` |
 | `query_runs` | Filtered, paginated run summaries |
 | `get_run` | Full metrics for one run, with provenance |
 | `get_run_telemetry` | Downsampled engine and per-device GPU series |
 | `compare_runs` | Structured diff of configuration and metrics across runs |
 | `get_pareto` | Frontier points for a sweep, per-GPU normalized |
 
-### Write tools — disabled by default
+### Write tools
+
+Shipped in the first release alongside the read tools, and **enabled by default**. The
+agent-driven tuning loop is the motivation for this work; shipping the write tools
+defaulted off would satisfy the letter of that and not the intent.
+`VLLMBENCH_MCP_WRITE_ENABLED` remains as an opt-out for deployments that want an
+analysis-only surface.
 
 | Tool | Effect |
 | --- | --- |
 | `create_config` | Validate and store a vLLM YAML config |
 | `create_workload` | Store a workload definition |
-| `create_sweep` | Define a matrix. **Does not start it.** Returns point count and duration estimate. |
+| `create_sweep` | Define a matrix from a base config and structured axes. **Does not start it.** Returns exact run count and a structured duration estimate. |
 | `start_sweep` | Begin execution. Returns immediately. |
 | `cancel_sweep` | Stop a running sweep, tearing down cleanly |
 
@@ -169,52 +256,42 @@ at 3am?* Sweeps and runs gain an `initiated_by` field recording the interface (`
 
 ## Guardrails
 
-1. **Writes are opt-in.** `VLLMBENCH_MCP_WRITE_ENABLED` defaults to false. Read-only is the
-   safe and genuinely useful default — analysis is most of the value.
-2. **One active sweep per GPU host**, enforced in the domain layer rather than the MCP
+Writes ship enabled, so the remaining guardrails carry more weight than they would have
+under a read-only-first rollout. They are load-bearing, not decorative.
+
+1. **One active sweep per GPU host**, enforced in the domain layer rather than the MCP
    layer, so the constraint holds regardless of which interface asks.
-3. **`create_sweep` returns a cost estimate** — point count and estimated duration — so an
-   agent, and the human reading its output, sees the commitment before `start_sweep`.
-4. **Bounded matrix size.** Reject sweep definitions above a configurable point count. An
-   agent that accidentally requests a 4,000-point Cartesian product should get an error,
-   not a fortnight of GPU time.
+2. **Bounded matrix size.** Reject sweep definitions above a configurable run count. An
+   agent that accidentally requests a 4,000-point Cartesian product gets an error, not a
+   fortnight of GPU time.
+3. **`create_sweep` reports exact cost** — run count always, duration estimate with
+   explicit confidence — so an agent, and the human reading its output, sees the
+   commitment before `start_sweep`.
+4. **No tool mutates or deletes results.** Worth restating as a guardrail and not only as a
+   surface decision: the worst realistic outcome of an agent misusing this interface is
+   wasted GPU time, never lost measurements.
 5. **Every write tool call is logged** with its arguments and initiating client.
+6. **Writes can be disabled** via `VLLMBENCH_MCP_WRITE_ENABLED` for analysis-only
+   deployments.
 
 ---
 
-## Milestone placement
+## Decision 5 — Milestone placement
 
-The valuable tools are the analysis ones, which depend on 0.5.0. The control tools depend
-on 0.4.0. So the earliest coherent placement is after 0.5.0.
+**A new milestone after 0.5.0**, renumbering later milestones.
 
 | Option | Assessment |
 | --- | --- |
-| **New milestone after 0.5.0**, renumbering later milestones | **Recommended.** MCP is a distinct interface with its own surface and safety story; hiding it inside another milestone understates it. |
-| Fold into 0.7.0 Interop | Thematically defensible — it is interoperability — but it would dominate a milestone otherwise made of importers and exporters. |
-| Defer to post-1.0 | Contradicts the issue's pre-1.0.0 requirement. |
+| **New milestone after 0.5.0** | **Chosen.** The valuable analysis tools depend on 0.5.0 and the control tools on 0.4.0. MCP is a distinct interface with its own surface and safety story; hiding it inside another milestone understates it. |
+| Fold into 0.7.0 Interop | Rejected. Thematically defensible, but it would dominate a milestone otherwise made of importers and exporters. |
+| Defer to post-1.0 | Rejected. Contradicts the pre-1.0.0 requirement in #2. |
 
-Renumbering is deliberately left out of this PR. It is a mechanical edit best made once
-the proposal is accepted, and doing it here would conflict with #3.
-
----
-
-## Open questions
-
-1. **Read-only or read-write at first ship?** The proposal defaults writes off. Shipping
-   read-only first and adding writes once the read surface has been exercised is the
-   lower-risk sequence, but it delays the agent-driven-tuning loop that motivates the
-   issue.
-2. **Should `create_sweep` accept raw YAML, or structured parameters?** Raw YAML honors
-   invariant 5 and stays lossless. Structured parameters are easier for a model to get
-   right and easier to validate. Possibly both, with YAML as the stored form.
-3. **Is a duration estimate feasible before 0.5.0?** It needs historical run times per
-   config class. Without history it is a guess, and a confidently wrong estimate may be
-   worse than none.
+Renumbering is not part of this PR. The roadmap is amended on acceptance, per the header.
 
 ---
 
 ## What acceptance means
 
-Accepting this proposal means agreeing to the placement (option A), the transport and auth
-choices, the read/write split, and the guardrails. It does not commit to the exact tool
-names, which will firm up during implementation.
+Accepting this proposal commits to the placement, transport, authentication, input
+formats, estimation strategy, read/write split, and guardrails above. Exact tool names and
+argument shapes will firm up during implementation and do not require re-approval.
