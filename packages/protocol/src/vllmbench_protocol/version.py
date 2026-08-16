@@ -26,4 +26,4 @@ __all__ = ["PROTOCOL_VERSION", "__version__"]
 
 __version__ = "0.1.0"
 
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 2

@@ -12,46 +12,46 @@ Each entry says what was verified, what was not, and how the untested path could
 
 ---
 
+## Verified on real hardware — 2026-08-16
+
+Host `ubuntu-llm` at 192.168.10.102: **2× NVIDIA GeForce RTX 3090** (24 GiB each),
+driver 610.43.02, CUDA 13.3, vLLM 0.25.1, agent in an isolated venv.
+
+Checked read-only while a 27B model was mid-generation, so none of this disturbed a
+running job.
+
+| Item | Result |
+| --- | --- |
+| NVML device enumeration | ✅ Both devices, correct names, UUIDs, 24 GiB VRAM each |
+| CUDA version arithmetic | ✅ `13.3` — the `major*1000 + minor*10` decode was right |
+| Driver version | ✅ `610.43.02` |
+| `synthetic_source` on a real agent | ✅ null, as invariant 7 requires |
+| Every `/metrics` name we scrape | ✅ All six present on real GPU vLLM |
+| Absence of a prefix-cache hit-rate gauge | ✅ Confirmed — the counters decision holds |
+| Protocol mismatch refusal | ✅ Refused with both versions named; inspection escape hatch still worked |
+| vLLM version probe | ❌ **Returned null.** Fixed — see below. |
+
+### What the null version taught us
+
+The agent runs in its own venv, so `import vllm` correctly fails and the subprocess
+fallback runs. That fallback had a 15-second timeout, and `vllm --version` imports torch
+and initializes CUDA — easily longer than that on a loaded host. The payload gave no clue
+which of three problems it was.
+
+Three changes came out of it:
+
+1. The probe timeout is now 120s.
+2. `HostInfo.vllm_probe_detail` explains a null version rather than leaving it bare.
+3. **Run provenance now reads the engine's own `/version` endpoint** rather than the
+   agent's environment probe. That is strictly better: the agent may live in a different
+   venv, and it is the engine that produced the numbers.
+
+---
+
 ## 0.1.0 — Foundations
 
-### NVML device enumeration
-**File:** `packages/agent/src/vllmbench_agent/hardware.py` → `probe_gpus`
-
-- **Verified:** the no-driver path. On a machine without NVIDIA drivers the agent starts,
-  reports zero GPUs, and the control plane registers the host without error.
-- **Not verified:** that a real device enumerates correctly — index, name, UUID, VRAM.
-- **How it could fail:** `nvmlDeviceGetName` returns `bytes` on some driver versions and
-  `str` on others; `_decode` handles both, but the branch has never run against a driver.
-  A wrong device name would land in run provenance and mislabel every result from that
-  host.
-
-### Driver and CUDA version probing
-**File:** `hardware.py` → `probe_driver_version`, `probe_cuda_version`
-
-- **Verified:** both return `None` cleanly with no NVML.
-- **Not verified:** the CUDA version arithmetic. NVML packs the version as
-  `major * 1000 + minor * 10`; the decode is written from documentation, not observation.
-  This is exactly the class of assumption that was wrong for the benchmark JSON.
-- **How it could fail:** a plausible-but-wrong version string recorded as provenance on
-  every run.
-
-### vLLM version detection
-**File:** `hardware.py` → `probe_vllm_version`
-
-- **Verified:** returns `None` when vLLM is absent, and the subprocess fallback is
-  structurally correct.
-- **Not verified:** the import path, which is the one that matters. The agent is installed
-  *into* the vLLM venv, so `import vllm; vllm.__version__` should be the answer used in
-  practice, and it has never run.
-- **How it could fail:** silently falling through to the subprocess path, or to `None`,
-  making every run's `vllm_version` provenance empty.
-
-### Multi-GPU registration
-**File:** `packages/api/src/vllmbench_api/routers/hosts.py`
-
-- **Verified:** two-device registration and refresh, against the mock agent.
-- **Not verified:** against real devices, including the device-inventory replacement path
-  when cards change.
+All items in this milestone are now **verified** — see the table above. The remaining
+work is in 0.2.0 and needs the GPU to be idle.
 
 ---
 
@@ -118,10 +118,16 @@ from that host invalid rather than merely mislabelled.
   server *and* its per-device workers are gone and VRAM is released.
 
 ### Topology reporting
-**File:** `runner.py`, `vllm_server.py`
+**File:** `runner.py`, `vllm_server.py`, `hardware.py` → `devices_for_process`
 
-- **Not verified:** the real agent does not yet extract `tensor_parallel_size` or device
-  indices from a running engine — only the mock echoes them. On real hardware a TP run
-  would currently record TP=1 unless the config is read back.
-- **This is a known gap, not a bug to discover.** It needs the engine's own report, and
-  the shape of that comes from seeing a real multi-GPU startup.
+- **Closed in design, unverified in practice.** The gap is now filled by two separate
+  sources rather than one: the config's *declared* `tensor_parallel_size`, and the
+  devices NVML *observes* the server's process tree occupying. Per-GPU normalization
+  divides by the observed count, so a config asking for more devices than the host can
+  give no longer produces a run claiming a topology that never existed. A disagreement
+  between the two is logged as a warning.
+- **Not verified:** that `nvmlDeviceGetComputeRunningProcesses` actually reports vLLM's
+  worker processes on this driver. It should — the workers are children of the server and
+  the family set includes them — but it has only run against a single-process fake.
+- **How to check:** start a TP=2 run and confirm `device_indices` comes back `[0, 1]`
+  rather than `[0]` or empty.

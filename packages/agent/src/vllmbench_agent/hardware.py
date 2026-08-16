@@ -17,7 +17,11 @@ from vllmbench_protocol.wire import GpuInfo
 
 log = logging.getLogger(__name__)
 
-_PROBE_TIMEOUT_SECONDS = 15
+# `vllm --version` imports the whole package — torch, CUDA init, the lot. On a busy
+# host that legitimately takes far longer than a naive timeout allows. 15s was the
+# original value and it produced a null version on a real dual-3090 box, which under
+# invariant 6 makes every run from that host invalid.
+_PROBE_TIMEOUT_SECONDS = 120
 
 
 def _decode(value: object) -> str | None:
@@ -104,13 +108,18 @@ def probe_cuda_version() -> str | None:
 
 
 @functools.cache
-def probe_vllm_version() -> str | None:
+def probe_vllm_version() -> tuple[str | None, str]:
     """Report the vLLM version in the agent's own environment.
 
     Read by importing rather than shelling out where possible: the agent is installed
     *into* the vLLM venv, so the import is the authoritative answer for the interpreter
     that will actually launch the server. The subprocess fallback covers an agent
     installed alongside rather than inside.
+
+    Returns (version, detail). The detail explains a null version, because "null" on its
+    own tells an operator nothing — is vLLM missing, not on PATH, or just slow to import?
+    That question cost real time on the first real host, so the answer travels with the
+    result.
 
     Cached because this is asked on every handshake and the answer cannot change without
     restarting the process.
@@ -123,13 +132,17 @@ def probe_vllm_version() -> str | None:
 
         version = getattr(vllm, "__version__", None)
         if version:
-            return str(version)
+            return str(version), "imported from the agent's own environment"
     except ImportError:
         pass
 
     executable = shutil.which("vllm")
     if executable is None:
-        return None
+        return None, (
+            "vLLM is not importable here and `vllm` is not on PATH. If the agent runs in "
+            "its own venv, start it with the vLLM venv's bin directory on PATH."
+        )
+
     try:
         result = subprocess.run(  # noqa: S603
             [executable, "--version"],
@@ -138,10 +151,68 @@ def probe_vllm_version() -> str | None:
             timeout=_PROBE_TIMEOUT_SECONDS,
             check=False,
         )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        log.warning("could not run `vllm --version`: %s", exc)
-        return None
+    except subprocess.TimeoutExpired:
+        return None, (
+            f"`{executable} --version` did not finish within {_PROBE_TIMEOUT_SECONDS}s. "
+            "The engine's own /version endpoint is used for run provenance regardless."
+        )
+    except OSError as exc:
+        return None, f"could not run `{executable} --version`: {exc}"
 
     if result.returncode != 0:
-        return None
-    return result.stdout.strip() or None
+        tail = (result.stderr or result.stdout).strip().splitlines()[-1:] or [""]
+        return None, f"`vllm --version` exited {result.returncode}: {tail[0]}"
+
+    version = result.stdout.strip()
+    if not version:
+        return None, "`vllm --version` printed nothing"
+    # Newer CLIs print just the number; older ones prefix it.
+    return version.split()[-1], f"read from `{executable} --version`"
+
+
+def devices_for_process(pid: int) -> list[int]:
+    """Which GPUs a process (and its children) actually occupies, per NVML.
+
+    Ground truth for device attribution, and better than anything derivable from the
+    config: a config asking for TP=4 on a host that could only give it 2 would otherwise
+    produce a run claiming four devices. Since per-GPU normalization divides by this
+    number, getting it wrong silently corrupts every comparison the run takes part in.
+    """
+    try:
+        import psutil
+        import pynvml
+    except ImportError:
+        return []
+
+    try:
+        family = {pid}
+        try:
+            family |= {child.pid for child in psutil.Process(pid).children(recursive=True)}
+        except Exception:  # noqa: S110 - the parent alone is still a useful answer
+            pass
+
+        pynvml.nvmlInit()
+        try:
+            found: list[int] = []
+            for index in range(pynvml.nvmlDeviceGetCount()):
+                handle = pynvml.nvmlDeviceGetHandleByIndex(index)
+                for accessor in (
+                    "nvmlDeviceGetComputeRunningProcesses_v3",
+                    "nvmlDeviceGetComputeRunningProcesses",
+                ):
+                    getter = getattr(pynvml, accessor, None)
+                    if getter is None:
+                        continue
+                    try:
+                        if any(p.pid in family for p in getter(handle)):
+                            found.append(index)
+                        break
+                    except Exception as exc:
+                        log.debug("%s failed on device %d: %s", accessor, index, exc)
+                        continue
+            return sorted(found)
+        finally:
+            pynvml.nvmlShutdown()
+    except Exception as exc:
+        log.info("could not attribute devices to pid %d: %s", pid, exc)
+        return []

@@ -63,6 +63,10 @@ class HostInfo(_Wire):
     hostname: str
 
     vllm_version: str | None = None
+    # Why vllm_version is null, when it is. "null" alone tells an operator nothing —
+    # missing, not on PATH, or slow to import are three different problems with three
+    # different fixes, and distinguishing them cost real time on the first real host.
+    vllm_probe_detail: str | None = None
     driver_version: str | None = None
     cuda_version: str | None = None
 
@@ -121,11 +125,21 @@ class ServerStatus(_Wire):
     error: str | None = None
     log_tail: list[str] = Field(default_factory=list)
 
-    # Reported by the engine once it is up, so a run records the topology that actually
-    # ran rather than what the config text asked for (invariant 8).
+    # Read from the engine once it is up, so a run records what actually served it.
+    # The engine's own /version beats probing the agent's environment: the agent may
+    # live in a different venv, and it is the engine that produced the numbers.
+    vllm_version: str | None = None
+
+    # Attributed by NVML from the server's process tree — the devices the engine is
+    # genuinely occupying, not the ones the config asked for. Per-GPU normalization
+    # divides by this count, so a config requesting more devices than the host can give
+    # would otherwise silently corrupt every comparison the run appears in.
+    device_indices: list[int] | None = None
+
+    # What the config *asked* for. Kept alongside the observed devices rather than
+    # instead of them, so a disagreement between request and reality stays visible.
     tensor_parallel_size: int | None = None
     pipeline_parallel_size: int | None = None
-    device_indices: list[int] | None = None
 
 
 # ---------------------------------------------------------------------------

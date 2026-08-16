@@ -90,11 +90,13 @@ def create_app(settings: AgentSettings | None = None) -> FastAPI:
             # control plane decides what to do with a host that reports no devices.
             log.warning("no NVIDIA devices detected on this host")
 
+        vllm_version, probe_detail = probe_vllm_version()
         return HostInfo(
             protocol_version=PROTOCOL_VERSION,
             agent_version=__version__,
             hostname=socket.gethostname(),
-            vllm_version=probe_vllm_version(),
+            vllm_version=vllm_version,
+            vllm_probe_detail=probe_detail,
             driver_version=probe_driver_version(),
             cuda_version=probe_cuda_version(),
             gpus=gpus,

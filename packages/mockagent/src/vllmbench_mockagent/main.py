@@ -107,6 +107,7 @@ def create_app(token: str | None = None, protocol_version: int = PROTOCOL_VERSIO
             agent_version=__version__,
             hostname="mock-gpu-host",
             vllm_version=MOCK_VLLM_VERSION,
+            vllm_probe_detail="synthetic: no vLLM is installed for the mock agent",
             driver_version=MOCK_DRIVER_VERSION,
             cuda_version=MOCK_CUDA_VERSION,
             gpus=MOCK_GPUS,
@@ -122,9 +123,16 @@ def create_app(token: str | None = None, protocol_version: int = PROTOCOL_VERSIO
             started_at=state["started_at"],  # type: ignore[arg-type]
             ready_at=state["ready_at"],  # type: ignore[arg-type]
             log_tail=["INFO synthetic vLLM: no real engine was started"],
+            vllm_version=MOCK_VLLM_VERSION if state["state"] is ServerState.READY else None,
             tensor_parallel_size=_tp_from_config(state["config_yaml"]),  # type: ignore[arg-type]
             pipeline_parallel_size=1,
-            device_indices=list(range(_tp_from_config(state["config_yaml"]))),  # type: ignore[arg-type]
+            # Mirrors the real agent: devices are the ones "observed" to be in use, and
+            # the mock pretends the request was honoured up to its two-GPU inventory.
+            device_indices=list(
+                range(min(_tp_from_config(state["config_yaml"]), len(MOCK_GPUS)))  # type: ignore[arg-type]
+            )
+            if state["state"] is ServerState.READY
+            else None,
         )
 
     @app.get("/server", response_model=ServerStatus, dependencies=[Depends(require_token)])
