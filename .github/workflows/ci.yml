@@ -195,6 +195,13 @@ jobs:
             fi
             if ! docker ps -q --filter name=vllm-cpu --filter status=running | grep -q .; then
               echo "::error::vLLM container exited during startup"
+              echo "--- exit status ---"
+              # 128+n means killed by signal n. 132 is SIGILL, 139 is SIGSEGV. The
+              # worker dies with no Python traceback, so the signal is the only thing
+              # that distinguishes an unsupported CPU instruction from a crash.
+              docker inspect vllm-cpu --format 'exit={{.State.ExitCode}} oom={{.State.OOMKilled}} err={{.State.Error}}'
+              echo "--- cpu capabilities ---"
+              lscpu | grep -iE "model name|^flags" | cut -c1-400
               echo "--- full container log ---"
               docker logs vllm-cpu 2>&1
               echo "--- host resources ---"
