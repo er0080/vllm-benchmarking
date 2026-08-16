@@ -1,0 +1,49 @@
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Node
+node_modules/
+web/dist/
+.vite/
+*.tsbuildinfo
+npm-debug.log*
+yarn-error.log*
+
+# Benchmark artifacts
+# Raw vLLM bench output and logs live in Postgres and mounted volumes,
+# never in the repository.
+results/
+*.bench.json
+vllm-*.log
+
+# Local data volumes
+pgdata/
+
+# Editors and OS
+.vscode/
+.idea/
+.DS_Store
+*.swp
+
+# Claude Code
+.claude/settings.local.json
