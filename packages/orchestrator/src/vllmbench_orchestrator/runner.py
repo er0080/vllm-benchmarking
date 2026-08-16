@@ -84,11 +84,21 @@ async def execute_run(session: AsyncSession, run: Run, token: str) -> None:
         server_started = True
         status = await client_start_server(client, config)
 
-        # Topology from what actually ran, not from the config text (invariant 8).
+        # The engine's own version wins over the agent's environment probe: the agent
+        # may live in a separate venv, and it is the engine that produced the numbers.
+        if status.vllm_version:
+            run.vllm_version = status.vllm_version
+
+        # Declared topology is what the config asked for...
         if status.tensor_parallel_size:
             run.tensor_parallel_size = status.tensor_parallel_size
         if status.pipeline_parallel_size:
             run.pipeline_parallel_size = status.pipeline_parallel_size
+
+        # ...and gpu_count is what NVML observed. These are deliberately different
+        # sources. Per-GPU normalization divides by the observed count, so if a config
+        # requested more devices than the host could give, the figures still describe
+        # the hardware that actually ran.
         if status.device_indices:
             run.device_indices = status.device_indices
             run.gpu_count = max(1, len(status.device_indices))

@@ -27,6 +27,7 @@ from pathlib import Path
 
 import httpx
 
+from vllmbench_agent.hardware import devices_for_process
 from vllmbench_agent.reaper import TERM_GRACE_SECONDS, ProcessRegistry
 from vllmbench_protocol.wire import ServerState, ServerStatus
 
@@ -56,6 +57,30 @@ def _spawn(argv: list[str]) -> subprocess.Popen[str]:
     )
 
 
+def _declared_parallelism(config_yaml: str) -> tuple[int | None, int | None]:
+    """Read the parallelism the config *asks* for.
+
+    Narrow line reads rather than a YAML parse, for the same reason the model name is
+    read this way: invariant 5 keeps the config opaque, and a parser would mean having
+    opinions about vLLM options that rot with every release. These values are recorded
+    as the request, never as the outcome.
+    """
+    tp = pp = None
+    for line in config_yaml.splitlines():
+        key, sep, value = line.partition(":")
+        if not sep:
+            continue
+        name = key.strip().replace("-", "_")
+        try:
+            if name == "tensor_parallel_size":
+                tp = int(value.strip())
+            elif name == "pipeline_parallel_size":
+                pp = int(value.strip())
+        except ValueError:
+            continue
+    return tp, pp
+
+
 class VllmServer:
     """Owns at most one vLLM process.
 
@@ -79,6 +104,10 @@ class VllmServer:
         self._started_at: float | None = None
         self._ready_at: float | None = None
         self._error: str | None = None
+        self._engine_version: str | None = None
+        self._device_indices: list[int] | None = None
+        self._declared_tp: int | None = None
+        self._declared_pp: int | None = None
 
     # -- introspection -------------------------------------------------------------
 
@@ -96,6 +125,10 @@ class VllmServer:
             ready_at=self._ready_at,
             error=self._error,
             log_tail=list(self._log),
+            vllm_version=self._engine_version,
+            device_indices=self._device_indices,
+            tensor_parallel_size=self._declared_tp,
+            pipeline_parallel_size=self._declared_pp,
         )
 
     def base_url(self) -> str:
@@ -139,6 +172,7 @@ class VllmServer:
             self._port = port
             self._started_at = time.time()
 
+            self._declared_tp, self._declared_pp = _declared_parallelism(config_yaml)
             config_path = self._write_config(config_yaml)
             argv = [executable, "serve", "--config", str(config_path), "--port", str(port)]
             log.info("starting vLLM: %s", " ".join(argv))
@@ -302,7 +336,15 @@ class VllmServer:
                             self._state = ServerState.READY
                             self._ready_at = time.time()
                             elapsed = self._ready_at - (self._started_at or self._ready_at)
-                            log.info("vLLM ready after %.1fs", elapsed)
+
+                            await self._capture_engine_facts(client, url, process.pid)
+
+                            log.info(
+                                "vLLM ready after %.1fs (version=%s devices=%s)",
+                                elapsed,
+                                self._engine_version,
+                                self._device_indices,
+                            )
                             return
 
                 await asyncio.sleep(READINESS_POLL_SECONDS)
@@ -310,6 +352,33 @@ class VllmServer:
         message = f"vLLM did not become ready within {timeout_seconds:.0f}s"
         self._fail(message)
         raise ServerError(message)
+
+    async def _capture_engine_facts(self, client: httpx.AsyncClient, url: str, pid: int) -> None:
+        """Record what actually came up, as opposed to what was requested.
+
+        Both facts are read from the running engine rather than derived from the config,
+        because the config states an intention and this records an outcome. A config
+        asking for four devices on a two-device host is not an error the engine reports
+        loudly — it is a run that would otherwise claim a topology that never existed.
+        """
+        with contextlib.suppress(httpx.HTTPError, ValueError):
+            response = await client.get(f"{url}/version")
+            if response.status_code == 200:
+                self._engine_version = response.json().get("version")
+
+        devices = await asyncio.to_thread(devices_for_process, pid)
+        self._device_indices = devices or None
+
+        if devices and self._declared_tp and len(devices) != self._declared_tp:
+            # Not fatal, but never silent: per-GPU normalization uses the observed
+            # count, so this changes what the numbers mean.
+            log.warning(
+                "config asked for tensor_parallel_size=%d but the engine is on %d "
+                "device(s) %s; per-GPU figures will use the observed count",
+                self._declared_tp,
+                len(devices),
+                devices,
+            )
 
     async def reset_caches(self) -> list[str]:
         """Call every ``/reset_*_cache`` endpoint the server exposes.

@@ -6,6 +6,8 @@ has to be testable on hardware that has no NVIDIA driver, or CI cannot cover it 
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import httpx
 import pytest
 
@@ -158,3 +160,88 @@ class TestAgentClient:
             )
             info = await client.host_info(check_protocol=False)
             assert info.protocol_version == PROTOCOL_VERSION
+
+
+class TestVllmVersionProbe:
+    """A null version must explain itself.
+
+    On the first real GPU host this came back null and the payload gave no clue whether
+    vLLM was missing, off PATH, or merely slow to import — three problems with three
+    different fixes.
+    """
+
+    def test_detail_explains_a_missing_binary(
+        self, tmp_path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from vllmbench_agent.hardware import probe_vllm_version
+
+        probe_vllm_version.cache_clear()
+        monkeypatch.setenv("PATH", str(tmp_path / "empty"))
+        version, detail = probe_vllm_version()
+        probe_vllm_version.cache_clear()
+
+        assert version is None
+        assert "PATH" in detail
+
+    def test_version_is_reported_with_its_source(
+        self, tmp_path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import os
+        import stat
+
+        from vllmbench_agent.hardware import probe_vllm_version
+
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        target = bin_dir / "vllm"
+        target.write_text((Path(__file__).parent / "fixtures" / "fake_vllm").read_text())
+        target.chmod(target.stat().st_mode | stat.S_IEXEC)
+        monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+
+        probe_vllm_version.cache_clear()
+        version, detail = probe_vllm_version()
+        probe_vllm_version.cache_clear()
+
+        assert version == "0.25.1"
+        assert "vllm --version" in detail
+
+    def test_host_info_carries_the_detail(self, client: httpx.AsyncClient) -> None:
+        # Synchronous by design — this asserts the field exists on the wire.
+        assert "vllm_probe_detail" in HostInfo.model_fields
+
+
+class TestDeclaredParallelism:
+    """The config's request, recorded as a request rather than an outcome."""
+
+    def test_reads_both_forms(self) -> None:
+        from vllmbench_agent.vllm_server import _declared_parallelism
+
+        assert _declared_parallelism("tensor_parallel_size: 4\n") == (4, None)
+        assert _declared_parallelism("tensor-parallel-size: 2\n") == (2, None)
+        assert _declared_parallelism("pipeline_parallel_size: 3\n") == (None, 3)
+
+    def test_absent_means_none_not_one(self) -> None:
+        # None and 1 mean different things: "not specified" versus "explicitly single".
+        # Defaulting to 1 here would erase the distinction before it reaches the run.
+        from vllmbench_agent.vllm_server import _declared_parallelism
+
+        assert _declared_parallelism("model: m\n") == (None, None)
+
+    def test_garbage_is_ignored_rather_than_raising(self) -> None:
+        from vllmbench_agent.vllm_server import _declared_parallelism
+
+        assert _declared_parallelism("tensor_parallel_size: lots\n") == (None, None)
+
+
+class TestDeviceAttribution:
+    def test_returns_empty_without_nvml(self) -> None:
+        """No GPUs is a legitimate answer, not an error.
+
+        The caller treats an empty list as "could not attribute", and falls back to the
+        declared count rather than claiming zero devices.
+        """
+        import os
+
+        from vllmbench_agent.hardware import devices_for_process
+
+        assert devices_for_process(os.getpid()) == []
