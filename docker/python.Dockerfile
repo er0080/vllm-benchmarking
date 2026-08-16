@@ -16,7 +16,10 @@ ENV UV_COMPILE_BYTECODE=1 \
 
 # Workspace metadata first: dependency resolution is the slow layer and changes far less
 # often than source does.
-COPY pyproject.toml uv.lock VERSION ./
+# VLLM_REFERENCE_VERSION must be in the image: without it the control plane silently
+# reports "no reference version" and the vLLM drift warning never fires — a degradation
+# that looks like everything is fine.
+COPY pyproject.toml uv.lock VERSION VLLM_REFERENCE_VERSION ./
 COPY packages/protocol/pyproject.toml ./packages/protocol/
 COPY packages/db/pyproject.toml ./packages/db/
 COPY packages/api/pyproject.toml ./packages/api/

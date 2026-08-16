@@ -5,6 +5,9 @@ description = "Mock agent implementing the agent contract with synthetic data, f
 requires-python = ">=3.11,<3.14"
 dependencies = [
     "vllmbench-protocol",
+    # Reuses the real agent's auth so the mock cannot drift into accepting
+    # credentials the real one would reject.
+    "vllmbench-agent",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
 ]

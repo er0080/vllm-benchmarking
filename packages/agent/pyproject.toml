@@ -12,6 +12,9 @@ dependencies = [
     "nvidia-ml-py>=12.560",
 ]
 
+[project.scripts]
+vllmbench-agent = "vllmbench_agent.main:main"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

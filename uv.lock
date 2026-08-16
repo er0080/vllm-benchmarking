@@ -910,6 +910,11 @@ dependencies = [
     { name = "vllmbench-protocol" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "vllmbench-mockagent" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "fastapi", specifier = ">=0.115" },
@@ -919,6 +924,9 @@ requires-dist = [
     { name = "vllmbench-db", editable = "packages/db" },
     { name = "vllmbench-protocol", editable = "packages/protocol" },
 ]
+
+[package.metadata.requires-dev]
+dev = [{ name = "vllmbench-mockagent", editable = "packages/mockagent" }]
 
 [[package]]
 name = "vllmbench-db"
@@ -946,6 +954,7 @@ source = { editable = "packages/mockagent" }
 dependencies = [
     { name = "fastapi" },
     { name = "uvicorn", extra = ["standard"] },
+    { name = "vllmbench-agent" },
     { name = "vllmbench-protocol" },
 ]
 
@@ -953,6 +962,7 @@ dependencies = [
 requires-dist = [
     { name = "fastapi", specifier = ">=0.115" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.32" },
+    { name = "vllmbench-agent", editable = "packages/agent" },
     { name = "vllmbench-protocol", editable = "packages/protocol" },
 ]
 
@@ -980,11 +990,15 @@ name = "vllmbench-protocol"
 version = "0.1.0"
 source = { editable = "packages/protocol" }
 dependencies = [
+    { name = "httpx" },
     { name = "pydantic" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "pydantic", specifier = ">=2.9" }]
+requires-dist = [
+    { name = "httpx", specifier = ">=0.28" },
+    { name = "pydantic", specifier = ">=2.9" },
+]
 
 [[package]]
 name = "watchfiles"
