@@ -1,10 +1,15 @@
-# Proposal 0001 — MCP server for agent-driven benchmarking
+# ADR 0001 — MCP server for agent-driven benchmarking
 
-- **Status:** proposed, decisions locked
+- **Status:** accepted
 - **Issue:** #2
-- **Target:** pre-1.0.0
+- **Accepted in:** #4
+- **Graduated from proposal in:** #5
+- **Milestone:** 0.6.0
 - **Supersedes:** nothing
-- **On acceptance:** graduates to `docs/adr/` and the roadmap is amended
+
+> Accepted. The decisions below are binding; changing one requires a superseding ADR, not
+> an edit to this file. Rejected alternatives are retained deliberately — they are the
+> record of why the project is not doing the obvious other thing.
 
 ---
 
@@ -18,8 +23,7 @@ Decided, in one line: **mount a Streamable HTTP MCP server at `/mcp` on the exis
 service, targeting the 2026-07-28 specification, authenticated by bearer token, shipping
 read and write tools together.**
 
-Every option below is recorded with its rejected alternatives. Rejections are as much a
-part of the record as the choices.
+Scheduled as roadmap milestone **0.6.0**.
 
 ---
 
@@ -278,20 +282,18 @@ under a read-only-first rollout. They are load-bearing, not decorative.
 
 ## Decision 5 — Milestone placement
 
-**A new milestone after 0.5.0**, renumbering later milestones.
+**Milestone 0.6.0**, inserted after Analysis, with later milestones renumbered.
 
 | Option | Assessment |
 | --- | --- |
 | **New milestone after 0.5.0** | **Chosen.** The valuable analysis tools depend on 0.5.0 and the control tools on 0.4.0. MCP is a distinct interface with its own surface and safety story; hiding it inside another milestone understates it. |
-| Fold into 0.7.0 Interop | Rejected. Thematically defensible, but it would dominate a milestone otherwise made of importers and exporters. |
+| Fold into Interop | Rejected. Thematically defensible, but it would dominate a milestone otherwise made of importers and exporters. |
 | Defer to post-1.0 | Rejected. Contradicts the pre-1.0.0 requirement in #2. |
-
-Renumbering is not part of this PR. The roadmap is amended on acceptance, per the header.
 
 ---
 
-## What acceptance means
+## Scope of this decision
 
-Accepting this proposal commits to the placement, transport, authentication, input
-formats, estimation strategy, read/write split, and guardrails above. Exact tool names and
-argument shapes will firm up during implementation and do not require re-approval.
+This ADR binds the placement, transport, authentication, input formats, estimation
+strategy, read/write split, and guardrails above. Exact tool names and argument shapes
+will firm up during implementation and do not require a superseding ADR.

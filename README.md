@@ -25,6 +25,8 @@ This framework:
 - **Records** benchmark results, engine telemetry, and GPU telemetry to PostgreSQL.
 - **Displays** them as Pareto frontiers, saturation curves, and per-run timelines.
 - **Stores** server configurations as native vLLM YAML, directly usable with `vllm serve --config`.
+- **Exposes** all of the above over MCP, so Claude Code and similar agent harnesses can
+  drive a tuning loop directly. Planned for 0.6.0; see [ADR 0001](docs/adr/0001-mcp-server-interface.md).
 
 ---
 
@@ -164,5 +166,6 @@ Open http://localhost:8080, register the GPU host, and author your first sweep.
 
 - [ROADMAP.md](ROADMAP.md) — milestones, scope, and definition of done for 1.0.0
 - [CLAUDE.md](CLAUDE.md) — architecture invariants and development conventions
+- [docs/adr/](docs/adr/) — accepted architecture decisions and the alternatives they rejected
 - [vLLM Benchmark CLI](https://docs.vllm.ai/en/v0.25.1/benchmarking/cli/) — upstream reference
 - [vLLM Parameter Sweeps](https://docs.vllm.ai/en/v0.25.1/benchmarking/sweeps/) — upstream sweep tooling

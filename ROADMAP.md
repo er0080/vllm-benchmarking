@@ -5,7 +5,7 @@ a layer that only pays off later. The first real proof point is 0.2.0 — one co
 workload, one number, in the database, on screen.
 
 Versions are pre-1.0 and make no compatibility promises. The database schema may change
-destructively before 0.8.0.
+destructively before 0.9.0.
 
 ---
 
@@ -110,9 +110,43 @@ notebook.
 
 ---
 
-## 0.6.0 — Configuration management
+## 0.6.0 — Agent interface (MCP)
 
-- [ ] YAML editor with validation against the target vLLM version's accepted arguments
+Per [ADR 0001](docs/adr/0001-mcp-server-interface.md). Placed here because the valuable
+analysis tools depend on 0.5.0 and the control tools on 0.4.0.
+
+- [ ] Streamable HTTP MCP server mounted at `/mcp` on `api`, targeting the 2026-07-28
+      spec, behind `VLLMBENCH_MCP_ENABLED`
+- [ ] Bearer token auth; default bind makes accidental exposure hard, and the docs state
+      plainly that `/mcp` is LAN-only
+- [ ] Config **validation engine** — checks a candidate YAML against the target vLLM
+      version's accepted arguments and returns structured, actionable errors. Pulled
+      forward from 0.7.0: `validate_config` needs it, and 0.7.0's YAML editor is a UI over
+      this engine rather than a separate implementation.
+- [ ] Read tools — `list_hosts`, `list_configs` / `get_config`, `validate_config`,
+      `list_workloads`, `list_sweeps` / `get_sweep`, `query_runs`, `get_run`,
+      `get_run_telemetry`, `compare_runs`, `get_pareto`
+- [ ] Write tools, enabled by default — `create_config`, `create_workload`,
+      `create_sweep`, `start_sweep`, `cancel_sweep`. No tool mutates or deletes a run.
+- [ ] MCP resources: `vllmbench://config/{hash}`, `vllmbench://sweep/{id}/report`
+- [ ] Context economy: pagination with a hard maximum, summary fields by default,
+      server-side telemetry downsampling
+- [ ] `initiated_by` provenance on sweeps and runs (`ui` / `mcp` / `api`) plus client
+      identity where available
+- [ ] `get_sweep` returns `estimated_remaining`, extrapolated from completed points
+- [ ] Guardrails: one active sweep per host enforced in the domain layer, bounded matrix
+      size, exact run count with a structured duration estimate, audit log of write calls
+
+**Done when:** an agent connected over MCP can author a config, define and start a sweep,
+poll it to completion, and read back a per-GPU normalized Pareto frontier — without
+touching the UI.
+
+---
+
+## 0.7.0 — Configuration management
+
+- [ ] YAML editor surfacing the validation engine from 0.6.0 — one implementation, two
+      interfaces
 - [ ] Content-addressed config storage and lineage (which config was derived from which)
 - [ ] Export a config for direct use with `vllm serve --config`
 - [ ] Import an existing YAML
@@ -123,7 +157,7 @@ production unchanged.
 
 ---
 
-## 0.7.0 — Interop
+## 0.8.0 — Interop
 
 - [ ] Importer for upstream `vllm bench sweep serve` output directories
 - [ ] CSV and JSON export of any result set
@@ -135,7 +169,7 @@ produced inside it can be handed to someone who does not run it.
 
 ---
 
-## 0.8.0 — Hardening
+## 0.9.0 — Hardening
 
 - [ ] Schema stabilized; forward-only migrations from here
 - [ ] Failure handling: agent unreachable, vLLM OOM, model load failure, benchmark timeout
@@ -145,12 +179,12 @@ produced inside it can be handed to someone who does not run it.
 - [ ] Test coverage on the JSON-to-column flattening layer
 - [ ] Migration CI: applied against an empty database and one seeded at the previous tag
 
-**Done when:** every failure mode identified during 0.2–0.7 has a defined behavior and a
+**Done when:** every failure mode identified during 0.2–0.8 has a defined behavior and a
 test.
 
 ---
 
-## 0.9.0 — Release candidate
+## 0.10.0 — Release candidate
 
 - [ ] Quick start verified from a clean control host and a clean GPU host
 - [ ] Agent installation guide
@@ -176,13 +210,15 @@ the agent is installed from a git tag.
    following the README alone.
 2. A sweep of at least 24 points runs unattended to completion without manual intervention.
 3. Every recorded run states its full provenance: vLLM version, agent version, GPU, driver,
-   config hash, dataset identity.
+   config hash, dataset identity, parallelism topology, and what initiated it.
 4. No orphaned vLLM process or held VRAM after any normal or cancelled sweep.
 5. The database schema is stable and migrations are forward-only.
 6. A tuning decision can be made from the UI without external tooling.
 7. The stack runs with equal fidelity on native Linux and on macOS with Colima.
 8. A tensor-parallel sweep across TP sizes completes and charts per-GPU normalized
    throughput, with per-device telemetry available for every run in it.
+9. An agent harness connected over MCP can complete a full tuning loop — author a config,
+   run a sweep, read the results — without touching the UI.
 
 ---
 
