@@ -245,3 +245,42 @@ class TestDeviceAttribution:
         from vllmbench_agent.hardware import devices_for_process
 
         assert devices_for_process(os.getpid()) == []
+
+
+class TestProtocolCheckPrecedesValidation:
+    """A version mismatch must be reported as one, whatever the payload looks like.
+
+    The wire models forbid unknown fields, so a newer counterpart's payload fails
+    validation outright. If validation runs first, the one situation the version check
+    exists to explain surfaces as "extra inputs are not permitted" naming some field —
+    which is what a stale control plane actually did against a real host.
+    """
+
+    async def test_mismatch_wins_over_an_unknown_field(self) -> None:
+        from fastapi import FastAPI
+
+        # An agent from the future: newer protocol, and a field this build cannot parse.
+        future = FastAPI()
+
+        @future.get("/host-info")
+        async def host_info() -> dict[str, object]:
+            return {
+                "protocol_version": PROTOCOL_VERSION + 1,
+                "agent_version": "9.9.9",
+                "hostname": "future-host",
+                "gpus": [],
+                "a_field_from_the_future": True,
+            }
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=future), base_url="http://agent"
+        ) as http:
+            client = AgentClient("http://agent", TOKEN, client=http)
+            with pytest.raises(ProtocolMismatch) as exc:
+                await client.host_info()
+
+        message = str(exc.value)
+        assert str(PROTOCOL_VERSION + 1) in message
+        assert str(PROTOCOL_VERSION) in message
+        # Not a validation error about some field name the operator has never heard of.
+        assert "extra" not in message.lower()
