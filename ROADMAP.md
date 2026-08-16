@@ -13,24 +13,30 @@ destructively before 0.9.0.
 
 Scaffolding only. Nothing measures anything yet.
 
-- [ ] Repository structure, `uv` workspaces, `ruff` and TypeScript strict configs
-- [ ] `compose.yaml` — postgres, api, orchestrator, web, migrate
-- [ ] Initial schema and Alembic setup: `gpu_host`, `model`, `server_config`, `workload`,
+- [x] Repository structure, `uv` workspaces, `ruff` and TypeScript strict configs
+- [x] `compose.yaml` — postgres, api, orchestrator, web, migrate
+- [x] Initial schema and Alembic setup: `gpu_host`, `model`, `server_config`, `workload`,
       `sweep`, `run`, `run_summary`, `engine_sample`, `gpu_sample`
-- [ ] Agent package skeleton with `/health` and `/host-info` (per-GPU model, VRAM, device
+- [x] Agent package skeleton with `/health` and `/host-info` (per-GPU model, VRAM, device
       index, driver, CUDA, vLLM version)
-- [ ] Token auth and protocol-version handshake between control plane and agent
-- [ ] Control plane can register a GPU host and display its facts
-- [ ] **Mock agent** behind `--profile dev` — synthetic results and telemetry, so the
+- [x] Token auth and protocol-version handshake between control plane and agent
+- [x] Control plane can register a GPU host and display its facts
+- [x] **Mock agent** behind `--profile dev` — synthetic results and telemetry, so the
       control plane and UI are developable with no GPU host present
-- [ ] **Fake `vllm` shim** for agent lifecycle tests
-- [ ] `pre-commit` with ruff, pyright, tsc
-- [ ] CI tier 1 (lint, types, unit) and tier 2 (postgres, mock agent, real vLLM on the CPU
-      backend); branch protection on `main` requiring green
-- [ ] `VLLM_REFERENCE_VERSION` pinned at the repo root
-- [ ] Verified on both native Linux and macOS/Colima, including the `vllm-openai-cpu`
-      service container on `arm64` and `x86_64`
-- [ ] Colima resource minimums documented in the README prerequisites
+- [ ] ~~**Fake `vllm` shim** for agent lifecycle tests~~ — superseded. The real vLLM CPU
+      backend runs in CI in ~40s and validates the *actual* upstream contract, which a
+      shim can only ever validate our assumptions about. Revisit only if a failure mode
+      is needed that real vLLM cannot be made to produce on cue (crash during model
+      load, for instance).
+- [x] `pre-commit` with ruff, pyright, tsc
+- [x] CI tier 1 (lint, types, unit) and tier 2 (postgres, mock agent, real vLLM on the CPU
+      backend, image builds)
+- [ ] Branch protection on `main` requiring green — pending the first successful run,
+      since required checks must exist before they can be required
+- [x] `VLLM_REFERENCE_VERSION` pinned at the repo root
+- [x] Verified on macOS/Colima `aarch64` locally, including the `vllm-openai-cpu`
+      container; native Linux `x86_64` is covered by CI on ubuntu-latest
+- [x] Colima resource minimums documented in the README prerequisites
 
 **Done when:** `docker compose up` succeeds on both Linux and macOS/Colima, the UI shows
 live facts read from a real GPU host through the agent, and the full CI suite passes

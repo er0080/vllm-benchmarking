@@ -277,6 +277,35 @@ never silently overlay results across versions.
 
 ---
 
+## Upstream contracts are verified, never assumed
+
+**Do not write code against vLLM's documentation. Write it against a captured payload.**
+
+This is not a general caution; it already cost real work. The published benchmarking docs
+describe `--save-result` fields named `successful_requests`, `benchmark_duration_sec` and
+`ttft_ms_p99`. vLLM 0.25.1 emits `completed`, `duration` and `p99_ttft_ms`. A flattening
+layer written from the docs would have parsed cleanly, reported success, and written NULL
+for every metric — the exact silent corruption this project exists to avoid.
+
+So, whenever consuming something vLLM produces:
+
+1. **Capture a real payload first**, from the CPU backend if no GPU is at hand, and check
+   it into `tests/fixtures/`. A hand-written fixture encodes the author's belief about
+   the format, which is the belief under test.
+2. **Pin the field names in one place** — `vllmbench_protocol.bench_result` and
+   `.metrics` — so there is a single thing to correct when upstream moves.
+3. **Have tier 2 re-derive the contract from a live server**, so a vLLM upgrade that
+   renames a field fails a test instead of corrupting a sweep.
+4. **Fail loudly on a payload that does not match.** A summary row full of NULLs is
+   indistinguishable from a benchmark that legitimately measured nothing.
+
+The same reasoning applies to `/metrics`: there is no prefix-cache hit-rate gauge, only
+`prefix_cache_queries_total` and `prefix_cache_hits_total`. Store counters, derive rates.
+Counters can be differenced across any window; a rate sampled at an instant cannot be
+recovered.
+
+---
+
 ## Platform support
 
 The stack must run with minimal friction on both traditional Linux and macOS with
