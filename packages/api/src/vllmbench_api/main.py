@@ -14,6 +14,8 @@ from typing import Any
 from fastapi import FastAPI
 from sqlalchemy import text
 
+from vllmbench_api.routers import hosts
+from vllmbench_api.settings import ApiSettings
 from vllmbench_db.session import create_engine, create_session_factory
 from vllmbench_protocol import PROTOCOL_VERSION, __version__
 
@@ -25,6 +27,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     engine = create_engine()
     app.state.engine = engine
     app.state.sessions = create_session_factory(engine)
+    app.state.settings = ApiSettings()
     log.info("api %s (protocol %d) started", __version__, PROTOCOL_VERSION)
     try:
         yield
@@ -39,6 +42,8 @@ app = FastAPI(
     docs_url="/api/docs",
     openapi_url="/api/openapi.json",
 )
+
+app.include_router(hosts.router)
 
 
 @app.get("/api/health")

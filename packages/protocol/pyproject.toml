@@ -5,6 +5,11 @@ description = "Wire types and protocol version shared by the control plane and t
 requires-python = ">=3.11,<3.14"
 dependencies = [
     "pydantic>=2.9",
+    # For AgentClient. This package installs into the user's vLLM environment, so its
+    # dependencies land on the system under test — httpx is acceptable because the agent
+    # already needs it to scrape vLLM's /metrics. Weigh anything else added here the
+    # same way.
+    "httpx>=0.28",
 ]
 
 [build-system]

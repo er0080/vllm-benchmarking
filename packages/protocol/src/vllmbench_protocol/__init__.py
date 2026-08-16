@@ -7,6 +7,27 @@ here lands on the system under test.
 
 from __future__ import annotations
 
+from vllmbench_protocol.client import AgentClient
+from vllmbench_protocol.errors import (
+    AgentAuthError,
+    AgentError,
+    AgentUnreachable,
+    ProtocolMismatch,
+)
 from vllmbench_protocol.version import PROTOCOL_VERSION, __version__
+from vllmbench_protocol.wire import AUTH_HEADER, AUTH_SCHEME, GpuInfo, HealthResponse, HostInfo
 
-__all__ = ["PROTOCOL_VERSION", "__version__"]
+__all__ = [
+    "AUTH_HEADER",
+    "AUTH_SCHEME",
+    "PROTOCOL_VERSION",
+    "AgentAuthError",
+    "AgentClient",
+    "AgentError",
+    "AgentUnreachable",
+    "GpuInfo",
+    "HealthResponse",
+    "HostInfo",
+    "ProtocolMismatch",
+    "__version__",
+]

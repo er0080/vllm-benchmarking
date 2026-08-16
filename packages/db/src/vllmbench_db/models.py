@@ -84,6 +84,12 @@ class GpuHost(Base):
     gpu_count: Mapped[int] = mapped_column(Integer, default=0)
     last_seen_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
 
+    # Declared by the agent itself, never inferred here (invariant 7). A host backed by
+    # the mock agent produces synthetic runs, and this is where that propagates from.
+    # Inferring it instead — "the GPU model looks made up" — would eventually mark a
+    # synthetic run as real, silently.
+    synthetic_source: Mapped[str | None] = mapped_column(String(32))
+
     created_at: Mapped[dt.datetime] = created_at_column()
 
     devices: Mapped[list[GpuDevice]] = relationship(

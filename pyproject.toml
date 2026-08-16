@@ -14,6 +14,8 @@ members = ["packages/*"]
 [tool.uv.sources]
 vllmbench-protocol = { workspace = true }
 vllmbench-db = { workspace = true }
+vllmbench-agent = { workspace = true }
+vllmbench-mockagent = { workspace = true }
 
 [dependency-groups]
 dev = [
