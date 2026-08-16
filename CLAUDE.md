@@ -46,8 +46,10 @@ explicit discussion, not a refactor.
    be translated. Validate; do not transform.
 
 6. **Every run records its provenance.** vLLM version, agent version, GPU model, driver
-   version, config hash, and dataset identity are captured on every run. A run that cannot
-   state what produced it is not a valid result.
+   version, config hash, dataset identity, and `initiated_by` (`ui` / `mcp` / `api`, plus
+   client identity where available) are captured on every run. A run that cannot state
+   what produced it is not a valid result — and once more than one interface can start a
+   sweep, "what produced it" includes which interface asked.
 
 7. **Synthetic runs are quarantined.** Any run produced by the CPU backend, the fake
    `vllm` shim, or the mock agent is marked as such at the moment of creation and can
