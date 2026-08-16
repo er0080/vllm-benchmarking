@@ -14,8 +14,9 @@ from typing import Any
 from fastapi import FastAPI
 from sqlalchemy import text
 
-from vllmbench_api.routers import hosts
+from vllmbench_api.routers import hosts, runs
 from vllmbench_api.settings import ApiSettings
+from vllmbench_db.schema_version import check_schema_version
 from vllmbench_db.session import create_engine, create_session_factory
 from vllmbench_protocol import PROTOCOL_VERSION, __version__
 
@@ -28,6 +29,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.engine = engine
     app.state.sessions = create_session_factory(engine)
     app.state.settings = ApiSettings()
+
+    # Checked once, at startup. A schema behind the code fails later as an opaque
+    # Postgres type error in whatever request happens to write first.
+    try:
+        app.state.schema = await check_schema_version(engine)
+    except Exception as exc:
+        log.warning("could not check schema version: %s", exc)
+        app.state.schema = None
+
     log.info("api %s (protocol %d) started", __version__, PROTOCOL_VERSION)
     try:
         yield
@@ -44,6 +54,7 @@ app = FastAPI(
 )
 
 app.include_router(hosts.router)
+app.include_router(runs.router)
 
 
 @app.get("/api/health")
@@ -64,11 +75,19 @@ async def health() -> dict[str, Any]:
         detail = str(exc)
         log.warning("health check: database unreachable: %s", exc)
 
+    schema = getattr(app.state, "schema", None)
+    schema_ok = schema is None or schema.ok
+
     return {
-        "status": "ok" if database_ok else "degraded",
+        # Degraded rather than ok on a stale schema: the service answers, but writes
+        # will fail, and reporting healthy would hide that until the first run.
+        "status": "ok" if database_ok and schema_ok else "degraded",
         "version": __version__,
         "protocol_version": PROTOCOL_VERSION,
         "database": {"ok": database_ok, "detail": detail},
+        "schema": None
+        if schema is None
+        else {"ok": schema.ok, "applied": schema.applied, "expected": schema.expected},
     }
 
 

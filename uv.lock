@@ -1001,6 +1001,11 @@ dependencies = [
     { name = "vllmbench-protocol" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "vllmbench-mockagent" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "httpx", specifier = ">=0.28" },
@@ -1008,6 +1013,9 @@ requires-dist = [
     { name = "vllmbench-db", editable = "packages/db" },
     { name = "vllmbench-protocol", editable = "packages/protocol" },
 ]
+
+[package.metadata.requires-dev]
+dev = [{ name = "vllmbench-mockagent", editable = "packages/mockagent" }]
 
 [[package]]
 name = "vllmbench-protocol"

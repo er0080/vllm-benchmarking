@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { api } from "./api";
+import { RunsView } from "./RunsView";
 import type { Host } from "./types";
 
 function formatBytes(bytes: number | null): string {
@@ -185,7 +186,7 @@ export function App() {
     <div className="page">
       <header>
         <h1>vLLM Benchmarking</h1>
-        <p>Milestone 0.1.0 — GPU host registry.</p>
+        <p>Milestone 0.2.0 — single run, end to end.</p>
       </header>
 
       <section>
@@ -213,6 +214,8 @@ export function App() {
           <HostCard key={host.id} host={host} onChanged={load} />
         ))}
       </section>
+
+      <RunsView />
     </div>
   );
 }

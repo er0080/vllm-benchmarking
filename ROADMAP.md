@@ -52,16 +52,20 @@ working.
 
 The vertical slice. This is the milestone that proves the architecture.
 
-- [ ] Agent: launch `vllm serve --config <yaml>`, poll `/health` to true readiness,
+- [x] Agent: launch `vllm serve --config <yaml>`, poll `/health` to true readiness,
       capture logs, tear down cleanly
-- [ ] Agent: run `vllm bench serve --save-result`, return parsed JSON
-- [ ] Agent: reap orphaned vLLM processes on startup
-- [ ] Control plane: flatten benchmark JSON into `run_summary`, retain raw `jsonb`
-- [ ] UI: define one server config and one workload, trigger a run, watch it progress,
+- [x] Agent: run `vllm bench serve --save-result`, return parsed JSON
+- [x] Agent: reap orphaned vLLM processes on startup
+- [x] Control plane: flatten benchmark JSON into `run_summary`, retain raw `jsonb`
+- [x] UI: define one server config and one workload, trigger a run, watch it progress,
       view the result
 
 **Done when:** a single benchmark run is triggered from the browser and its TTFT, TPOT,
 ITL, and throughput figures land in Postgres and render on a run detail page.
+
+**Status:** complete against the mock agent — queued → starting → benchmarking →
+succeeded, with provenance, topology and per-GPU normalization recorded. The real-vLLM
+half is listed in [docs/hardware-verification.md](docs/hardware-verification.md).
 
 ---
 
