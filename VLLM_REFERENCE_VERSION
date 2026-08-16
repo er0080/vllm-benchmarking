@@ -1,0 +1,6 @@
+# The vLLM version CI tier 2 validates against, per CLAUDE.md "vLLM version policy".
+#
+# Bumping this is an explicit, deliberate change — never an incidental one. A mismatch
+# between this and the version running on a GPU host is a warning, never a hard failure:
+# benchmarking one vLLM version against another is a supported use of this tool.
+0.25.1

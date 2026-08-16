@@ -1,0 +1,47 @@
+# Do not bypass these with --no-verify. If a hook is wrong, fix the hook.
+# See CLAUDE.md, "Pre-commit".
+default_install_hook_types: [pre-commit]
+fail_fast: false
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-added-large-files
+        args: [--maxkb=512]
+      - id: check-merge-conflict
+      - id: check-yaml
+      - id: check-toml
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: detect-private-key
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.14.0
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: local
+    hooks:
+      - id: check-versions
+        name: package versions match VERSION
+        entry: python3 scripts/check_versions.py
+        language: system
+        pass_filenames: false
+        files: '(VERSION|pyproject\.toml|version\.py)$'
+
+      - id: pyright
+        name: pyright
+        entry: uv run pyright
+        language: system
+        types: [python]
+        pass_filenames: false
+
+      - id: tsc
+        name: tsc --noEmit
+        entry: bash -c 'cd web && npx --no-install tsc --noEmit'
+        language: system
+        files: ^web/.*\.(ts|tsx)$
+        pass_filenames: false
