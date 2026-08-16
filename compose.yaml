@@ -1,0 +1,133 @@
+# Control-plane stack. No GPU dependency anywhere in this file, by design: the GPU host
+# runs the agent natively via uv and is reached over HTTP (invariants 1 and 3).
+#
+# Must work identically on native Linux and macOS with Colima. No absolute host paths, no
+# host-gateway aliases, no assumptions about UID/GID mapping.
+
+name: vllmbench
+
+x-python-build: &python-build
+  context: .
+  dockerfile: docker/python.Dockerfile
+
+x-db-env: &db-env
+  DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-vllmbench}:${POSTGRES_PASSWORD:-vllmbench}@postgres:5432/${POSTGRES_DB:-vllmbench}
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-vllmbench}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-vllmbench}
+      POSTGRES_DB: ${POSTGRES_DB:-vllmbench}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # Both user and database named explicitly: bare pg_isready reports ready while the
+      # target database is still being created on first boot, and migrate then fails.
+      test:
+        ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-vllmbench} -d ${POSTGRES_DB:-vllmbench}"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+  migrate:
+    build:
+      <<: *python-build
+      args:
+        PACKAGE: vllmbench-db
+    environment: *db-env
+    working_dir: /app/packages/db
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build:
+      <<: *python-build
+      args:
+        PACKAGE: vllmbench-api
+    environment:
+      <<: *db-env
+      VLLMBENCH_AGENT_URL: ${VLLMBENCH_AGENT_URL:-}
+      VLLMBENCH_TOKEN: ${VLLMBENCH_TOKEN:-}
+      VLLMBENCH_MCP_ENABLED: ${VLLMBENCH_MCP_ENABLED:-false}
+      VLLMBENCH_MCP_WRITE_ENABLED: ${VLLMBENCH_MCP_WRITE_ENABLED:-true}
+    command:
+      ["uvicorn", "vllmbench_api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "${API_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8000/api/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  orchestrator:
+    build:
+      <<: *python-build
+      args:
+        PACKAGE: vllmbench-orchestrator
+    environment:
+      <<: *db-env
+      VLLMBENCH_AGENT_URL: ${VLLMBENCH_AGENT_URL:-}
+      VLLMBENCH_TOKEN: ${VLLMBENCH_TOKEN:-}
+    command: ["python", "-m", "vllmbench_orchestrator"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  web:
+    build:
+      context: .
+      dockerfile: docker/web.Dockerfile
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    depends_on:
+      - api
+
+  # --- dev profile: everything below lets the stack run with no GPU host present ---
+
+  mockagent:
+    profiles: ["dev"]
+    build:
+      <<: *python-build
+      args:
+        PACKAGE: vllmbench-mockagent
+    environment:
+      VLLMBENCH_TOKEN: ${VLLMBENCH_TOKEN:-dev-token}
+    command:
+      ["uvicorn", "vllmbench_mockagent.main:app", "--host", "0.0.0.0", "--port", "9110"]
+    ports:
+      - "9110:9110"
+
+  web-dev:
+    profiles: ["dev"]
+    image: node:22-alpine
+    working_dir: /app
+    command: ["sh", "-c", "npm ci && npm run dev -- --host 0.0.0.0"]
+    volumes:
+      - ./web:/app
+      - web_node_modules:/app/node_modules
+    ports:
+      - "5173:5173"
+    depends_on:
+      - api
+
+volumes:
+  pgdata:
+  web_node_modules:
