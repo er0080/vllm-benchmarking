@@ -54,6 +54,14 @@ explicit discussion, not a refactor.
    never appear in a chart, a comparison, or an export alongside real measurements. This
    flag is set by the producer, not inferred later.
 
+8. **Throughput is normalized by GPU count.** Single-host multi-GPU is in scope and tensor
+   parallelism is a first-class sweep dimension, so raw aggregate throughput is not a
+   comparable number: a TP=4 run trivially out-throughputs a TP=1 run while potentially
+   being far worse per device. Every throughput figure carries both its aggregate and its
+   per-GPU value, and comparison views default to per-GPU. Parallelism topology
+   (`tensor_parallel_size`, `pipeline_parallel_size`, GPU count and device indices) is
+   provenance under invariant 6 and is never inferred from the config text after the fact.
+
 ---
 
 ## Tech stack
@@ -77,6 +85,9 @@ explicit discussion, not a refactor.
   wrong, the raw record lets us recompute. Never discard the original.
 - **Time-series tables are append-only.** `engine_sample`, `gpu_sample`, and
   `request_sample` are never updated in place.
+- **`gpu_sample` is keyed per device**, on `(run_id, gpu_index, sampled_at)`. Never
+  aggregate at write time — a host-level average destroys the imbalance signal that makes
+  a tensor-parallel run diagnosable.
 - **Configs are content-addressed.** A `server_config` is identified by the hash of its
   canonicalized YAML. Two runs claiming the same config must have byte-identical effective
   configuration.
@@ -131,9 +142,29 @@ The agent runs on the machine under test. Its resource footprint is part of its 
 
 ## Development workflow
 
+### Everything starts as an issue
+
+All development, pre- and post-1.0.0, is driven by GitHub Issues. GitHub is the system of
+record for change management, not a mirror of decisions made elsewhere.
+
+- **No PR without an issue.** If work is worth doing, it is worth an issue first. Open one
+  rather than skipping the step.
+- **Label every issue** — at minimum a type (`enhancement`, `bug`, `documentation`) and
+  the target milestone.
+- **Milestones map to roadmap versions** (`0.1.0`, `0.2.0`, …). An issue with no milestone
+  is unscheduled work, and that should be a deliberate state rather than an oversight.
+- **Cross-link in both directions.** PR bodies use closing keywords (`Closes #12`) so the
+  issue closes on merge. When a PR partially addresses an issue, say which part and link
+  without a closing keyword.
+- **Design discussion belongs in the issue**, not the PR. The issue is where a decision
+  and its rejected alternatives are recorded; the PR is where the implementation of that
+  decision is reviewed. Decisions that outlive the issue graduate to `docs/adr/`.
+
 ### Branching
 
-- Short-lived feature branches off `main`. `main` is protected and always deployable.
+- Short-lived feature branches off `main`, named `<type>/<issue-number>-<slug>` — for
+  example `feat/14-sweep-orchestrator` or `docs/1-initial-feedback`.
+- `main` is protected: PRs required, linear history, no force pushes.
 - Pull requests are required. Self-merge is fine; merging without green CI is not.
 - Conventional Commits (`feat:`, `fix:`, `chore:`, `docs:`, `refactor:`, `test:`). The
   scope is the component: `feat(agent):`, `fix(orchestrator):`.

@@ -17,8 +17,8 @@ Scaffolding only. Nothing measures anything yet.
 - [ ] `compose.yaml` — postgres, api, orchestrator, web, migrate
 - [ ] Initial schema and Alembic setup: `gpu_host`, `model`, `server_config`, `workload`,
       `sweep`, `run`, `run_summary`, `engine_sample`, `gpu_sample`
-- [ ] Agent package skeleton with `/health` and `/host-info` (GPU model, VRAM, driver,
-      CUDA, vLLM version)
+- [ ] Agent package skeleton with `/health` and `/host-info` (per-GPU model, VRAM, device
+      index, driver, CUDA, vLLM version)
 - [ ] Token auth and protocol-version handshake between control plane and agent
 - [ ] Control plane can register a GPU host and display its facts
 - [ ] **Mock agent** behind `--profile dev` — synthetic results and telemetry, so the
@@ -61,18 +61,23 @@ Turns "which config won" into "why it won."
 
 - [ ] Agent: sample vLLM `/metrics` during runs — KV cache utilization, prefix cache hit
       rate, running and waiting queue depth, preemptions
-- [ ] Agent: sample NVML during runs — SM utilization, memory, power, temperature, clocks
+- [ ] Agent: sample NVML **per device** during runs — SM utilization, memory, power,
+      temperature, clocks — for every GPU participating in the run
 - [ ] Bounded, low-overhead sampling loops with configurable interval
-- [ ] Run detail page: telemetry timeline aligned to the benchmark window
+- [ ] Run detail page: telemetry timeline aligned to the benchmark window, with per-device
+      series rather than a host-level average
 
 **Done when:** a saturated run visibly shows KV cache pressure and a growing waiting queue
-on the run detail timeline.
+on the run detail timeline, and a tensor-parallel run shows each participating GPU as its
+own series.
 
 ---
 
 ## 0.4.0 — Sweeps
 
 - [ ] Sweep authoring: matrix of server configs × workloads, with replicate count
+- [ ] `tensor_parallel_size` as a first-class sweep axis, with validation against the
+      host's available device count
 - [ ] Orchestrator state machine: queue, execute, retry, resume, cancel
 - [ ] Cache reset between runs (`/reset_*_cache`)
 - [ ] Server restart between server-config changes; reuse across workload-only changes
@@ -88,7 +93,11 @@ can be cancelled cleanly without leaving orphaned processes or VRAM held.
 
 The payoff milestone. Load the `dataviz` skill before building these.
 
-- [ ] **Pareto frontier** — per-user output tok/s against per-GPU total tok/s
+- [ ] **Pareto frontier** — per-user output tok/s against per-GPU total tok/s, normalized
+      by device count so tensor-parallel configurations are honestly comparable
+- [ ] Tensor-parallel scaling view: throughput and latency against TP size, with per-GPU
+      efficiency, answering whether TP=N earns its extra devices
+- [ ] Per-device utilization comparison to expose imbalance within a TP group
 - [ ] Latency-versus-concurrency curves, p50 and p99
 - [ ] Throughput saturation curves against request rate
 - [ ] Side-by-side run and config comparison with a config diff
@@ -172,6 +181,8 @@ the agent is installed from a git tag.
 5. The database schema is stable and migrations are forward-only.
 6. A tuning decision can be made from the UI without external tooling.
 7. The stack runs with equal fidelity on native Linux and on macOS with Colima.
+8. A tensor-parallel sweep across TP sizes completes and charts per-GPU normalized
+   throughput, with per-device telemetry available for every run in it.
 
 ---
 
@@ -179,7 +190,8 @@ the agent is installed from a git tag.
 
 Deferred, not rejected. Each is a post-1.0 candidate.
 
-- Multiple GPUs or multi-node tensor parallelism
+- Multi-node deployments of any kind, including tensor or pipeline parallelism spanning
+  hosts. Single-host multi-GPU is **in scope** — see 0.3.0 and 0.5.0.
 - Multiple concurrent GPU hosts, or a job queue across hosts
 - Benchmarking from the control plane over the network
 - Non-NVIDIA accelerators
