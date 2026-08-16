@@ -162,13 +162,24 @@ jobs:
         # runners do not — the same split that made the first two failures local-only.
         # float32 works everywhere, and opt-125m is small enough that the cost is
         # irrelevant. Nothing under test depends on the dtype.
+        #
+        # Thread count is pinned. vLLM's CPU backend sizes its OpenMP pool from the
+        # visible core count, which on a shared 4-core runner oversubscribes badly; the
+        # worker then dies during startup and the engine core reports only a downstream
+        # "cancelled" from its shared-memory read. Locally this never reproduces, which
+        # is itself the evidence: 6 idle cores versus 4 contended ones.
+        #
+        # --enforce-eager removes torch.compile from the startup path. It saves only ~3s
+        # locally, but it removes a source of variance rather than a source of latency.
         run: |
           docker run -d --name vllm-cpu -p 8100:8000 \
             --shm-size=4g \
             -e VLLM_CPU_KVCACHE_SPACE=2 \
+            -e VLLM_CPU_OMP_THREADS_BIND=0-1 \
+            -e OMP_NUM_THREADS=2 \
             vllm/vllm-openai-cpu:v${{ steps.vllm.outputs.version }} \
-            facebook/opt-125m --load-format dummy --max-model-len 512 \
-            --max-num-seqs 8 --dtype float32
+            facebook/opt-125m --load-format dummy --max-model-len 256 \
+            --max-num-seqs 4 --dtype float32 --enforce-eager
 
       - name: Wait for readiness
         # Poll /health rather than sleeping. Model load time varies with runner load,
@@ -180,10 +191,10 @@ jobs:
             fi
             if ! docker ps -q --filter name=vllm-cpu --filter status=running | grep -q .; then
               echo "::error::vLLM container exited during startup"
-              echo "--- root cause (first error) ---"
-              docker logs vllm-cpu 2>&1 | grep -m5 -B2 -A8 -E "Error|error:|Exception" || true
-              echo "--- tail ---"
-              docker logs vllm-cpu 2>&1 | tail -40
+              echo "--- full container log ---"
+              docker logs vllm-cpu 2>&1
+              echo "--- host resources ---"
+              nproc; free -h; df -h /dev/shm
               exit 1
             fi
             sleep 5
@@ -220,7 +231,10 @@ jobs:
 
       - name: vLLM logs on failure
         if: failure()
-        run: docker logs vllm-cpu | tail -100
+        run: |
+          docker logs vllm-cpu 2>&1 || true
+          echo "--- host resources ---"
+          nproc; free -h; df -h /dev/shm
 
   # --- Tier 2c ------------------------------------------------------------------
   # Image builds. The only thing that validates the inter-package dependency graph:
