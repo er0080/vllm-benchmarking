@@ -1,0 +1,177 @@
+#!/usr/bin/env python3
+"""A stand-in for the `vllm` CLI, for testing process lifecycle without a GPU.
+
+This is not a substitute for the real-vLLM contract tests in CI tier 2 — those exist
+precisely because a fake can only ever confirm our own assumptions. This exists for the
+opposite reason: to produce failures on cue that real vLLM cannot be asked to produce.
+Dying mid-load, hanging without ever becoming ready, ignoring SIGTERM, exiting zero
+without writing a result — each is a real failure mode of the supervisor, and none can be
+triggered reliably by a working server.
+
+Behaviour is driven by FAKE_VLLM_MODE:
+
+    ready          serve normally (default)
+    crash          exit non-zero during "model load"
+    never_ready    stay alive, answer /health, never register a model
+    ignore_sigterm refuse to die politely, forcing the SIGKILL escalation path
+    hang           serve nothing at all
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import signal
+import sys
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+MODE = os.environ.get("FAKE_VLLM_MODE", "ready")
+LOAD_SECONDS = float(os.environ.get("FAKE_VLLM_LOAD_SECONDS", "0.5"))
+MODEL = os.environ.get("FAKE_VLLM_MODEL", "facebook/opt-125m")
+
+_model_registered = False
+
+
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, *args: object) -> None:
+        pass  # keep the agent's captured log tail about vLLM, not about HTTP noise
+
+    def _send(self, code: int, payload: object) -> None:
+        body = json.dumps(payload).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self) -> None:  # noqa: N802
+        if self.path == "/health":
+            self._send(200, {"status": "ok"})
+        elif self.path == "/v1/models":
+            # The distinction the supervisor must respect: /health can answer before a
+            # model is registered, and benchmarking then measures the loader.
+            data = [{"id": MODEL}] if _model_registered else []
+            self._send(200, {"data": data})
+        elif self.path == "/metrics":
+            self._send(200, {})
+        else:
+            self._send(404, {"detail": "not found"})
+
+    def do_POST(self) -> None:  # noqa: N802
+        if self.path.startswith("/reset_"):
+            self._send(200, {"reset": self.path})
+        else:
+            self._send(404, {"detail": "not found"})
+
+
+def serve(port: int) -> None:
+    global _model_registered
+
+    print(f"INFO fake vllm starting on port {port}", flush=True)
+
+    if MODE == "hang":
+        while True:
+            time.sleep(3600)
+
+    if MODE == "ignore_sigterm":
+        signal.signal(signal.SIGTERM, lambda *_: print("INFO ignoring SIGTERM", flush=True))
+
+    server = HTTPServer(("127.0.0.1", port), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+
+    print("INFO Loading model weights...", flush=True)
+    time.sleep(LOAD_SECONDS)
+
+    if MODE == "crash":
+        print("ERROR CUDA out of memory: tried to allocate 40.00 GiB", file=sys.stderr, flush=True)
+        print("ERROR engine core failed to start", flush=True)
+        sys.exit(3)
+
+    if MODE != "never_ready":
+        _model_registered = True
+        print(f"INFO Application startup complete, serving {MODEL}", flush=True)
+
+    while True:
+        time.sleep(3600)
+
+
+def bench() -> None:
+    """Write a payload with the same field names real vLLM emits."""
+    args = sys.argv[1:]
+    result_path = None
+    if "--result-filename" in args:
+        result_path = args[args.index("--result-filename") + 1]
+
+    mode = os.environ.get("FAKE_VLLM_BENCH_MODE", "ok")
+    if mode == "hang":
+        while True:
+            time.sleep(3600)
+    if mode == "fail":
+        print("ERROR benchmark exploded", file=sys.stderr, flush=True)
+        sys.exit(2)
+    if mode == "no_result":
+        # Exit zero having written nothing — the case that would otherwise record a run
+        # with no metrics and no sign anything went wrong.
+        print("Serving Benchmark Result", flush=True)
+        return
+    if mode == "bad_json" and result_path:
+        with open(result_path, "w") as handle:
+            handle.write("{not json")
+        return
+
+    payload = {
+        "backend": "vllm",
+        "completed": 8,
+        "failed": 0,
+        "duration": 1.54,
+        "total_input_tokens": 256,
+        "total_output_tokens": 128,
+        "request_throughput": 5.18,
+        "output_throughput": 82.89,
+        "total_token_throughput": 248.68,
+        "max_output_tokens_per_s": 85.0,
+        "max_concurrent_requests": 6,
+        "mean_ttft_ms": 215.5,
+        "median_ttft_ms": 55.7,
+        "p99_ttft_ms": 734.4,
+        "std_ttft_ms": 292.1,
+        "mean_tpot_ms": 11.27,
+        "median_tpot_ms": 11.20,
+        "p99_tpot_ms": 11.98,
+        "std_tpot_ms": 0.62,
+        "mean_itl_ms": 11.27,
+        "median_itl_ms": 10.49,
+        "p99_itl_ms": 29.82,
+        "std_itl_ms": 3.51,
+        "model_id": MODEL,
+        "num_prompts": 8,
+        "request_rate": "inf",
+    }
+    if result_path:
+        with open(result_path, "w") as handle:
+            json.dump(payload, handle)
+    print("Serving Benchmark Result", flush=True)
+
+
+def main() -> None:
+    args = sys.argv[1:]
+    if not args:
+        sys.exit("usage: fake_vllm <serve|bench|--version>")
+
+    if args[0] == "--version":
+        print("0.25.1")
+        return
+
+    if args[0] == "serve":
+        port = int(args[args.index("--port") + 1]) if "--port" in args else 8000
+        serve(port)
+    elif args[0] == "bench":
+        bench()
+    else:
+        sys.exit(f"fake_vllm: unknown command {args[0]}")
+
+
+if __name__ == "__main__":
+    main()

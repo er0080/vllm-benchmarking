@@ -13,15 +13,26 @@ has to infer it from circumstantial evidence like "the GPU model looks made up".
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import time
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, HTTPException, status
 
 from vllmbench_agent.auth import token_dependency
+from vllmbench_mockagent.synthetic import synthesize_bench_result
 from vllmbench_protocol import PROTOCOL_VERSION, __version__
-from vllmbench_protocol.wire import GpuInfo, HealthResponse, HostInfo
+from vllmbench_protocol.wire import (
+    BenchRequest,
+    BenchResponse,
+    GpuInfo,
+    HealthResponse,
+    HostInfo,
+    ServerState,
+    ServerStatus,
+    StartServerRequest,
+)
 
 log = logging.getLogger("vllmbench.mockagent")
 
@@ -46,6 +57,12 @@ MOCK_GPUS = [
 ]
 
 MOCK_VLLM_VERSION = "0.25.1"
+
+# A model "load" long enough that progress UI has something to show, short enough that
+# development stays fast. Real loads are minutes; pretending to take minutes would make
+# the mock useless for its actual purpose.
+MOCK_LOAD_SECONDS = float(os.environ.get("VLLMBENCH_MOCK_LOAD_SECONDS", "2.0"))
+MOCK_BENCH_SECONDS = float(os.environ.get("VLLMBENCH_MOCK_BENCH_SECONDS", "3.0"))
 MOCK_DRIVER_VERSION = "550.54.15"
 MOCK_CUDA_VERSION = "12.4"
 
@@ -62,6 +79,17 @@ def create_app(token: str | None = None, protocol_version: int = PROTOCOL_VERSIO
     require_token = token_dependency(token)
 
     app = FastAPI(title="vLLM Benchmarking Mock Agent", version=__version__, docs_url="/docs")
+
+    # Mirrors the real agent's single-server rule, so control-plane code that handles
+    # "already running" is exercised here too.
+    state: dict[str, object] = {
+        "state": ServerState.STOPPED,
+        "config_hash": None,
+        "config_yaml": None,
+        "port": None,
+        "started_at": None,
+        "ready_at": None,
+    }
 
     @app.get("/health", response_model=HealthResponse)
     async def health() -> HealthResponse:
@@ -85,7 +113,96 @@ def create_app(token: str | None = None, protocol_version: int = PROTOCOL_VERSIO
             synthetic_source=SYNTHETIC_SOURCE,
         )
 
+    def _status() -> ServerStatus:
+        return ServerStatus(
+            state=state["state"],  # type: ignore[arg-type]
+            config_hash=state["config_hash"],  # type: ignore[arg-type]
+            pid=4242 if state["state"] is ServerState.READY else None,
+            port=state["port"],  # type: ignore[arg-type]
+            started_at=state["started_at"],  # type: ignore[arg-type]
+            ready_at=state["ready_at"],  # type: ignore[arg-type]
+            log_tail=["INFO synthetic vLLM: no real engine was started"],
+            tensor_parallel_size=_tp_from_config(state["config_yaml"]),  # type: ignore[arg-type]
+            pipeline_parallel_size=1,
+            device_indices=list(range(_tp_from_config(state["config_yaml"]))),  # type: ignore[arg-type]
+        )
+
+    @app.get("/server", response_model=ServerStatus, dependencies=[Depends(require_token)])
+    async def server_status() -> ServerStatus:
+        return _status()
+
+    @app.post("/server/start", response_model=ServerStatus, dependencies=[Depends(require_token)])
+    async def server_start(request: StartServerRequest) -> ServerStatus:
+        if state["state"] in (ServerState.STARTING, ServerState.READY):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"a server is already {state['state']}; stop it before starting another",
+            )
+        state.update(
+            state=ServerState.STARTING,
+            config_hash=request.config_hash,
+            config_yaml=request.config_yaml,
+            port=request.port,
+            started_at=time.time(),
+            ready_at=None,
+        )
+        await asyncio.sleep(MOCK_LOAD_SECONDS)
+        state.update(state=ServerState.READY, ready_at=time.time())
+        return _status()
+
+    @app.post("/server/stop", response_model=ServerStatus, dependencies=[Depends(require_token)])
+    async def server_stop() -> ServerStatus:
+        state.update(state=ServerState.STOPPED, ready_at=None)
+        return _status()
+
+    @app.post("/bench", response_model=BenchResponse, dependencies=[Depends(require_token)])
+    async def bench(request: BenchRequest) -> BenchResponse:
+        if state["state"] is not ServerState.READY:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"no ready server to benchmark (state={state['state']})",
+            )
+        await asyncio.sleep(MOCK_BENCH_SECONDS)
+        tp = _tp_from_config(state["config_yaml"])  # type: ignore[arg-type]
+        raw = synthesize_bench_result(
+            model=request.model,
+            num_prompts=request.num_prompts,
+            max_concurrency=request.max_concurrency,
+            request_rate=request.request_rate,
+            input_len=request.random_input_len or 512,
+            output_len=request.random_output_len or 128,
+            config_hash=str(state["config_hash"]),
+            tensor_parallel_size=tp,
+        )
+        return BenchResponse(
+            raw_result=raw,
+            duration_seconds=MOCK_BENCH_SECONDS,
+            stdout_tail=["Serving Benchmark Result (synthetic)"],
+            tensor_parallel_size=tp,
+            pipeline_parallel_size=1,
+            device_indices=list(range(tp)),
+        )
+
     return app
+
+
+def _tp_from_config(config_yaml: str | None) -> int:
+    """Read tensor_parallel_size out of the config the caller sent.
+
+    The real agent reports what the engine actually did; the mock has no engine, so it
+    echoes the request. Doing this at all matters because it lets TP sweeps — and the
+    per-GPU normalization that makes them comparable — be exercised without hardware.
+    """
+    if not config_yaml:
+        return 1
+    for line in config_yaml.splitlines():
+        key, _, value = line.partition(":")
+        if key.strip() in ("tensor_parallel_size", "tensor-parallel-size"):
+            try:
+                return max(1, int(value.strip()))
+            except ValueError:
+                return 1
+    return 1
 
 
 app = create_app()

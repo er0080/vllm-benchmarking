@@ -39,17 +39,32 @@ def _client(app) -> httpx.AsyncClient:
     )
 
 
+# FastAPI's own plumbing, not part of the agent contract.
+FRAMEWORK_ROUTES = {"/docs", "/docs/oauth2-redirect", "/openapi.json", "/redoc"}
+
+
+def _contract_routes(app) -> set[tuple[str, tuple[str, ...]]]:
+    return {
+        (r.path, tuple(sorted(r.methods)))
+        for r in app.routes
+        if hasattr(r, "methods") and r.path not in FRAMEWORK_ROUTES
+    }
+
+
 class TestContractParity:
     async def test_both_expose_the_same_routes(self, real_app, mock_app) -> None:
-        real = {
-            (r.path, tuple(sorted(r.methods))) for r in real_app.routes if hasattr(r, "methods")
-        }
-        mock = {
-            (r.path, tuple(sorted(r.methods))) for r in mock_app.routes if hasattr(r, "methods")
-        }
-        # Only compare the agent contract, not FastAPI's own docs plumbing.
-        contract = {"/health", "/host-info"}
-        assert {r for r in real if r[0] in contract} == {r for r in mock if r[0] in contract}
+        """Compares the *whole* contract, not a hardcoded subset.
+
+        An earlier version listed the two endpoints that existed at the time, so when
+        the real agent gained server lifecycle and benchmarking the mock silently fell
+        behind and this still passed. A parity test with an allowlist is a parity test
+        that stops working the moment it would first be useful.
+        """
+        real = _contract_routes(real_app)
+        mock = _contract_routes(mock_app)
+        assert real == mock, (
+            f"only in real agent: {sorted(real - mock)}; only in mock: {sorted(mock - real)}"
+        )
 
     async def test_both_validate_against_the_same_models(self, real_app, mock_app) -> None:
         for app in (real_app, mock_app):
@@ -108,3 +123,89 @@ class TestMockIsMultiGpu:
             info = HostInfo.model_validate((await http.get("/host-info")).json())
             assert info.gpu_count >= 2
             assert [g.index for g in info.gpus] == list(range(info.gpu_count))
+
+
+class TestSyntheticResultsAreUsable:
+    """The mock has to be good enough to build charts against, not merely well-formed."""
+
+    async def test_bench_requires_a_ready_server(self, mock_app) -> None:
+        # Mirrors the real agent's refusal. Control-plane code that handles this must be
+        # exercised somewhere that does not need a GPU.
+        async with _client(mock_app) as http:
+            response = await http.post("/bench", json={"model": "m"})
+            assert response.status_code == 409
+
+    async def test_full_lifecycle_produces_a_flattenable_result(self, mock_app) -> None:
+        from vllmbench_protocol.bench_result import flatten_bench_result
+
+        async with _client(mock_app) as http:
+            start = await http.post(
+                "/server/start",
+                json={"config_yaml": "model: m\n", "config_hash": "c" * 16, "port": 8000},
+            )
+            assert start.status_code == 200
+
+            bench = await http.post(
+                "/bench", json={"model": "m", "num_prompts": 64, "max_concurrency": 16}
+            )
+            assert bench.status_code == 200
+            raw = bench.json()["raw_result"]
+
+            # The load-bearing property: synthetic results must survive the same
+            # flattening as real ones. A mock emitting different field names would let a
+            # flattening bug reach production untested.
+            flat = flatten_bench_result(raw, gpu_count=1)
+            assert flat["successful_requests"] == 64
+            assert flat["ttft_ms_p99"] > flat["ttft_ms_mean"]
+
+    async def test_throughput_saturates_rather_than_growing_without_bound(self, mock_app) -> None:
+        """Charts need a knee, or the Pareto view has nothing to show.
+
+        Doubling concurrency well past saturation must not double throughput. If it did,
+        every configuration would look better than the last and the frontier would be a
+        straight line.
+        """
+        async with _client(mock_app) as http:
+            await http.post(
+                "/server/start",
+                json={"config_yaml": "model: m\n", "config_hash": "c" * 16, "port": 8000},
+            )
+            low = (await http.post("/bench", json={"model": "m", "max_concurrency": 64})).json()[
+                "raw_result"
+            ]["output_throughput"]
+            high = (await http.post("/bench", json={"model": "m", "max_concurrency": 128})).json()[
+                "raw_result"
+            ]["output_throughput"]
+
+        assert high > low * 0.95
+        assert high < low * 1.3
+
+    async def test_latency_degrades_under_load(self, mock_app) -> None:
+        async with _client(mock_app) as http:
+            await http.post(
+                "/server/start",
+                json={"config_yaml": "model: m\n", "config_hash": "c" * 16, "port": 8000},
+            )
+            light = (await http.post("/bench", json={"model": "m", "max_concurrency": 8})).json()[
+                "raw_result"
+            ]["mean_ttft_ms"]
+            heavy = (await http.post("/bench", json={"model": "m", "max_concurrency": 256})).json()[
+                "raw_result"
+            ]["mean_ttft_ms"]
+        assert heavy > light * 2
+
+    async def test_tensor_parallel_size_is_echoed_from_the_config(self, mock_app) -> None:
+        # Lets TP sweeps and per-GPU normalization be exercised with no hardware, which
+        # is the only way invariant 8's charting can be built before a GPU host exists.
+        async with _client(mock_app) as http:
+            await http.post(
+                "/server/start",
+                json={
+                    "config_yaml": "model: m\ntensor_parallel_size: 4\n",
+                    "config_hash": "c" * 16,
+                    "port": 8000,
+                },
+            )
+            bench = (await http.post("/bench", json={"model": "m"})).json()
+        assert bench["tensor_parallel_size"] == 4
+        assert bench["device_indices"] == [0, 1, 2, 3]

@@ -10,6 +10,10 @@ dependencies = [
     "httpx>=0.28",
     "pydantic-settings>=2.6",
     "nvidia-ml-py>=12.560",
+    # Not optional. Without a portable process create-time, the orphan reaper cannot
+    # tell our process from whatever inherited its pid, and the only safe behaviour is
+    # to never reap — which means orphaned VRAM is never cleaned up.
+    "psutil>=6.0",
 ]
 
 [project.scripts]
