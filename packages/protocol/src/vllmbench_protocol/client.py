@@ -115,12 +115,27 @@ class AgentClient:
         return HealthResponse.model_validate((await self._get("/health")).json())
 
     async def host_info(self, *, check_protocol: bool = True) -> HostInfo:
-        info = HostInfo.model_validate((await self._get("/host-info")).json())
-        if check_protocol and info.protocol_version != self._expected_protocol_version:
-            raise ProtocolMismatch(
-                self.base_url, info.protocol_version, self._expected_protocol_version
-            )
-        return info
+        payload = (await self._get("/host-info")).json()
+
+        # Check the protocol version against the *raw* payload, before model validation.
+        #
+        # Ordering matters more than it looks. The wire models use extra="forbid", so a
+        # newer agent sending a field this build has never heard of fails validation —
+        # and validating first turns the one situation the version check exists to
+        # explain into an opaque "extra inputs are not permitted". That is exactly what
+        # happened against a real host: a stale control plane returned a 500 mentioning
+        # a field name, when it should have said "this agent speaks protocol 2 and I
+        # speak 1".
+        if check_protocol and isinstance(payload, dict):
+            reported = payload.get("protocol_version")
+            if reported != self._expected_protocol_version:
+                raise ProtocolMismatch(
+                    self.base_url,
+                    reported if isinstance(reported, int) else -1,
+                    self._expected_protocol_version,
+                )
+
+        return HostInfo.model_validate(payload)
 
     # -- server lifecycle ----------------------------------------------------------
 

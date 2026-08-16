@@ -29,7 +29,16 @@ running job.
 | Every `/metrics` name we scrape | ✅ All six present on real GPU vLLM |
 | Absence of a prefix-cache hit-rate gauge | ✅ Confirmed — the counters decision holds |
 | Protocol mismatch refusal | ✅ Refused with both versions named; inspection escape hatch still worked |
-| vLLM version probe | ❌ **Returned null.** Fixed — see below. |
+| vLLM version probe | ❌ Returned null on the first attempt. Fixed — see below. |
+
+Re-verified after reinstalling the agent **into the vLLM venv** (`~/vllm-env/.venv`):
+
+| Item | Result |
+| --- | --- |
+| `vllm_version` | ✅ `0.25.1`, `"imported from the agent's own environment"` |
+| Protocol 2 handshake | ✅ Control plane registered the host end to end |
+| Reference version match | ✅ `0.25.1` matches `VLLM_REFERENCE_VERSION` |
+| Install footprint | ✅ 2 packages added, nothing upgraded or downgraded |
 
 ### What the null version taught us
 
