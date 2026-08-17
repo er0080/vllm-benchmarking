@@ -28,6 +28,30 @@ class SweepStatus(enum.StrEnum):
     CANCELLED = "cancelled"
 
 
+class ReplicateOrder(enum.StrEnum):
+    """Whether a point's replicates run back-to-back or spread across the sweep.
+
+    Recorded rather than assumed, because it changes what the spread *means* and the
+    chart claims to be showing uncertainty.
+
+    ``grouped`` runs replicate 1, 2 and 3 of a point consecutively. It is the default
+    because each config change costs a full engine restart — minutes for a large model —
+    and interleaving multiplies those restarts by the replicate count. The spread it
+    produces measures repeatability under near-identical conditions.
+
+    ``interleaved`` runs the whole matrix once, then again. Every replicate meets
+    different thermal and clock state, so the spread reflects run-to-run variance a
+    reader would actually encounter. Honest error bars, at the cost of many more engine
+    restarts.
+
+    Caches are reset between every run either way, so prefix-cache carryover is not part
+    of the difference.
+    """
+
+    GROUPED = "grouped"
+    INTERLEAVED = "interleaved"
+
+
 class InitiatedBy(enum.StrEnum):
     """Which interface asked for this work.
 

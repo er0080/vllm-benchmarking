@@ -11,6 +11,8 @@ import uuid
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from vllmbench_db.enums import ReplicateOrder
+
 
 class GpuDeviceOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -234,3 +236,74 @@ class RunTelemetryOut(BaseModel):
     # Present so a chart can say "no telemetry" rather than drawing an empty axis and
     # leaving the reader to wonder whether the engine was idle.
     sample_count: int
+
+
+# ---------------------------------------------------------------------------
+# Sweeps
+# ---------------------------------------------------------------------------
+
+
+class SweepCreate(BaseModel):
+    """A matrix of server configs by workloads, run `replicates` times each.
+
+    ``tensor_parallel_sizes`` turns TP into an axis: each base config is derived into one
+    variant per value, and each variant is stored as an ordinary content-addressed
+    config. Omit it to sweep the configs exactly as written.
+    """
+
+    name: str = Field(min_length=1, max_length=128)
+    description: str | None = None
+    gpu_host_id: uuid.UUID
+
+    server_config_ids: list[uuid.UUID] = Field(min_length=1)
+    workload_ids: list[uuid.UUID] = Field(min_length=1)
+
+    # None means "leave each config's own tensor-parallel-size alone". An empty list would
+    # mean the same thing but reads like "no TP values", so it is rejected rather than
+    # silently treated as absent.
+    tensor_parallel_sizes: list[int] | None = Field(default=None, min_length=1)
+
+    # Three by default: CLAUDE.md asks charts to render the spread, and two points make a
+    # range rather than a distribution.
+    replicates: int = Field(default=3, ge=1, le=25)
+    replicate_order: ReplicateOrder = ReplicateOrder.GROUPED
+
+
+class SweepProgress(BaseModel):
+    """Counts by run status, so a caller does not have to fetch every run to draw a bar."""
+
+    total: int = 0
+    queued: int = 0
+    starting: int = 0
+    benchmarking: int = 0
+    succeeded: int = 0
+    failed: int = 0
+    cancelled: int = 0
+
+    @property
+    def terminal(self) -> int:
+        return self.succeeded + self.failed + self.cancelled
+
+
+class SweepOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    name: str
+    description: str | None = None
+    status: str
+    gpu_host_id: uuid.UUID
+    replicates: int
+    replicate_order: str
+    initiated_by: str
+    is_synthetic: bool
+    created_at: dt.datetime
+    started_at: dt.datetime | None = None
+    finished_at: dt.datetime | None = None
+    error: str | None = None
+
+    progress: SweepProgress = Field(default_factory=SweepProgress)
+    # How many engine restarts the plan implies. Most of a sweep's wall clock is model
+    # loading, so this is the number that predicts how long it will take — and the one
+    # that makes the cost of interleaving replicates visible before committing to it.
+    engine_starts: int = 0
