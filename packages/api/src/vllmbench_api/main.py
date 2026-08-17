@@ -14,6 +14,7 @@ from typing import Any
 from fastapi import FastAPI
 from sqlalchemy import text
 
+from vllmbench_api.mcp_server import build_mcp_server, mount_mcp
 from vllmbench_api.routers import analysis, hosts, runs, sweeps, views
 from vllmbench_api.settings import ApiSettings
 from vllmbench_db.schema_version import check_schema_version
@@ -28,7 +29,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     engine = create_engine()
     app.state.engine = engine
     app.state.sessions = create_session_factory(engine)
-    app.state.settings = ApiSettings()
+    settings = ApiSettings()
+    app.state.settings = settings
 
     # Checked once, at startup. A schema behind the code fails later as an opaque
     # Postgres type error in whatever request happens to write first.
@@ -39,8 +41,32 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.schema = None
 
     log.info("api %s (protocol %d) started", __version__, PROTOCOL_VERSION)
+
+    if not settings.mcp_enabled:
+        # Off unless asked for. ADR 0001 puts the MCP surface on this service rather than
+        # a separate one, and this flag is what keeps that from meaning "always exposed".
+        try:
+            yield
+        finally:
+            await engine.dispose()
+        return
+
+    # Built here rather than at import time so the flag is read from the environment the
+    # service actually starts in, and so a disabled deployment does not construct it.
+    server = build_mcp_server(app.state.sessions, settings)
+    mount_mcp(app, server, settings)
+    if not settings.mcp_token:
+        # Loud, because the alternative is a surface that authenticates nothing. The
+        # verifier refuses every token in this state, so the mount is inert rather than
+        # open — but an operator who set MCP_ENABLED expects it to work.
+        log.warning("MCP is enabled but VLLMBENCH_MCP_TOKEN is unset; every call will 401")
+    log.info("MCP mounted at /mcp")
+
     try:
-        yield
+        # The session manager owns the transport's task group; mounting the app is not
+        # enough on its own, and without this every call fails once, obscurely.
+        async with server.session_manager.run():
+            yield
     finally:
         await engine.dispose()
 

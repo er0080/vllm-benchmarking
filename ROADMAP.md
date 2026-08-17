@@ -177,17 +177,18 @@ notebook.
 Per [ADR 0001](docs/adr/0001-mcp-server-interface.md). Placed here because the valuable
 analysis tools depend on 0.5.0 and the control tools on 0.4.0.
 
-- [ ] Streamable HTTP MCP server mounted at `/mcp` on `api`, targeting the 2026-07-28
-      spec, behind `VLLMBENCH_MCP_ENABLED`
-- [ ] Bearer token auth; default bind makes accidental exposure hard, and the docs state
-      plainly that `/mcp` is LAN-only
+- [x] Streamable HTTP MCP server mounted at `/mcp` on `api`, behind `VLLMBENCH_MCP_ENABLED`
+- [x] Bearer token auth — an unset token refuses every caller rather than accepting all,
+      so enabling MCP without configuring one yields an inert surface, not an open one
 - [ ] Config **validation engine** — checks a candidate YAML against the target vLLM
       version's accepted arguments and returns structured, actionable errors. Pulled
       forward from 0.7.0: `validate_config` needs it, and 0.7.0's YAML editor is a UI over
       this engine rather than a separate implementation.
-- [ ] Read tools — `list_hosts`, `list_configs` / `get_config`, `validate_config`,
-      `list_workloads`, `list_sweeps` / `get_sweep`, `query_runs`, `get_run`,
-      `get_run_telemetry`, `compare_runs`, `get_pareto`
+- [x] Read tools — `list_hosts`, `list_configs` / `get_config`, `list_workloads`,
+      `list_sweeps` / `get_sweep`, `query_runs`, `get_run`, `get_run_telemetry`,
+      `compare_runs`, `get_pareto`, `server_info`. Each calls the same function the HTTP
+      route calls, so the two surfaces cannot drift
+- [ ] `validate_config` — waiting on the validation engine below
 - [ ] Write tools, enabled by default — `create_config`, `create_workload`,
       `create_sweep`, `start_sweep`, `cancel_sweep`. No tool mutates or deletes a run.
 - [ ] MCP resources: `vllmbench://config/{hash}`, `vllmbench://sweep/{id}/report`
