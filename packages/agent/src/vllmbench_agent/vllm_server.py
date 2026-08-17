@@ -27,7 +27,11 @@ from pathlib import Path
 
 import httpx
 
-from vllmbench_agent.hardware import devices_for_process, resolve_vllm_binary
+from vllmbench_agent.hardware import (
+    devices_for_process,
+    resolve_vllm_binary,
+    vllm_binary_search_detail,
+)
 from vllmbench_agent.reaper import TERM_GRACE_SECONDS, ProcessRegistry
 from vllmbench_protocol.wire import ServerState, ServerStatus
 
@@ -165,9 +169,7 @@ class VllmServer:
             executable = resolve_vllm_binary(self._vllm_bin)
             if executable is None:
                 raise ServerError(
-                    "no `vllm` executable found. Install the agent into the vLLM "
-                    "environment (it adds no new dependencies), or set VLLMBENCH_VLLM_BIN "
-                    "to the absolute path of the vllm executable."
+                    f"no `vllm` executable found: {vllm_binary_search_detail(self._vllm_bin)}"
                 )
 
             self._reset()

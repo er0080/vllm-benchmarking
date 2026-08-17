@@ -20,7 +20,7 @@ import time
 from collections import deque
 from pathlib import Path
 
-from vllmbench_agent.hardware import resolve_vllm_binary
+from vllmbench_agent.hardware import resolve_vllm_binary, vllm_binary_search_detail
 from vllmbench_protocol.wire import BenchRequest, BenchResponse
 
 log = logging.getLogger(__name__)
@@ -44,10 +44,7 @@ def build_argv(
     """
     executable = resolve_vllm_binary(vllm_bin)
     if executable is None:
-        raise BenchError(
-            "no `vllm` executable found. Install the agent into the vLLM environment "
-            "(it adds no new dependencies), or set VLLMBENCH_VLLM_BIN."
-        )
+        raise BenchError(f"no `vllm` executable found: {vllm_binary_search_detail(vllm_bin)}")
 
     argv = [
         executable,
