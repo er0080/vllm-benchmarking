@@ -33,7 +33,7 @@ from vllmbench_api.sweep_plan import (
     tensor_parallel_variant,
     validate_tensor_parallel,
 )
-from vllmbench_db.enums import InitiatedBy, RunStatus, SweepStatus
+from vllmbench_db.enums import RunStatus, SweepStatus
 from vllmbench_db.models import GpuHost, Run, ServerConfig, Sweep, Workload
 
 log = logging.getLogger(__name__)
@@ -145,6 +145,41 @@ async def _to_out(session: AsyncSession, sweep: Sweep) -> SweepOut:
     return out
 
 
+#: Runs one sweep may materialize. Generous enough that no real matrix hits it — a
+#: 4-config x 4-workload x 3-replicate sweep is 48 — and low enough that a caller which
+#: got its product wrong finds out at authoring time rather than after filling the queue
+#: with days of GPU work.
+MAX_SWEEP_RUNS = 500
+
+#: Sweep states that own a host. A sweep still queued has runs an orchestrator may claim
+#: at any moment, so it holds the host just as firmly as a running one.
+ACTIVE_SWEEP_STATES = (SweepStatus.QUEUED, SweepStatus.RUNNING)
+
+
+async def _refuse_if_busy(session: AsyncSession, host: GpuHost) -> None:
+    """One active sweep per host.
+
+    Enforced here rather than in any one interface, because the reason is physical: two
+    sweeps against one host interleave their engine restarts, so each pays for the other's
+    config changes and neither measures what it planned to. It is also how two callers
+    that cannot see each other — a person in the UI and an agent over MCP — would collide.
+    """
+    existing = await session.scalar(
+        select(Sweep)
+        .where(Sweep.gpu_host_id == host.id)
+        .where(Sweep.status.in_(ACTIVE_SWEEP_STATES))
+        .limit(1)
+    )
+    if existing is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"{host.name} is already running sweep {existing.name!r} ({existing.id}); "
+                "cancel it or wait for it to finish"
+            ),
+        )
+
+
 @router.post("", response_model=SweepOut, status_code=status.HTTP_201_CREATED)
 async def create_sweep(request: SweepCreate, session: SessionDep) -> SweepOut:
     host = await session.get(GpuHost, request.gpu_host_id)
@@ -160,6 +195,8 @@ async def create_sweep(request: SweepCreate, session: SessionDep) -> SweepOut:
             )
         workloads.append(workload)
 
+    await _refuse_if_busy(session, host)
+
     try:
         configs = await _resolve_configs(session, request, host)
         plan = expand(
@@ -168,6 +205,11 @@ async def create_sweep(request: SweepCreate, session: SessionDep) -> SweepOut:
             replicates=request.replicates,
             order=request.replicate_order,
         )
+        if len(plan) > MAX_SWEEP_RUNS:
+            raise SweepPlanError(
+                f"this sweep would create {len(plan)} runs, over the {MAX_SWEEP_RUNS} limit; "
+                "narrow an axis or split it"
+            )
     except SweepPlanError as exc:
         # 422: the request was well-formed but describes a sweep that cannot be run.
         raise HTTPException(
@@ -183,7 +225,8 @@ async def create_sweep(request: SweepCreate, session: SessionDep) -> SweepOut:
         gpu_host_id=host.id,
         replicates=request.replicates,
         replicate_order=request.replicate_order,
-        initiated_by=InitiatedBy.UI,
+        initiated_by=request.initiated_by,
+        initiated_by_client=request.initiated_by_client,
         # Invariant 7's chain of custody: the host's own declaration decides, and every
         # run below inherits the same answer. Nothing infers it later.
         is_synthetic=host.synthetic_source is not None,
@@ -212,7 +255,8 @@ async def create_sweep(request: SweepCreate, session: SessionDep) -> SweepOut:
                 tensor_parallel_size=read_tensor_parallel_size(config.yaml) or 1,
                 is_synthetic=host.synthetic_source is not None,
                 synthetic_source=host.synthetic_source,
-                initiated_by=InitiatedBy.UI,
+                initiated_by=request.initiated_by,
+                initiated_by_client=request.initiated_by_client,
             )
         )
 

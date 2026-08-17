@@ -90,6 +90,7 @@ export const runsApi = {
     request<Run>("/runs", {
       method: "POST",
       body: JSON.stringify({
+        ...INITIATED_BY,
         gpu_host_id: gpuHostId,
         server_config_id: serverConfigId,
         workload_id: workloadId,
@@ -97,11 +98,23 @@ export const runsApi = {
     }),
 };
 
+/**
+ * What this client is, recorded on everything it creates.
+ *
+ * Declared rather than sniffed: HTTP cannot tell a browser from a curl invocation, and
+ * the server's honest default for an unidentified caller is "api". Without this, work
+ * started here would be indistinguishable from work started by a script (invariant 6).
+ */
+const INITIATED_BY = { initiated_by: "ui" as const };
+
 export const sweepsApi = {
   list: () => request<Sweep[]>("/sweeps"),
   get: (id: string) => request<Sweep>(`/sweeps/${id}`),
   create: (body: SweepCreate) =>
-    request<Sweep>("/sweeps", { method: "POST", body: JSON.stringify(body) }),
+    request<Sweep>("/sweeps", {
+      method: "POST",
+      body: JSON.stringify({ ...INITIATED_BY, ...body }),
+    }),
   cancel: (id: string) => request<Sweep>(`/sweeps/${id}/cancel`, { method: "POST" }),
 };
 

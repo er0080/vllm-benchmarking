@@ -225,3 +225,100 @@ async def test_a_tool_reads_through_to_the_database() -> None:
     # Carried on every host so an agent never has to infer it: anything this host produces
     # is quarantined from real measurements (invariant 7).
     assert host["synthetic_source"] == "mock_agent"
+
+
+async def test_write_tools_record_that_an_agent_asked() -> None:
+    """A full author-a-sweep round trip over MCP, checking the provenance it leaves.
+
+    Invariant 6: a run must be able to state what produced it. Before this surface
+    existed every run claimed the UI and the claim happened to be true; the moment a
+    second interface could create work, that became a wrong answer sitting in a
+    provenance column.
+    """
+    from vllmbench_db.models import GpuHost, Run
+    from vllmbench_db.session import create_engine, create_session_factory
+    from vllmbench_db.testing import reset_database, test_database_url
+
+    engine = create_engine(test_database_url())
+    try:
+        await reset_database(engine)
+        factory = create_session_factory(engine)
+        async with factory() as db:
+            host = GpuHost(name="mcp-write-host", agent_url="http://agent", gpu_count=2)
+            db.add(host)
+            await db.commit()
+            host_id = str(host.id)
+
+        async with _app() as app:
+            async with _client(app) as session:
+                config = await session.call_tool(
+                    "create_config",
+                    {"name": "from-mcp", "yaml": "model: m\ntensor-parallel-size: 1\n"},
+                )
+                workload = await session.call_tool(
+                    "create_workload", {"name": "c8", "max_concurrency": 8}
+                )
+                assert config.structured_content and workload.structured_content
+
+                sweep = await session.call_tool(
+                    "create_sweep",
+                    {
+                        "name": "agent sweep",
+                        "gpu_host_id": host_id,
+                        "config_hashes": [config.structured_content["config_hash"]],
+                        "workload_hashes": [workload.structured_content["workload_hash"]],
+                        "replicates": 2,
+                    },
+                )
+                assert sweep.structured_content is not None
+                assert sweep.structured_content["total_runs"] == 2
+                # Most of a sweep's wall clock is model loading, so this is the number
+                # that predicts how long it takes.
+                assert sweep.structured_content["engine_starts"] == 1
+
+        async with factory() as db:
+            from sqlalchemy import select
+
+            runs = list((await db.execute(select(Run))).scalars())
+        assert runs and all(str(run.initiated_by) == "mcp" for run in runs)
+        assert all(run.initiated_by_client == "mcp" for run in runs)
+    finally:
+        await engine.dispose()
+
+
+async def test_write_tools_refuse_when_switched_off() -> None:
+    """Read stays available when writes are off.
+
+    A control plane an operator wants an agent to look at but not touch is a real
+    configuration, and it should not mean turning the whole surface off.
+    """
+    async with _app(mcp_write_enabled=False) as app:
+        async with _client(app) as session:
+            listed = await session.list_tools()
+            # Still advertised: an agent should be told the tool exists and is refused,
+            # rather than concluding this server cannot create configs at all.
+            assert "create_config" in {tool.name for tool in listed.tools}
+
+            result = await session.call_tool(
+                "create_config", {"name": "nope", "yaml": "model: m\n"}
+            )
+            assert result.is_error
+            assert "disabled" in str(result.content)
+
+            # ...and reading is unaffected.
+            info = await session.call_tool("server_info", {})
+            assert info.structured_content is not None
+            assert info.structured_content["write_tools_enabled"] is False
+
+
+async def test_no_tool_can_mutate_or_delete_a_run() -> None:
+    """Runs are immutable once terminal, and the surface offers no way to try.
+
+    Enforced by a database trigger regardless, but a tool that existed and always failed
+    would still be an invitation.
+    """
+    async with _app() as app:
+        async with _client(app) as session:
+            names = {tool.name for tool in (await session.list_tools()).tools}
+    forbidden = {n for n in names if any(w in n for w in ("delete", "update", "edit", "remove"))}
+    assert forbidden == set(), f"unexpected mutating tools: {forbidden}"

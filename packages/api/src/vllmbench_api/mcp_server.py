@@ -42,8 +42,9 @@ from vllmbench_api.routers import analysis as analysis_routes
 from vllmbench_api.routers import hosts as host_routes
 from vllmbench_api.routers import runs as run_routes
 from vllmbench_api.routers import sweeps as sweep_routes
-from vllmbench_api.schemas import RunOut
+from vllmbench_api.schemas import ConfigCreate, RunOut, SweepCreate, WorkloadCreate
 from vllmbench_api.settings import ApiSettings
+from vllmbench_db.enums import InitiatedBy
 from vllmbench_protocol import PROTOCOL_VERSION, __version__
 
 #: Hard ceilings, applied whatever a caller asks for. An agent that requests everything is
@@ -51,6 +52,10 @@ from vllmbench_protocol import PROTOCOL_VERSION, __version__
 #: is how a long session runs out of context on the least interesting data it holds.
 MAX_PAGE = 100
 DEFAULT_PAGE = 25
+
+#: Recorded as the client identity on everything this surface creates, so a run can name
+#: not just the interface but the thing on the other end of it.
+MCP_CLIENT_NAME = "mcp"
 
 
 class StaticTokenVerifier(TokenVerifier):
@@ -341,6 +346,140 @@ def build_mcp_server(sessions: async_sessionmaker[Any], settings: ApiSettings) -
                 "stride": stride,
                 "engine": [s.model_dump(mode="json") for s in result.engine[::stride]],
                 "gpu": [s.model_dump(mode="json") for s in result.gpu[::gpu_stride]],
+            }
+
+    # -- Write -------------------------------------------------------------------
+    #
+    # Enabled by default, and separately switchable. Nothing here mutates or deletes a
+    # run: runs are immutable once terminal, and the only write that touches one at all
+    # is cancelling a sweep, which moves queued runs to cancelled — a transition, not an
+    # edit to a measurement.
+    #
+    # Every one of these records `initiated_by="mcp"` and the client's name. Invariant 6
+    # says a run must be able to state what produced it, and "which interface asked" only
+    # became a real question when this surface was added.
+
+    def _refuse_if_read_only() -> None:
+        if not settings.mcp_write_enabled:
+            raise ValueError(
+                "write tools are disabled on this control plane (VLLMBENCH_MCP_WRITE_ENABLED=false)"
+            )
+
+    @tool
+    async def create_config(name: str, yaml: str, notes: str | None = None) -> dict[str, Any]:
+        """Store a vLLM server configuration, exactly as given.
+
+        The YAML is what will be written to disk and passed to `vllm serve --config`, byte
+        for byte — nothing is reordered, normalized or re-emitted. Configurations are
+        content-addressed, so submitting text that already exists returns the existing one
+        rather than a duplicate.
+        """
+        _refuse_if_read_only()
+        async with sessions() as session:
+            config = await run_routes.create_config(
+                ConfigCreate(name=name, yaml=yaml, notes=notes), session
+            )
+            return {"config_hash": config.config_hash, "name": config.name}
+
+    @tool
+    async def create_workload(
+        name: str,
+        dataset_name: str = "random",
+        num_prompts: int = 200,
+        max_concurrency: int | None = None,
+        request_rate: float | None = None,
+        input_len: int | None = None,
+        output_len: int | None = None,
+    ) -> dict[str, Any]:
+        """Define the traffic a run is measured under.
+
+        Leave `max_concurrency` or `request_rate` null for unbounded — that is genuinely
+        the absence of a limit, and is not the same as zero. Workloads are
+        content-addressed on what they send, not on their name.
+        """
+        _refuse_if_read_only()
+        async with sessions() as session:
+            workload = await run_routes.create_workload(
+                WorkloadCreate(
+                    name=name,
+                    dataset_name=dataset_name,
+                    num_prompts=num_prompts,
+                    max_concurrency=max_concurrency,
+                    request_rate=request_rate,
+                    input_len=input_len,
+                    output_len=output_len,
+                ),
+                session,
+            )
+            return {"workload_hash": workload.workload_hash, "name": workload.name}
+
+    @tool
+    async def create_sweep(
+        name: str,
+        gpu_host_id: str,
+        config_hashes: list[str],
+        workload_hashes: list[str],
+        replicates: int = 3,
+        tensor_parallel_sizes: list[int] | None = None,
+        description: str | None = None,
+    ) -> dict[str, Any]:
+        """Author a sweep. Every run is created immediately, in the order it will execute.
+
+        Starts queued: materializing the runs is committing to them. A host holds one
+        active sweep at a time, so this fails if the host is busy rather than interleaving
+        two sweeps' engine restarts. The matrix is bounded, so a wrong product is refused
+        here rather than filling the queue with days of work.
+
+        Returns the exact run count and how many engine loads the plan implies — most of a
+        sweep's wall clock is model loading, so that second number is the one that
+        predicts how long it will take.
+        """
+        _refuse_if_read_only()
+        async with sessions() as session:
+            configs = {c.config_hash: c.id for c in await run_routes.list_configs(session)}
+            workloads = {w.workload_hash: w.id for w in await run_routes.list_workloads(session)}
+            missing = [h for h in config_hashes if h not in configs] + [
+                h for h in workload_hashes if h not in workloads
+            ]
+            if missing:
+                raise ValueError(f"unknown config or workload hashes: {', '.join(missing)}")
+
+            sweep = await sweep_routes.create_sweep(
+                SweepCreate(
+                    name=name,
+                    description=description,
+                    gpu_host_id=uuid.UUID(gpu_host_id),
+                    server_config_ids=[configs[h] for h in config_hashes],
+                    workload_ids=[workloads[h] for h in workload_hashes],
+                    replicates=replicates,
+                    tensor_parallel_sizes=tensor_parallel_sizes,
+                    initiated_by=InitiatedBy.MCP,
+                    initiated_by_client=MCP_CLIENT_NAME,
+                ),
+                session,
+            )
+            return {
+                "id": str(sweep.id),
+                "status": sweep.status,
+                "total_runs": sweep.progress.total,
+                "engine_starts": sweep.engine_starts,
+                "is_synthetic": sweep.is_synthetic,
+            }
+
+    @tool
+    async def cancel_sweep(sweep_id: str) -> dict[str, Any]:
+        """Stop a sweep. Queued runs are cancelled and one in flight is interrupted.
+
+        Runs that already finished keep their results — cancelling a sweep is a decision
+        about the work remaining, never about the measurements already taken.
+        """
+        _refuse_if_read_only()
+        async with sessions() as session:
+            sweep = await sweep_routes.cancel_sweep(uuid.UUID(sweep_id), session)
+            return {
+                "id": str(sweep.id),
+                "status": sweep.status,
+                "progress": sweep.progress.model_dump(),
             }
 
     @tool

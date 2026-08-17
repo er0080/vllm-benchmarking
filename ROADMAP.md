@@ -189,16 +189,20 @@ analysis tools depend on 0.5.0 and the control tools on 0.4.0.
       `compare_runs`, `get_pareto`, `server_info`. Each calls the same function the HTTP
       route calls, so the two surfaces cannot drift
 - [ ] `validate_config` — waiting on the validation engine below
-- [ ] Write tools, enabled by default — `create_config`, `create_workload`,
-      `create_sweep`, `start_sweep`, `cancel_sweep`. No tool mutates or deletes a run.
+- [x] Write tools, enabled by default and separately switchable — `create_config`,
+      `create_workload`, `create_sweep`, `cancel_sweep`. No tool mutates or deletes a run,
+      and a test asserts none is ever added
 - [ ] MCP resources: `vllmbench://config/{hash}`, `vllmbench://sweep/{id}/report`
 - [ ] Context economy: pagination with a hard maximum, summary fields by default,
       server-side telemetry downsampling
-- [ ] `initiated_by` provenance on sweeps and runs (`ui` / `mcp` / `api`) plus client
-      identity where available
+- [x] `initiated_by` provenance on sweeps and runs (`ui` / `mcp` / `api`) plus client
+      identity — declared by the caller, since HTTP cannot tell a browser from curl and
+      guessing would put a confident wrong answer in a provenance column
 - [ ] `get_sweep` returns `estimated_remaining`, extrapolated from completed points
-- [ ] Guardrails: one active sweep per host enforced in the domain layer, bounded matrix
-      size, exact run count with a structured duration estimate, audit log of write calls
+- [x] Guardrails: one active sweep per host enforced in the domain layer (two sweeps
+      interleave engine restarts, so neither measures what it planned), bounded matrix
+      size, exact run count and engine-load count returned at authoring
+- [ ] Structured duration estimate and an audit log of write calls
 
 **Done when:** an agent connected over MCP can author a config, define and start a sweep,
 poll it to completion, and read back a per-GPU normalized Pareto frontier — without
