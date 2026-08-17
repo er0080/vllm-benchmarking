@@ -159,3 +159,81 @@ changes how vLLM resolves models changes the results. `HF_HOME` is the one that 
 it is commonly set in `~/.bashrc`, which a service-launched agent never sources, and
 without it the engine resolves against `~/.cache/huggingface` and re-downloads weights
 the host already has. Set it where the agent will actually see it.
+
+---
+
+## First real sweep, 2026-08-17
+
+Twelve runs on `ubuntu-llm` (2× RTX 3090, vLLM 0.25.1, driver 610.43.02): Qwen3.5-9B at
+tensor-parallel 1 and 2, three concurrencies, two replicates, grouped. All twelve
+succeeded. This is the first time the 0.5.0 analysis views were fed anything but the mock
+agent, and it is recorded here because several of the findings are about the framework
+rather than about the model.
+
+### Per-device attribution is real, and it matters more than expected
+
+The agent reported `devices=[0]` for the TP=1 engine and `devices=[0, 1]` for TP=2, both
+observed through NVML rather than read back from the config. Runs are *created* carrying
+the host's device count — 2 — and corrected to what actually ran, so a TP=1 run ends up
+`gpu_count=1, device_indices=[0]`.
+
+The arithmetic check that this landed: for the TP=1 runs, aggregate throughput and
+per-GPU throughput are the same number (702.2), and for TP=2 the per-GPU figure is exactly
+half the aggregate (1013.1 → 506.6). Had the correction not happened, every per-GPU figure
+in every view would have read half its true value, and would have looked entirely
+plausible doing so.
+
+### Aggregate throughput and per-GPU throughput disagree about the answer
+
+At concurrency 4, moving from TP=1 to TP=2 is:
+
+| | aggregate | per GPU | per user |
+| --- | --- | --- | --- |
+| TP=1 | 702 tok/s | 702 | 40.8 tok/s |
+| TP=2 | 1017 tok/s | 508 | 63.6 tok/s |
+
+**+44.8% aggregate, −27.6% per GPU.** Reported on aggregate alone this is an unambiguous
+win; normalized per device it is a trade — you bought latency with a card. Invariant 8
+exists for exactly this, and the first real sweep produced a case of it.
+
+### Tensor-parallel efficiency is not monotonic in concurrency
+
+| concurrency | TP=2 speed-up | TP=2 efficiency |
+| --- | --- | --- |
+| 4 | 1.45× | 72.4% |
+| 16 | 1.11× | 55.5% |
+| 64 | 1.73× | 86.4% |
+
+The dip at 16 and the recovery at 64 are explained by the other half of the data: TP=1
+peaks at concurrency 16 (1796 tok/s/GPU) and *falls* at 64 (1681). With ~4 GB of KV cache
+left after weights on a single 24 GB card, concurrency 64 thrashes. TP=2 has twice the
+cache headroom and keeps scaling, so the second card earns its place precisely where the
+first one runs out — and is worst value at 16, where one card is still comfortable.
+
+A scaling view that reported a single efficiency number per configuration would have
+averaged this away.
+
+### Concurrency 64 is off the frontier at both widths
+
+Four of six points are Pareto-optimal. Both concurrency-64 points are dominated by TP=1 at
+concurrency 16 — lower per-GPU throughput *and* lower per-user rate. On this model and
+these cards there is no operating point where 64 is the right answer.
+
+### Replicate spread is far tighter than the mock suggests
+
+Back-to-back replicates differed by **0.0–1.0%** (0.1% at concurrency 4). The mock agent
+injects ±4%, which is now known to be pessimistic for grouped replicates on real hardware.
+Useful calibration: at this repeatability a 2% difference between configurations is a
+result, not noise. Note the caveat the spread carries — `grouped` measures repeatability
+under near-identical conditions and says nothing about drift between sittings.
+
+### Housekeeping behaved
+
+Two engine loads for twelve runs, exactly as the plan predicted. Loads took 172 s (TP=1)
+and 186 s (TP=2) — long enough that grouped ordering saved roughly twelve minutes over
+interleaved. VRAM returned to 36 MiB between the two engines, and no `vllm serve` process
+survived the sweep. Per-device utilization within the TP=2 group was balanced to 1–3%,
+with memory within 0.1 GB across the pair.
+
+`reset caches: none available` is expected here rather than a fault: prefix caching is off
+in this configuration, so there is no prefix cache to carry between points.
