@@ -107,17 +107,31 @@ queue depth of zero while 64 requests were queued.
 
 ## 0.4.0 — Sweeps
 
-- [ ] Sweep authoring: matrix of server configs × workloads, with replicate count
-- [ ] `tensor_parallel_size` as a first-class sweep axis, with validation against the
+- [x] Sweep authoring: matrix of server configs × workloads, with replicate count
+- [x] `tensor_parallel_size` as a first-class sweep axis, with validation against the
       host's available device count
-- [ ] Orchestrator state machine: queue, execute, retry, resume, cancel
-- [ ] Cache reset between runs (`/reset_*_cache`)
-- [ ] Server restart between server-config changes; reuse across workload-only changes
-- [ ] Live sweep progress in the UI, with mid-sweep cancellation
-- [ ] Sweep survives an API restart
+- [x] Orchestrator state machine: queue, execute, resume, cancel
+- [x] Cache reset between runs (`/reset_*_cache`)
+- [x] Server restart between server-config changes; reuse across workload-only changes
+- [x] Live sweep progress in the UI, with mid-sweep cancellation
+- [x] Sweep survives an API restart
 
 **Done when:** a multi-hour sweep runs unattended, survives a control-plane restart, and
 can be cancelled cleanly without leaving orphaned processes or VRAM held.
+
+**Status:** complete. A sweep is materialized as runs at authoring time, so the plan is a
+fact in the database rather than a belief held by a process — which is what makes progress
+countable, resume free, and the whole thing independent of any one service staying up.
+
+Verified against the mock: an 8-run matrix predicted 2 model loads and took exactly 2,
+reusing the loaded engine for the other 6. Cancelling a 15-run sweep mid-flight cancelled
+the 12 queued runs immediately, stopped the one benchmarking, and left the engine
+`stopped` — recorded as cancelled rather than failed, because a sweep that was stopped on
+purpose should not read as broken.
+
+Retry is deliberately not implemented. A failed run is evidence, and silently re-running
+it would hide a reproducible failure behind an eventual success; re-running is a new run,
+linked by sweep, which is what `replicate_idx` and immutability already provide.
 
 ---
 

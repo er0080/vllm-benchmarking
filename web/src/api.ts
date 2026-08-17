@@ -1,4 +1,12 @@
-import type { Config, Host, Run, RunTelemetry, Workload } from "./types";
+import type {
+  Config,
+  Host,
+  Run,
+  RunTelemetry,
+  Sweep,
+  SweepCreate,
+  Workload,
+} from "./types";
 
 const BASE = "/api";
 
@@ -79,4 +87,12 @@ export const runsApi = {
         workload_id: workloadId,
       }),
     }),
+};
+
+export const sweepsApi = {
+  list: () => request<Sweep[]>("/sweeps"),
+  get: (id: string) => request<Sweep>(`/sweeps/${id}`),
+  create: (body: SweepCreate) =>
+    request<Sweep>("/sweeps", { method: "POST", body: JSON.stringify(body) }),
+  cancel: (id: string) => request<Sweep>(`/sweeps/${id}/cancel`, { method: "POST" }),
 };

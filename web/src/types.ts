@@ -156,3 +156,45 @@ export interface RunTelemetry {
   gpu_indices: number[];
   sample_count: number;
 }
+
+export type SweepStatus = "draft" | "queued" | "running" | "succeeded" | "failed" | "cancelled";
+
+export interface SweepProgress {
+  total: number;
+  queued: number;
+  starting: number;
+  benchmarking: number;
+  succeeded: number;
+  failed: number;
+  cancelled: number;
+}
+
+export interface Sweep {
+  id: string;
+  name: string;
+  description: string | null;
+  status: SweepStatus;
+  gpu_host_id: string;
+  replicates: number;
+  replicate_order: "grouped" | "interleaved";
+  initiated_by: string;
+  is_synthetic: boolean;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  error: string | null;
+  progress: SweepProgress;
+  /** Model loads implied by the plan — most of a sweep's wall clock. */
+  engine_starts: number;
+}
+
+export interface SweepCreate {
+  name: string;
+  description?: string | null;
+  gpu_host_id: string;
+  server_config_ids: string[];
+  workload_ids: string[];
+  tensor_parallel_sizes?: number[] | null;
+  replicates: number;
+  replicate_order: "grouped" | "interleaved";
+}
