@@ -437,3 +437,51 @@ class GpuSample(Base):
     temperature_c: Mapped[float | None] = mapped_column()
     sm_clock_mhz: Mapped[int | None] = mapped_column(Integer)
     memory_clock_mhz: Mapped[int | None] = mapped_column(Integer)
+
+
+# ---------------------------------------------------------------------------
+# Saved views
+# ---------------------------------------------------------------------------
+
+
+class SavedView(Base):
+    """A named analysis view: which chart, over which runs, on which axes.
+
+    Deliberately stores a *query*, never a set of run ids. A saved view reopened next
+    month should include the runs measured since it was saved — that is what makes it a
+    view of the data rather than a snapshot of it. Pinning run ids would produce something
+    that silently stops tracking reality while continuing to look current, which is the
+    worst of both.
+
+    ``filters`` and ``options`` are ``jsonb`` rather than columns because they are
+    interface state, not measurements. Nothing queries across them, no chart is drawn from
+    them, and giving each a column would mean a migration every time a view gains a
+    control. The "raw before derived" rule that governs results does not apply to a
+    record of what somebody had selected.
+
+    ``source`` is a column of its own, though, because it is the one field whose meaning
+    is load-bearing: a view saved over synthetic runs must reopen as synthetic. Buried in
+    a JSON blob it would be one typo away from a saved view quietly showing real numbers
+    where a developer expected the mock's (invariant 7).
+    """
+
+    __tablename__ = "saved_view"
+    __table_args__ = (UniqueConstraint("name"),)
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    name: Mapped[str] = mapped_column(String(128))
+    description: Mapped[str | None] = mapped_column(Text)
+
+    #: Which analysis view this reopens — "pareto", "scaling", "load", "balance",
+    #: "compare". Free text rather than a native enum so adding a view is not a
+    #: migration; an unrecognised value falls back to the default view rather than
+    #: failing to load.
+    view: Mapped[str] = mapped_column(String(32))
+
+    #: The population, held as a column for the reason in the class docstring.
+    source: Mapped[str] = mapped_column(String(16), default="real")
+
+    filters: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    options: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+
+    created_at: Mapped[dt.datetime] = created_at_column()

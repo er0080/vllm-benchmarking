@@ -7,6 +7,8 @@ import type {
   Host,
   Run,
   RunSource,
+  SavedView,
+  SavedViewCreate,
   RunTelemetry,
   Scaling,
   Sweep,
@@ -151,4 +153,11 @@ export const analysisApi = {
     const qs = params.toString();
     return request<DeviceBalance>(`/analysis/device-balance${qs ? `?${qs}` : ""}`);
   },
+};
+
+export const viewsApi = {
+  list: () => request<SavedView[]>("/views"),
+  create: (body: SavedViewCreate) =>
+    request<SavedView>("/views", { method: "POST", body: JSON.stringify(body) }),
+  remove: (id: string) => request<void>(`/views/${id}`, { method: "DELETE" }),
 };

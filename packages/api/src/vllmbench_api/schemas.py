@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import datetime as dt
 import uuid
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -610,3 +611,28 @@ class ComparisonOut(BaseModel):
     configs_identical: bool = False
     provenance_differences: list[ProvenanceDifferenceOut] = Field(default_factory=list)
     metrics: list[MetricComparisonOut] = Field(default_factory=list)
+
+
+class SavedViewCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=128)
+    description: str | None = None
+    view: str = Field(min_length=1, max_length=32)
+    source: str = "real"
+    #: The selection, not the results. A view stores a query so that reopening it next
+    #: month includes the runs measured since — pinning run ids would produce something
+    #: that silently stops tracking reality while still looking current.
+    filters: dict[str, Any] = Field(default_factory=dict)
+    options: dict[str, Any] = Field(default_factory=dict)
+
+
+class SavedViewOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    name: str
+    description: str | None = None
+    view: str
+    source: str
+    filters: dict[str, Any] = Field(default_factory=dict)
+    options: dict[str, Any] = Field(default_factory=dict)
+    created_at: dt.datetime

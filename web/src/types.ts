@@ -466,3 +466,30 @@ export interface Comparison {
   provenance_differences: ProvenanceDifference[];
   metrics: MetricComparison[];
 }
+
+/**
+ * A named analysis view: which chart, over which runs, on which axes.
+ *
+ * Stores a query, never a set of run ids — reopening one next month includes the runs
+ * measured since, which is what makes it a view of the data rather than a snapshot that
+ * silently stops tracking reality while continuing to look current.
+ */
+export interface SavedView {
+  id: string;
+  name: string;
+  description: string | null;
+  view: string;
+  source: RunSource;
+  filters: Record<string, unknown>;
+  options: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface SavedViewCreate {
+  name: string;
+  description?: string | null;
+  view: string;
+  source: RunSource;
+  filters: Record<string, unknown>;
+  options?: Record<string, unknown>;
+}

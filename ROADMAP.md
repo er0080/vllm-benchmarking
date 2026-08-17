@@ -164,7 +164,8 @@ The payoff milestone. Load the `dataviz` skill before building these.
 - [x] Filtering — population, host, sweep and tensor-parallel size, held above the views
       rather than inside each, so narrowing on one tab still means the same thing on the
       next
-- [ ] Saved views
+- [x] Saved views — a stored *query* (which chart, which runs, which axes), never a set
+      of run ids, so reopening one includes everything measured since
 
 **Done when:** a tuning decision can be made from the UI alone, without exporting to a
 notebook.
