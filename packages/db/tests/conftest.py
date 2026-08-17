@@ -7,7 +7,6 @@ check constraints, so SQLite or a mock would test nothing that ships.
 from __future__ import annotations
 
 import datetime as dt
-import os
 import uuid
 from collections.abc import AsyncIterator
 
@@ -17,20 +16,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from vllmbench_db.enums import InitiatedBy, RunStatus
 from vllmbench_db.models import GpuHost, Run, ServerConfig, Workload
 from vllmbench_db.session import create_engine, create_session_factory
+from vllmbench_db.testing import test_database_url
 
 pytestmark = pytest.mark.integration
 
 
-def _database_url() -> str:
-    return os.environ.get(
-        "DATABASE_URL",
-        "postgresql+psycopg://vllmbench:change-me@localhost:5432/vllmbench",
-    )
-
-
 @pytest.fixture
 async def session() -> AsyncIterator[AsyncSession]:
-    engine = create_engine(_database_url())
+    engine = create_engine(test_database_url())
     factory = create_session_factory(engine)
     async with factory() as s:
         yield s

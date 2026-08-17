@@ -15,7 +15,7 @@ from collections.abc import AsyncIterator
 
 import httpx
 import pytest
-from sqlalchemy import select, text
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -29,6 +29,7 @@ from vllmbench_db.models import (
     Workload,
 )
 from vllmbench_db.session import create_engine, create_session_factory
+from vllmbench_db.testing import reset_database, test_database_url
 from vllmbench_mockagent.main import create_app as create_mock_app
 from vllmbench_orchestrator.runner import claim_next_run, execute_run
 
@@ -38,13 +39,6 @@ TOKEN = "test-token-not-a-real-secret"
 MOCK_URL = "http://mock-agent"
 
 CONFIG_YAML = "model: facebook/opt-125m\ntensor_parallel_size: 2\n"
-
-
-def _database_url() -> str:
-    return os.environ.get(
-        "DATABASE_URL",
-        "postgresql+psycopg://vllmbench:change-me@localhost:5432/vllmbench",
-    )
 
 
 @pytest.fixture(autouse=True)
@@ -73,14 +67,13 @@ def route_to_mock(monkeypatch: pytest.MonkeyPatch):
 
 @pytest.fixture
 async def session() -> AsyncIterator[AsyncSession]:
-    engine = create_engine(_database_url())
+    engine = create_engine(test_database_url())
     factory = create_session_factory(engine)
+    # Sweeps and telemetry are emptied too. This fixture used to delete only runs, hosts
+    # and summaries, so a sweep left behind by another package's tests made setup here
+    # fail on a foreign key — in a file with nothing to do with the change.
+    await reset_database(engine)
     async with factory() as s:
-        async with engine.begin() as connection:
-            await connection.execute(text("DELETE FROM run_summary"))
-            await connection.execute(text("DELETE FROM run"))
-            await connection.execute(text("DELETE FROM gpu_device"))
-            await connection.execute(text("DELETE FROM gpu_host"))
         yield s
     await engine.dispose()
 

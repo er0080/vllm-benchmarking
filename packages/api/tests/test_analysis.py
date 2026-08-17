@@ -29,6 +29,7 @@ from vllmbench_api.analysis import (
     derive_per_user_rates,
     group_warnings,
     pareto_frontier,
+    scaling_curves,
     spread_basis,
     summarize,
 )
@@ -54,6 +55,7 @@ def record(**overrides: object) -> RunRecord:
         cuda_version="13.0",
         config_hash="cfg-a",
         config_name="tp2-fp8",
+        config_family="fam-a",
         workload_hash="wl-a",
         workload_name="sharegpt-64",
         gpu_count=2,
@@ -396,3 +398,125 @@ class TestMetricKeysAreRealColumns:
         columns = set(RunSummary.__table__.columns.keys())
         assert PER_USER_OUTPUT_TOK_S not in columns
         assert PER_USER_OUTPUT_TOK_S_P99 not in columns
+
+
+class TestScalingCurves:
+    """Does TP=N earn its extra devices, and against what baseline.
+
+    The rule that carries the weight is the grouping: a curve whose points are different
+    configurations is not a scaling measurement. Everything here is about keeping the
+    curve honest about what it compared.
+    """
+
+    @staticmethod
+    def point_at(tp: int, per_gpu: float, *, family: str = "fam", workload: str = "wl-a") -> Point:
+        return build_point(
+            [
+                record(
+                    config_hash=f"{family}-tp{tp}",
+                    config_name=f"cfg TP{tp}",
+                    config_family=family,
+                    workload_hash=workload,
+                    workload_name=workload,
+                    tensor_parallel_size=tp,
+                    gpu_count=tp,
+                    metrics={PARETO_X: per_gpu},
+                )
+            ]
+        )
+
+    def test_perfect_scaling_is_efficiency_one(self) -> None:
+        curves = scaling_curves(
+            [self.point_at(1, 1000.0), self.point_at(2, 1000.0)], metric_key=PARETO_X
+        )
+        (curve,) = curves
+        assert curve.baseline_tp == 1
+        assert [s.efficiency for s in curve.steps] == [1.0, 1.0]
+        # Same per-GPU rate on twice the devices is twice the aggregate.
+        assert [s.speedup for s in curve.steps] == [1.0, 2.0]
+
+    def test_half_the_devices_wasted(self) -> None:
+        curves = scaling_curves(
+            [self.point_at(1, 1000.0), self.point_at(2, 500.0)], metric_key=PARETO_X
+        )
+        (curve,) = curves
+        assert [s.efficiency for s in curve.steps] == [1.0, 0.5]
+        # ...and the aggregate did not move at all, which is the finding.
+        assert [s.speedup for s in curve.steps] == [1.0, 1.0]
+
+    def test_superlinear_scaling_is_reported_not_clamped(self) -> None:
+        # Real and explicable — a model that only fits in KV cache across two devices.
+        # Clamping to 1.0 would hide the most interesting result a TP sweep can produce.
+        curves = scaling_curves(
+            [self.point_at(1, 1000.0), self.point_at(2, 1200.0)], metric_key=PARETO_X
+        )
+        assert curves[0].steps[1].efficiency == pytest.approx(1.2)
+
+    def test_different_configs_do_not_share_a_curve(self) -> None:
+        """The load-bearing rule.
+
+        Two unrelated configs at TP=1 and TP=2 would otherwise look like one config
+        scaling badly, when in fact nothing was scaled at all.
+        """
+        curves = scaling_curves(
+            [self.point_at(1, 1000.0, family="a"), self.point_at(2, 400.0, family="b")],
+            metric_key=PARETO_X,
+        )
+        assert curves == [], "each family had only one width; neither is a curve"
+
+    def test_different_workloads_do_not_share_a_curve(self) -> None:
+        # Scaling is only meaningful holding the traffic fixed; a curve mixing
+        # concurrency 8 with concurrency 64 measures the workload, not the topology.
+        curves = scaling_curves(
+            [self.point_at(1, 1000.0, workload="c8"), self.point_at(2, 900.0, workload="c64")],
+            metric_key=PARETO_X,
+        )
+        assert curves == []
+
+    def test_one_curve_per_workload(self) -> None:
+        points = [self.point_at(tp, 1000.0, workload=wl) for wl in ("c8", "c64") for tp in (1, 2)]
+        curves = scaling_curves(points, metric_key=PARETO_X)
+        assert {c.workload_name for c in curves} == {"c8", "c64"}
+        assert all(len(c.steps) == 2 for c in curves)
+
+    def test_baseline_is_the_narrowest_width_present(self) -> None:
+        curves = scaling_curves(
+            [self.point_at(2, 1000.0), self.point_at(4, 800.0)], metric_key=PARETO_X
+        )
+        (curve,) = curves
+        assert curve.baseline_tp == 2
+        assert curve.steps[0].is_baseline
+
+    def test_a_baseline_that_is_not_one_gpu_is_flagged(self) -> None:
+        """ "78% efficient" means something different measured against TP=2.
+
+        The view has to say so; the alternative is a number that reads as parallel
+        efficiency but was never measured against a single device.
+        """
+        relative = scaling_curves(
+            [self.point_at(2, 1000.0), self.point_at(4, 800.0)], metric_key=PARETO_X
+        )[0]
+        absolute = scaling_curves(
+            [self.point_at(1, 1000.0), self.point_at(2, 800.0)], metric_key=PARETO_X
+        )[0]
+        assert not relative.baseline_is_single_gpu
+        assert absolute.baseline_is_single_gpu
+
+    def test_a_single_width_is_not_a_curve(self) -> None:
+        assert scaling_curves([self.point_at(2, 1000.0)], metric_key=PARETO_X) == []
+
+    def test_points_missing_the_metric_are_skipped(self) -> None:
+        blank = build_point(
+            [record(config_hash="fam-tp4", config_family="fam", tensor_parallel_size=4, metrics={})]
+        )
+        curves = scaling_curves(
+            [self.point_at(1, 1000.0), self.point_at(2, 900.0), blank], metric_key=PARETO_X
+        )
+        assert [s.tensor_parallel_size for s in curves[0].steps] == [1, 2]
+
+    def test_a_zero_baseline_does_not_divide(self) -> None:
+        curves = scaling_curves(
+            [self.point_at(1, 0.0), self.point_at(2, 500.0)], metric_key=PARETO_X
+        )
+        (curve,) = curves
+        assert all(s.efficiency is None for s in curve.steps)

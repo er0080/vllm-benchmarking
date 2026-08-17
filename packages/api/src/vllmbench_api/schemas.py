@@ -350,6 +350,9 @@ class SpreadOut(BaseModel):
 class PointOut(BaseModel):
     point_id: str
     config_hash: str
+    # Points sharing this are the same engine configuration at different tensor-parallel
+    # widths — the only grouping under which a scaling curve means anything.
+    config_family: str = ""
     config_name: str
     workload_hash: str
     workload_name: str
@@ -420,3 +423,69 @@ class AnalysisOut(BaseModel):
     metrics: list[MetricOut] = Field(default_factory=list)
     excluded: ExcludedOut = Field(default_factory=ExcludedOut)
     groups: list[GroupOut] = Field(default_factory=list)
+
+
+class ScalingStepOut(BaseModel):
+    """One tensor-parallel width on a scaling curve."""
+
+    tensor_parallel_size: int
+    gpu_count: int
+    point_id: str
+    config_name: str
+    is_baseline: bool = False
+
+    #: Aggregate throughput relative to the baseline width — what an operator feels.
+    speedup: float | None = None
+    #: Per-GPU throughput relative to the baseline — parallel efficiency. 1.0 means every
+    #: added device pulled its weight.
+    efficiency: float | None = None
+
+    per_gpu: SpreadOut | None = None
+    aggregate_median: float | None = None
+
+
+class ScalingCurveOut(BaseModel):
+    """One configuration's response to more devices, holding the workload fixed."""
+
+    family: str
+    config_name: str
+    workload_hash: str
+    workload_name: str
+    max_concurrency: int | None = None
+    baseline_tp: int
+    #: False when the narrowest width measured was itself already parallel. An efficiency
+    #: figure against a TP=2 baseline is not the parallel efficiency a reader assumes,
+    #: and the view has to say so rather than print a number that reads as one.
+    baseline_is_single_gpu: bool = True
+    steps: list[ScalingStepOut] = Field(default_factory=list)
+
+
+class ScalingGroupOut(BaseModel):
+    group_id: str
+    label: str
+    gpu_host_id: uuid.UUID
+    gpu_host_name: str
+    gpu_model: str | None = None
+    vllm_version: str | None = None
+    bench_client_location: str
+    warnings: list[str] = Field(default_factory=list)
+    run_count: int = 0
+    curves: list[ScalingCurveOut] = Field(default_factory=list)
+
+
+class ScalingOut(BaseModel):
+    source: str
+    run_count: int
+    truncated: bool = False
+    limit: int = 0
+    #: Which per-GPU metric the curves were built from. Efficiency is only meaningful for
+    #: a per-GPU figure, so the endpoint refuses anything else rather than dividing two
+    #: aggregates and calling the ratio efficiency.
+    metric: str
+    metrics: list[MetricOut] = Field(default_factory=list)
+    excluded: ExcludedOut = Field(default_factory=ExcludedOut)
+    groups: list[ScalingGroupOut] = Field(default_factory=list)
+    #: Families that appeared at only one width. Not an error — most configs are only
+    #: ever run one way — but a reader looking for a config that is missing from the
+    #: chart deserves to be told why rather than assuming it was never measured.
+    single_width_families: int = 0

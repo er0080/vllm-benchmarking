@@ -14,7 +14,6 @@ from collections.abc import AsyncIterator
 
 import httpx
 import pytest
-from conftest import database_url, reset_database
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,6 +22,7 @@ from vllmbench_api.settings import ApiSettings
 from vllmbench_db.enums import ReplicateOrder, RunStatus, SweepStatus
 from vllmbench_db.models import GpuHost, Run, ServerConfig, Sweep, Workload
 from vllmbench_db.session import create_engine, create_session_factory
+from vllmbench_db.testing import reset_database, test_database_url
 
 pytestmark = pytest.mark.integration
 
@@ -42,7 +42,7 @@ async def session() -> AsyncIterator[AsyncSession]:
     also runs the schema-version check and would need a live migration state, and what
     these tests exercise is the routers, not startup.
     """
-    engine = create_engine(database_url())
+    engine = create_engine(test_database_url())
     factory = create_session_factory(engine)
     api_app.state.engine = engine
     api_app.state.sessions = factory

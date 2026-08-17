@@ -181,3 +181,67 @@ class TestTopologyGuards:
     async def test_tensor_parallel_size_must_be_positive(self, run_factory) -> None:
         with pytest.raises(IntegrityError, match="tp_positive"):
             await run_factory(tensor_parallel_size=0)
+
+
+class TestResetHelper:
+    """The reset every package's integration tests depend on.
+
+    Tested because its failure mode is not its own: a table it misses leaves rows behind
+    that break a different package's setup, and the error names a file that had nothing
+    to do with the omission.
+    """
+
+    def test_delete_order_covers_every_mapped_table(self) -> None:
+        from vllmbench_db.base import Base
+        from vllmbench_db.testing import delete_order
+
+        assert set(delete_order()) == set(Base.metadata.tables)
+
+    def test_children_are_deleted_before_their_parents(self) -> None:
+        from vllmbench_db.testing import delete_order
+
+        order = delete_order()
+        for child, parent in (
+            ("run_summary", "run"),
+            ("engine_sample", "run"),
+            ("gpu_sample", "run"),
+            ("run", "sweep"),
+            ("run", "server_config"),
+            ("sweep", "gpu_host"),
+            ("gpu_device", "gpu_host"),
+        ):
+            assert order.index(child) < order.index(parent), f"{child} must precede {parent}"
+
+    async def test_reset_empties_a_populated_database(self) -> None:
+        """End to end against a real database, on its own engine.
+
+        Its own engine rather than the shared fixture's: the reset commits, and the
+        fixture's session deliberately rolls back so that tests do not see each other's
+        rows. Reaching into that session's bind would mix the two isolation models.
+        """
+        import uuid
+
+        from sqlalchemy import func, select
+
+        from vllmbench_db.models import GpuHost
+        from vllmbench_db.session import create_engine, create_session_factory
+        from vllmbench_db.testing import reset_database, test_database_url
+
+        engine = create_engine(test_database_url())
+        try:
+            factory = create_session_factory(engine)
+            async with factory() as s:
+                s.add(
+                    GpuHost(
+                        name=f"reset-{uuid.uuid4().hex[:8]}",
+                        agent_url="http://10.0.0.9:9110",
+                    )
+                )
+                await s.commit()
+
+            await reset_database(engine)
+
+            async with factory() as s:
+                assert await s.scalar(select(func.count()).select_from(GpuHost)) == 0
+        finally:
+            await engine.dispose()

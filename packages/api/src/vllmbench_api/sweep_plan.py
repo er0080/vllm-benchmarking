@@ -208,3 +208,36 @@ def engine_starts(plan: list[PlannedRun]) -> int:
             starts += 1
             previous = run.config_index
     return starts
+
+
+def config_family_text(yaml_text: str) -> str:
+    """The config with its tensor-parallel line removed entirely.
+
+    Two configs that differ *only* in tensor-parallel size are the same engine
+    configuration measured at two widths, and the scaling view needs to know that — a
+    curve of "throughput against TP" is meaningless if the points on it are also
+    different configs.
+
+    Derived from the text rather than from a stored lineage column on purpose. Content
+    addressing already makes the text the identity, so a family computed this way groups
+    correctly whatever produced the members: a TP axis on one sweep, a TP axis on
+    another, or two configs written by hand. A ``parent_id`` would only capture the
+    first of those, and would be wrong the moment someone pasted a config in.
+
+    *Removed* rather than rewritten to ``1``. Rewriting keeps the line where it was and
+    appends it when it was absent, so a config declaring the key in the middle of the
+    file would not match an otherwise identical one that omits it — the family would
+    depend on where the author happened to put the line. Deleting it is
+    position-independent, which is the property the grouping actually needs.
+
+    A config we cannot normalize — one setting the key twice, which is already ambiguous
+    about which value vLLM honours — is its own family. Failing closed here means a
+    single odd config appears alone in the scaling view rather than taking the whole
+    query down.
+    """
+    lines = yaml_text.splitlines(keepends=True)
+    matches = [i for i, line in enumerate(lines) if _TP_LINE.match(line.rstrip("\r\n"))]
+    if len(matches) != 1:
+        return yaml_text
+    del lines[matches[0]]
+    return "".join(lines)

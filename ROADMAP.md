@@ -141,8 +141,10 @@ The payoff milestone. Load the `dataviz` skill before building these.
 
 - [x] **Pareto frontier** — per-user output tok/s against per-GPU total tok/s, normalized
       by device count so tensor-parallel configurations are honestly comparable
-- [ ] Tensor-parallel scaling view: throughput and latency against TP size, with per-GPU
-      efficiency, answering whether TP=N earns its extra devices
+- [x] Tensor-parallel scaling view: aggregate throughput and per-GPU efficiency against
+      TP size, answering whether TP=N earns its extra devices. Curves are keyed by config
+      family — the config text with its TP line normalized away — so a curve is never
+      assembled from configurations that differ in anything else
 - [ ] Per-device utilization comparison to expose imbalance within a TP group
 - [ ] Latency-versus-concurrency curves, p50 and p99
 - [ ] Throughput saturation curves against request rate

@@ -1,6 +1,7 @@
 import type {
   Analysis,
   AnalysisQuery,
+  Scaling,
   Config,
   Host,
   Run,
@@ -118,5 +119,16 @@ export const analysisApi = {
     }
     const qs = params.toString();
     return request<Analysis>(`/analysis/points${qs ? `?${qs}` : ""}`);
+  },
+
+  // Deliberately no tensor_parallel_size filter: narrowing the axis under study to one
+  // value is the only query that cannot produce a curve.
+  scaling: (query: AnalysisQuery = {}) => {
+    const params = new URLSearchParams();
+    if (query.source) params.set("source", query.source);
+    if (query.hostId) params.set("host_id", query.hostId);
+    for (const id of query.sweepIds ?? []) params.append("sweep_id", id);
+    const qs = params.toString();
+    return request<Scaling>(`/analysis/scaling${qs ? `?${qs}` : ""}`);
   },
 };
