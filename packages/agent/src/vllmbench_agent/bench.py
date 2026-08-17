@@ -54,6 +54,7 @@ def build_argv(
         "vllm",
         "--base-url",
         base_url,
+        # --model is the weights identifier; vLLM loads the tokenizer from it.
         "--model",
         request.model,
         "--dataset-name",
@@ -64,6 +65,11 @@ def build_argv(
         "--result-filename",
         str(result_path),
     ]
+
+    # Omitted when equal to the model, matching vLLM's own default, so the command line
+    # stays the shortest thing that reproduces the run.
+    if request.served_model_name and request.served_model_name != request.model:
+        argv += ["--served-model-name", request.served_model_name]
 
     if request.dataset_path:
         argv += ["--dataset-path", request.dataset_path]

@@ -87,6 +87,42 @@ class TestArgumentConstruction:
         )
         assert argv[-2:] == ["--seed", "7"]
 
+    def test_weights_go_to_model_and_alias_to_served_model_name(
+        self, fake_vllm: Path, tmp_path: Path
+    ) -> None:
+        """The two names must land on their own flags.
+
+        vLLM loads the tokenizer from ``--model``. Putting the alias there either kills
+        the run outright, or — if the alias happens to be a real repo id — tokenizes
+        against an unrelated tokenizer and reports input-token counts that are wrong
+        while looking entirely healthy.
+        """
+        argv = build_argv(
+            BenchRequest(model="Qwen/Qwen3.8-27B-FP8", served_model_name="Qwen3.8-27B"),
+            base_url="http://x",
+            result_path=tmp_path / "r",
+        )
+        assert argv[argv.index("--model") + 1] == "Qwen/Qwen3.8-27B-FP8"
+        assert argv[argv.index("--served-model-name") + 1] == "Qwen3.8-27B"
+
+    def test_no_alias_omits_the_flag(self, fake_vllm: Path, tmp_path: Path) -> None:
+        # vLLM defaults --served-model-name to --model, so passing it adds noise to the
+        # command line without changing behaviour.
+        argv = build_argv(
+            BenchRequest(model="facebook/opt-125m"),
+            base_url="http://x",
+            result_path=tmp_path / "r",
+        )
+        assert "--served-model-name" not in argv
+
+    def test_alias_equal_to_the_model_omits_the_flag(self, fake_vllm: Path, tmp_path: Path) -> None:
+        argv = build_argv(
+            BenchRequest(model="facebook/opt-125m", served_model_name="facebook/opt-125m"),
+            base_url="http://x",
+            result_path=tmp_path / "r",
+        )
+        assert "--served-model-name" not in argv
+
     def test_missing_binary_is_explained(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

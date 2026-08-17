@@ -43,6 +43,7 @@ def _jitter(seed_material: str, spread: float) -> float:
 def synthesize_bench_result(
     *,
     model: str,
+    served_model_name: str | None = None,
     num_prompts: int,
     max_concurrency: int | None,
     request_rate: float | None,
@@ -57,6 +58,11 @@ def synthesize_bench_result(
     The field names matter as much as the values: code paths that read these are the
     same ones that will read production results, so a mock using different names would
     let a flattening bug through.
+
+    ``model_id`` and ``tokenizer_id`` both carry the *weights* identifier, matching what
+    upstream writes for ``--model``. Keeping that faithful is the point: while the mock
+    echoed whatever single name it was handed, an alias arriving in ``--model`` looked
+    perfectly correct here and only failed against a real engine.
     """
     concurrency = float(max_concurrency or 64)
     seed = f"{config_hash}:{replicate_seed}:{concurrency}:{output_len}"
@@ -86,6 +92,7 @@ def synthesize_bench_result(
         "endpoint_type": "vllm",
         "model_id": model,
         "tokenizer_id": model,
+        "served_model_name": served_model_name or model,
         "num_prompts": num_prompts,
         "request_rate": "inf" if request_rate is None else request_rate,
         "max_concurrency": max_concurrency,

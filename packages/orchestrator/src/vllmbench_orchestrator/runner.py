@@ -106,14 +106,25 @@ async def execute_run(session: AsyncSession, run: Run, token: str) -> None:
         run.status = RunStatus.BENCHMARKING
         await session.commit()
 
-        # The engine's own served name wins over anything read from the config. A
-        # config with `served-model-name` answers under that alias, so benchmarking the
-        # `model:` line would 404 — a failure real configs produce and the mock never
-        # would.
-        model = status.served_model_name or _model_from_config(config)
+        # Weights identifier from the config, alias from the engine.
+        #
+        # The config is the only place the weights id is written, and it is what the
+        # tokenizer must be loaded from. The alias is whatever the engine is actually
+        # answering to, which is ground truth and can differ from the config — so the
+        # engine's own /v1/models wins, with the config's `served-model-name` as the
+        # fallback for an engine that did not report one.
+        model, config_alias = _model_names_from_config(config)
+        served_model_name = status.served_model_name or config_alias
 
-        log.info("run %s: benchmarking model %s", run.id, model)
-        response = await client_bench(client, workload, model=model)
+        log.info(
+            "run %s: benchmarking weights %s served as %s",
+            run.id,
+            model,
+            served_model_name or model,
+        )
+        response = await client_bench(
+            client, workload, model=model, served_model_name=served_model_name
+        )
 
         if response.device_indices:
             run.device_indices = response.device_indices
@@ -167,10 +178,13 @@ async def client_start_server(client: AgentClient, config: ServerConfig):
     )
 
 
-async def client_bench(client: AgentClient, workload: Workload, *, model: str):
+async def client_bench(
+    client: AgentClient, workload: Workload, *, model: str, served_model_name: str | None
+):
     return await client.bench(
         BenchRequest(
             model=model,
+            served_model_name=served_model_name,
             dataset_name=workload.dataset_name,
             dataset_path=workload.dataset_path,
             hf_name=workload.hf_name,
@@ -184,16 +198,21 @@ async def client_bench(client: AgentClient, workload: Workload, *, model: str):
     )
 
 
-def _model_from_config(config: ServerConfig) -> str:
-    """Read the model name out of the config YAML.
+def _model_names_from_config(config: ServerConfig) -> tuple[str, str | None]:
+    """Read ``(weights_id, served_alias)`` out of the config YAML.
 
-    The one thing we must extract, because ``vllm bench serve`` needs ``--model`` and the
-    config is the only place it is written. Deliberately a narrow read rather than a full
-    parse: invariant 5 keeps the config opaque otherwise.
+    Two names, not one. ``vllm bench serve --model`` is the *weights* identifier and vLLM
+    loads the tokenizer from it; ``--served-model-name`` is the alias the API answers to.
+
+    An earlier version of this returned a single name and preferred the alias, to stop
+    real configs 404-ing. That fixed the request and broke tokenization, which is the
+    worse trade: a bad alias makes the benchmark die, but a *plausible* alias makes it
+    tokenize against the wrong tokenizer and report input-token counts that are simply
+    wrong, with every appearance of success.
+
+    A narrow line read rather than a YAML parse, because invariant 5 keeps the config
+    opaque. Hyphens and underscores are both accepted, since vLLM accepts both.
     """
-    # served-model-name first: when present it is the alias the API answers to, and the
-    # `model:` line is only the weights to load. Hyphens and underscores are both
-    # accepted because vLLM accepts both spellings.
     found: dict[str, str] = {}
     for line in config.yaml.splitlines():
         key, sep, value = line.partition(":")
@@ -205,13 +224,13 @@ def _model_from_config(config: ServerConfig) -> str:
             if cleaned:
                 found[name] = cleaned
 
-    for preferred in ("served_model_name", "model"):
-        if preferred in found:
-            return found[preferred]
-    raise RunFailed(
-        "could not find a `model:` entry in the server config; "
-        "`vllm bench serve` needs one to know what to request"
-    )
+    weights = found.get("model")
+    if not weights:
+        raise RunFailed(
+            "could not find a `model:` entry in the server config; `vllm bench serve` "
+            "needs one to load the tokenizer"
+        )
+    return weights, found.get("served_model_name")
 
 
 def _record_provenance(run: Run, info: HostInfo) -> None:
