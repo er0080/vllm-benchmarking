@@ -13,6 +13,8 @@ recorded results.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import datetime as dt
 import logging
 import uuid
@@ -33,7 +35,13 @@ from vllmbench_db.models import (
 )
 from vllmbench_protocol import AgentClient, AgentError
 from vllmbench_protocol.bench_result import BenchResultError, flatten_bench_result
-from vllmbench_protocol.wire import BenchRequest, BenchResponse, HostInfo, StartServerRequest
+from vllmbench_protocol.wire import (
+    BenchRequest,
+    BenchResponse,
+    HostInfo,
+    ServerState,
+    StartServerRequest,
+)
 
 log = logging.getLogger("vllmbench.orchestrator.runner")
 
@@ -44,6 +52,16 @@ SERVER_PORT = 8000
 
 class RunFailed(RuntimeError):
     """The run could not be completed. The message is recorded on the run."""
+
+
+class RunCancelled(RuntimeError):
+    """The run was stopped on request.
+
+    Separate from RunFailed because they mean opposite things about the sweep. A failure
+    is a result to investigate; a cancellation is the system doing exactly what it was
+    told. Recording one as the other would fill a cancelled sweep with red rows and make
+    a real failure inside it impossible to spot.
+    """
 
 
 async def claim_next_run(session: AsyncSession) -> Run | None:
@@ -137,7 +155,63 @@ async def settle_sweep(session: AsyncSession, sweep_id: uuid.UUID) -> None:
     log.info("sweep %s finished: %s", sweep_id, sweep.status)
 
 
-async def execute_run(session: AsyncSession, run: Run, token: str) -> None:
+async def _ensure_server(client: AgentClient, config: ServerConfig, *, run_id: uuid.UUID):
+    """Get a ready engine for this config, reusing the running one when it already is.
+
+    A sweep varies workloads and replicates underneath a single server config far more
+    often than it changes the config, and a restart costs minutes for a large model —
+    72s for a 27B on the reference host, and that is a fast case. Reusing the engine
+    across workload-only changes is most of the difference between a sweep that takes an
+    afternoon and one that takes a day.
+
+    Reuse is keyed on the config hash the *agent* reports, not on what this process
+    believes it started. The orchestrator can restart mid-sweep, and after that its only
+    honest source for what is loaded is the host itself.
+
+    Caches are still reset before every benchmark (``reset_caches_first``), so a reused
+    engine does not carry a warm prefix cache into the next point — which would inflate
+    it and make the order of a matrix silently affect its results.
+    """
+    current = await client.server_status()
+    if current.state is ServerState.READY and current.config_hash == config.config_hash:
+        log.info("run %s: reusing the running engine (config %s)", run_id, config.config_hash[:12])
+        return current
+
+    if current.state in (ServerState.READY, ServerState.STARTING):
+        log.info(
+            "run %s: config changed (%s -> %s); restarting the engine",
+            run_id,
+            (current.config_hash or "none")[:12],
+            config.config_hash[:12],
+        )
+        await client.stop_server()
+
+    log.info("run %s: starting server (config %s)", run_id, config.config_hash[:12])
+    return await client_start_server(client, config)
+
+
+async def _next_run_wants_same_config(session: AsyncSession, run: Run) -> bool:
+    """Whether the next queued run on this host uses the same server config.
+
+    Decides whether to leave the engine loaded. Looked up rather than assumed, because
+    "the next point in the sweep" is only knowable from the plan, and the plan is in the
+    database precisely so no process has to hold it.
+    """
+    next_hash = await session.scalar(
+        select(Run.config_hash)
+        .where(Run.status == RunStatus.QUEUED, Run.gpu_host_id == run.gpu_host_id)
+        .order_by(Run.queued_at, Run.sweep_seq.nulls_first())
+        .limit(1)
+    )
+    return next_hash == run.config_hash
+
+
+async def execute_run(
+    session: AsyncSession,
+    run: Run,
+    token: str,
+    cancel: asyncio.Event | None = None,
+) -> None:
     """Drive one run to a terminal state.
 
     Never raises: a run that fails must be recorded as failed with a reason, because an
@@ -155,12 +229,14 @@ async def execute_run(session: AsyncSession, run: Run, token: str) -> None:
     server_started = False
 
     try:
+        if cancel is not None and cancel.is_set():
+            raise RunCancelled("cancelled before the engine was started")
+
         info = await client.host_info()
         _record_provenance(run, info)
 
-        log.info("run %s: starting server (config %s)", run.id, run.config_hash[:12])
         server_started = True
-        status = await client_start_server(client, config)
+        status = await _ensure_server(client, config, run_id=run.id)
 
         # The engine's own version wins over the agent's environment probe: the agent
         # may live in a separate venv, and it is the engine that produced the numbers.
@@ -200,8 +276,13 @@ async def execute_run(session: AsyncSession, run: Run, token: str) -> None:
             model,
             served_model_name or model,
         )
-        response = await client_bench(
-            client, workload, model=model, served_model_name=served_model_name
+        response = await _bench_or_cancel(
+            client,
+            workload,
+            model=model,
+            served_model_name=served_model_name,
+            cancel=cancel,
+            run_id=run.id,
         )
 
         if response.device_indices:
@@ -227,6 +308,8 @@ async def execute_run(session: AsyncSession, run: Run, token: str) -> None:
         await session.commit()
         log.info("run %s: succeeded", run.id)
 
+    except RunCancelled as exc:
+        await _cancel_run(session, run, str(exc))
     except BenchResultError as exc:
         # The benchmark ran but its output did not match the contract. Distinguished
         # from a failed benchmark because the fix is different: this means vLLM changed
@@ -239,12 +322,24 @@ async def execute_run(session: AsyncSession, run: Run, token: str) -> None:
         await _fail(session, run, f"unexpected failure: {exc}")
     finally:
         if server_started:
-            # Unconditional. A run that failed after starting an engine must not leave
-            # VRAM held for whatever runs next.
-            try:
-                await client.stop_server()
-            except AgentError as exc:
-                log.error("run %s: could not stop the server: %s", run.id, exc)
+            # Left running only when the next queued run wants the same config, and only
+            # when this run ended cleanly. Anything else — a failure, a cancellation, an
+            # empty queue — tears the engine down, because the reason to keep VRAM held
+            # is that something is about to use it, and in those cases nothing is.
+            keep = False
+            if run.status is RunStatus.SUCCEEDED:
+                try:
+                    keep = await _next_run_wants_same_config(session, run)
+                except Exception:
+                    log.exception("run %s: could not look ahead; tearing down", run.id)
+
+            if keep:
+                log.info("run %s: leaving the engine loaded for the next point", run.id)
+            else:
+                try:
+                    await client.stop_server()
+                except AgentError as exc:
+                    log.error("run %s: could not stop the server: %s", run.id, exc)
         await client.aclose()
 
         # After teardown, and outside the success path, so a sweep is closed out whether
@@ -393,6 +488,61 @@ def _record_provenance(run: Run, info: HostInfo) -> None:
     # produced it.
     run.is_synthetic = info.synthetic_source is not None
     run.synthetic_source = info.synthetic_source
+
+
+async def _bench_or_cancel(
+    client: AgentClient,
+    workload: Workload,
+    *,
+    model: str,
+    served_model_name: str | None,
+    cancel: asyncio.Event | None,
+    run_id: uuid.UUID,
+):
+    """Run the benchmark, or stop it if cancellation arrives while it is running.
+
+    The benchmark is the long part — minutes to hours — so waiting for it to finish
+    before honouring a cancellation would make cancelling a sweep almost meaningless.
+
+    Order matters on the way out: the *client* is stopped first, through the agent, and
+    the engine afterwards by the caller's teardown. Killing the engine first would leave
+    `vllm bench serve` firing requests at a dead socket until its own timeout, which is
+    both slow and a good way to end up with an orphan.
+    """
+    bench = asyncio.ensure_future(
+        client_bench(client, workload, model=model, served_model_name=served_model_name)
+    )
+    if cancel is None:
+        return await bench
+
+    waiter = asyncio.ensure_future(cancel.wait())
+    try:
+        done, _ = await asyncio.wait({bench, waiter}, return_when=asyncio.FIRST_COMPLETED)
+        if bench in done:
+            return bench.result()
+
+        log.info("run %s: cancellation requested; stopping the benchmark", run_id)
+        with contextlib.suppress(AgentError):
+            await client.cancel_bench()
+
+        # Wait for the agent to report back rather than abandoning the request. The
+        # benchmark call is what holds the connection, and dropping it would leave the
+        # host finishing work whose result nobody is listening for.
+        with contextlib.suppress(AgentError, asyncio.CancelledError):
+            await bench
+        raise RunCancelled("cancelled while the benchmark was running")
+    finally:
+        waiter.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await waiter
+
+
+async def _cancel_run(session: AsyncSession, run: Run, message: str) -> None:
+    log.info("run %s cancelled: %s", run.id, message)
+    run.status = RunStatus.CANCELLED
+    run.error = message[:4000]
+    run.finished_at = dt.datetime.now(dt.UTC)
+    await session.commit()
 
 
 async def _fail(session: AsyncSession, run: Run, message: str) -> None:

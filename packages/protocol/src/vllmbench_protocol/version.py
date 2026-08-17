@@ -34,4 +34,8 @@ __version__ = "0.1.0"
 # 4: BenchResponse carries telemetry, and BenchRequest can set the sampling interval.
 #    An agent on 3 returns no samples at all, which a control plane on 4 would record as
 #    a run that was genuinely never sampled rather than one whose agent cannot sample.
-PROTOCOL_VERSION = 4
+# 5: the agent can stop a benchmark in flight (POST /bench/cancel). Without it a
+#    cancelled sweep keeps burning GPU time until the current point finishes, and the
+#    only alternative — killing the engine underneath a running client — leaves that
+#    client thrashing against a dead socket.
+PROTOCOL_VERSION = 5

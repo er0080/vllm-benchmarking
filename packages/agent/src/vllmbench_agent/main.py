@@ -20,7 +20,7 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI, HTTPException, status
 
 from vllmbench_agent.auth import token_dependency
-from vllmbench_agent.bench import BenchError, run_benchmark
+from vllmbench_agent.bench import BenchCancelled, BenchError, BenchRunner
 from vllmbench_agent.hardware import (
     probe_cuda_version,
     probe_driver_version,
@@ -34,6 +34,7 @@ from vllmbench_protocol import PROTOCOL_VERSION, __version__
 from vllmbench_protocol.wire import (
     BenchRequest,
     BenchResponse,
+    CancelResponse,
     HealthResponse,
     HostInfo,
     ServerState,
@@ -49,6 +50,7 @@ def create_app(settings: AgentSettings | None = None) -> FastAPI:
     started_at = time.monotonic()
     require_token = token_dependency(settings.token)
     server = VllmServer(vllm_bin=settings.vllm_bin)
+    bench_runner = BenchRunner(vllm_bin=settings.vllm_bin)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -160,9 +162,11 @@ def create_app(settings: AgentSettings | None = None) -> FastAPI:
         sampler.start()
 
         try:
-            response = await run_benchmark(
-                request, base_url=server.base_url(), vllm_bin=settings.vllm_bin
-            )
+            response = await bench_runner.run(request, base_url=server.base_url())
+        except BenchCancelled as exc:
+            # 409 rather than 422: nothing about the request was wrong, the host was
+            # asked to stop. The orchestrator records the run as cancelled, not failed.
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
         except BenchError as exc:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
@@ -179,6 +183,21 @@ def create_app(settings: AgentSettings | None = None) -> FastAPI:
                 "telemetry_decimated": sampler.decimated,
                 "telemetry_interval_seconds": sampler.effective_interval_seconds,
             }
+        )
+
+    @app.post("/bench/cancel", response_model=CancelResponse, dependencies=[Depends(require_token)])
+    async def bench_cancel() -> CancelResponse:
+        """Stop the benchmark in flight.
+
+        Deliberately does not stop the server. Cancelling a sweep and tearing down the
+        engine are separate decisions — the caller may want to cancel one point and keep
+        the loaded model for the next — and the orchestrator issues both when it means
+        both.
+        """
+        cancelled = await bench_runner.cancel()
+        return CancelResponse(
+            cancelled=cancelled,
+            detail="benchmark signalled" if cancelled else "no benchmark was running",
         )
 
     return app

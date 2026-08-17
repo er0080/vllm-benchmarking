@@ -8,6 +8,7 @@ perpetually working and blocks whatever comes next.
 
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 import os
 from collections.abc import AsyncIterator
@@ -532,3 +533,213 @@ class TestTelemetryPersistence:
         # entirely inside — that is what a real, minutes-long benchmark gives.
         assert samples[0].sampled_at >= run.started_at - dt.timedelta(seconds=5)
         assert samples[0].sampled_at < samples[-1].sampled_at
+
+
+class TestServerReuse:
+    """Restart the engine only when the server config actually changes.
+
+    A sweep varies workloads and replicates underneath one config far more often than it
+    changes the config, and a restart is minutes for a large model. This is most of the
+    difference between a sweep that takes an afternoon and one that takes a day — but it
+    is also the change most able to leak a warm engine into the next measurement, so the
+    conditions are pinned here.
+    """
+
+    async def test_a_second_run_on_the_same_config_reuses_the_engine(
+        self, session: AsyncSession, route_to_mock
+    ) -> None:
+        mock = create_mock_app(token=TOKEN)
+        route_to_mock(mock)
+
+        first = await _seed(session)
+        config_id, workload_id, host_id = (
+            first.server_config_id,
+            first.workload_id,
+            first.gpu_host_id,
+        )
+        # A second run with identical config and workload, as a sweep would produce.
+        session.add(
+            Run(
+                gpu_host_id=host_id,
+                server_config_id=config_id,
+                workload_id=workload_id,
+                status=RunStatus.QUEUED,
+                config_hash=first.config_hash,
+                workload_hash=first.workload_hash,
+                gpu_count=2,
+                is_synthetic=True,
+                synthetic_source="mock_agent",
+                initiated_by=InitiatedBy.API,
+                sweep_seq=1,
+            )
+        )
+        await session.commit()
+
+        one = await claim_next_run(session)
+        assert one is not None
+        await execute_run(session, one, TOKEN)
+
+        # The engine is deliberately left loaded, because the next queued run wants it.
+        status_after = await _mock_server_state(mock)
+        assert status_after == "ready", "engine was torn down between identical configs"
+
+        two = await claim_next_run(session)
+        assert two is not None
+        await execute_run(session, two, TOKEN)
+
+        session.expire_all()
+        both = list(
+            (await session.execute(select(Run).order_by(Run.sweep_seq.nulls_first()))).scalars()
+        )
+        assert [r.status for r in both] == [RunStatus.SUCCEEDED, RunStatus.SUCCEEDED]
+
+    async def test_the_last_run_tears_the_engine_down(
+        self, session: AsyncSession, route_to_mock
+    ) -> None:
+        # Holding VRAM is only justified by something about to use it. With the queue
+        # empty, nothing is.
+        mock = create_mock_app(token=TOKEN)
+        route_to_mock(mock)
+        await _seed(session)
+
+        claimed = await claim_next_run(session)
+        assert claimed is not None
+        await execute_run(session, claimed, TOKEN)
+
+        assert await _mock_server_state(mock) == "stopped"
+
+    async def test_a_changed_config_restarts_the_engine(
+        self, session: AsyncSession, route_to_mock
+    ) -> None:
+        mock = create_mock_app(token=TOKEN)
+        route_to_mock(mock)
+
+        first = await _seed(session)
+        other = ServerConfig(
+            config_hash=os.urandom(32).hex(),
+            name="other",
+            yaml="model: facebook/opt-125m\ntensor-parallel-size: 1\n",
+        )
+        session.add(other)
+        await session.flush()
+        session.add(
+            Run(
+                gpu_host_id=first.gpu_host_id,
+                server_config_id=other.id,
+                workload_id=first.workload_id,
+                status=RunStatus.QUEUED,
+                config_hash=other.config_hash,
+                workload_hash=first.workload_hash,
+                gpu_count=2,
+                is_synthetic=True,
+                synthetic_source="mock_agent",
+                initiated_by=InitiatedBy.API,
+                sweep_seq=1,
+            )
+        )
+        await session.commit()
+
+        one = await claim_next_run(session)
+        assert one is not None
+        await execute_run(session, one, TOKEN)
+        # Next run wants a different config, so nothing is worth keeping loaded.
+        assert await _mock_server_state(mock) == "stopped"
+
+        two = await claim_next_run(session)
+        assert two is not None
+        await execute_run(session, two, TOKEN)
+
+        # Before expire_all: reading an attribute off an expired object triggers a
+        # synchronous refresh, which is IO on the wrong side of the greenlet boundary.
+        two_id = two.id
+        session.expire_all()
+        finished = await session.get(Run, two_id)
+        assert finished is not None and finished.status is RunStatus.SUCCEEDED
+
+    async def test_a_failed_run_never_leaves_the_engine_loaded(
+        self, session: AsyncSession, route_to_mock
+    ) -> None:
+        """Reuse is an optimization; holding VRAM after a failure is a leak.
+
+        The next run may well want the same config, but a host that just failed is not
+        one to hand a warm engine to without knowing why.
+        """
+        mock = create_mock_app(token=TOKEN)
+        route_to_mock(mock)
+        run = await _seed(session)
+        config = await session.get(ServerConfig, run.server_config_id)
+        assert config is not None
+        # No `model:` line, so the run fails before benchmarking.
+        config.yaml = "served-model-name: nothing\n"
+        await session.commit()
+
+        claimed = await claim_next_run(session)
+        assert claimed is not None
+        await execute_run(session, claimed, TOKEN)
+
+        run_id = claimed.id
+        session.expire_all()
+        finished = await session.get(Run, run_id)
+        assert finished is not None and finished.status is RunStatus.FAILED
+        assert await _mock_server_state(mock) == "stopped"
+
+
+class TestInFlightCancellation:
+    async def test_cancelling_mid_benchmark_stops_the_run(
+        self, session: AsyncSession, route_to_mock
+    ) -> None:
+        """The point of cancelling: it takes effect now, not after this point finishes.
+
+        A benchmark runs for minutes to hours. Waiting for it would make cancelling a
+        sweep nearly meaningless, which is why the agent can stop a benchmark in flight.
+        """
+        mock = create_mock_app(token=TOKEN)
+        route_to_mock(mock)
+        await _seed(session)
+
+        claimed = await claim_next_run(session)
+        assert claimed is not None
+
+        cancel = asyncio.Event()
+        cancel.set()  # already cancelled by the time the run reaches the benchmark
+        run_id = claimed.id
+        await execute_run(session, claimed, TOKEN, cancel=cancel)
+
+        session.expire_all()
+        finished = await session.get(Run, run_id)
+        assert finished is not None
+        # Cancelled, not failed: the system did what it was told.
+        assert finished.status is RunStatus.CANCELLED
+        assert "cancel" in (finished.error or "").lower()
+        # And nothing was left holding VRAM.
+        assert await _mock_server_state(mock) == "stopped"
+
+    async def test_cancelling_records_no_summary(
+        self, session: AsyncSession, route_to_mock
+    ) -> None:
+        # A cancelled run measured nothing. A summary row would put a half-finished
+        # benchmark into charts alongside complete ones.
+        route_to_mock(create_mock_app(token=TOKEN))
+        await _seed(session)
+        claimed = await claim_next_run(session)
+        assert claimed is not None
+
+        cancel = asyncio.Event()
+        cancel.set()
+        run_id = claimed.id
+        await execute_run(session, claimed, TOKEN, cancel=cancel)
+
+        session.expire_all()
+        run = await session.scalar(
+            select(Run).options(selectinload(Run.summary)).where(Run.id == run_id)
+        )
+        assert run is not None
+        assert run.summary is None
+
+
+async def _mock_server_state(mock_app) -> str:
+    """Ask the mock agent what its engine is doing, through its real HTTP contract."""
+    transport = httpx.ASGITransport(app=mock_app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://mock-agent") as c:
+        response = await c.get("/server", headers={"Authorization": f"Bearer {TOKEN}"})
+        return str(response.json()["state"])

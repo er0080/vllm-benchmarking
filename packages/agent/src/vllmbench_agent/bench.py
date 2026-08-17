@@ -12,12 +12,16 @@ enters the latency figures.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
+import os
 import shutil
+import signal
 import tempfile
 import time
 from collections import deque
+from collections.abc import Callable
 from pathlib import Path
 
 from vllmbench_agent.hardware import (
@@ -34,6 +38,16 @@ OUTPUT_TAIL_LINES = 100
 
 class BenchError(RuntimeError):
     """The benchmark did not produce a usable result."""
+
+
+class BenchCancelled(RuntimeError):
+    """The benchmark was stopped on request, before it produced a result.
+
+    Distinct from BenchError because the two mean opposite things about the run. A failed
+    benchmark is a result worth recording and investigating; a cancelled one is work the
+    operator asked to stop, and recording it as a failure would put a red row in a sweep
+    that behaved exactly as instructed.
+    """
 
 
 def build_argv(
@@ -98,10 +112,80 @@ def build_argv(
     return argv
 
 
+class BenchRunner:
+    """Owns at most one benchmark process, so that it can be stopped.
+
+    State exists here for exactly one reason: cancelling a sweep must not mean waiting
+    for the current point to finish. A twenty-minute benchmark that keeps running after
+    the operator said stop is burning the GPU time they asked to reclaim, and killing the
+    engine out from under a client that is still sending requests leaves the client
+    thrashing against a dead socket until it times out.
+
+    So the client is stopped first, by process group, and the engine after it. One
+    benchmark at a time, matching the one-engine-per-host rule.
+    """
+
+    def __init__(self, vllm_bin: str = "") -> None:
+        self._vllm_bin = vllm_bin
+        self._process: asyncio.subprocess.Process | None = None
+        self._cancelled = False
+
+    @property
+    def running(self) -> bool:
+        return self._process is not None
+
+    async def cancel(self) -> bool:
+        """Stop the running benchmark. Returns whether there was one to stop.
+
+        Signals the process group: `vllm bench serve` spawns workers, and killing only
+        the parent would leave them sending requests at an engine we are about to tear
+        down — the orphan case this project cares about, one level up from the engine
+        itself.
+        """
+        process = self._process
+        if process is None:
+            return False
+
+        self._cancelled = True
+        with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
+            os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+        log.info("cancelling benchmark pid=%d", process.pid)
+        return True
+
+    async def run(self, request: BenchRequest, *, base_url: str) -> BenchResponse:
+        if self._process is not None:
+            raise BenchError("a benchmark is already running on this host")
+        self._cancelled = False
+        try:
+            return await _run_benchmark(
+                request,
+                base_url=base_url,
+                vllm_bin=self._vllm_bin,
+                register=self._register,
+                was_cancelled=lambda: self._cancelled,
+            )
+        finally:
+            self._process = None
+
+    def _register(self, process: asyncio.subprocess.Process) -> None:
+        self._process = process
+
+
 async def run_benchmark(
     request: BenchRequest, *, base_url: str, vllm_bin: str = ""
 ) -> BenchResponse:
     """Run one benchmark and return its verbatim result."""
+    return await _run_benchmark(request, base_url=base_url, vllm_bin=vllm_bin)
+
+
+async def _run_benchmark(
+    request: BenchRequest,
+    *,
+    base_url: str,
+    vllm_bin: str = "",
+    register: Callable[[asyncio.subprocess.Process], None] | None = None,
+    was_cancelled: Callable[[], bool] | None = None,
+) -> BenchResponse:
     workdir = Path(tempfile.mkdtemp(prefix="vllmbench-bench-"))
     result_path = workdir / "result.json"
     argv = build_argv(request, base_url=base_url, result_path=result_path, vllm_bin=vllm_bin)
@@ -123,6 +207,9 @@ async def run_benchmark(
         shutil.rmtree(workdir, ignore_errors=True)
         raise BenchError(f"could not launch the benchmark: {exc}") from exc
 
+    if register is not None:
+        register(process)
+
     try:
         stdout, stderr = await asyncio.wait_for(
             process.communicate(), timeout=request.timeout_seconds
@@ -138,6 +225,13 @@ async def run_benchmark(
     out_tail = _tail(stdout.decode(errors="replace"))
     err_tail = _tail(stderr.decode(errors="replace"))
     duration = time.monotonic() - started
+
+    # Checked before the exit code, because a cancelled client exits non-zero and
+    # reporting that as a failed benchmark would mark a sweep the operator stopped as
+    # broken rather than as stopped.
+    if was_cancelled is not None and was_cancelled():
+        shutil.rmtree(workdir, ignore_errors=True)
+        raise BenchCancelled("benchmark was cancelled before it produced a result")
 
     try:
         if process.returncode != 0:
