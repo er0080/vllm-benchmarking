@@ -106,3 +106,22 @@ export function Chart({
 
   return <div ref={ref} style={{ width: "100%", height }} />;
 }
+
+/**
+ * Whether an axis of these values should be logarithmic.
+ *
+ * Benchmark axes routinely span an order of magnitude — concurrency doubles from 4 to
+ * 64, aggregate throughput differs 13x between a light and a heavy workload — and on a
+ * linear axis the small end collapses into the margin and stops being readable at all.
+ *
+ * Shared so every chart makes the same call, and always paired with saying so on the
+ * axis label. A silently switching scale is the trap; a chart that is unreadable for
+ * half its inputs is the alternative.
+ */
+export const LOG_SCALE_THRESHOLD = 10;
+
+export function needsLogScale(values: readonly number[]): boolean {
+  const positive = values.filter((v) => Number.isFinite(v) && v > 0);
+  if (positive.length < 2) return false;
+  return Math.max(...positive) / Math.min(...positive) > LOG_SCALE_THRESHOLD;
+}

@@ -28,7 +28,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type * as echarts from "echarts";
 
 import { analysisApi } from "./api";
-import { Chart, DASH, SYMBOLS, cssVar, seriesColors, useTheme } from "./chartkit";
+import { Chart, DASH, SYMBOLS, cssVar, needsLogScale, seriesColors, useTheme } from "./chartkit";
 import type { Metric, RunSource, Scaling, ScalingCurve, ScalingGroup } from "./types";
 
 /** The palette's validated slot count. Beyond it, series are listed rather than drawn. */
@@ -129,16 +129,6 @@ function seriesFor(
   });
 }
 
-/**
- * Aggregate throughput spans an order of magnitude across workloads — a low-concurrency
- * curve and a high-concurrency one differ by 8x here — and on a shared linear axis the
- * quiet one flattens against the floor and stops being readable at all.
- *
- * So the scale follows the data and the axis says which it used. Switching silently
- * would be the trap; a chart that is unreadable for half its inputs is the alternative.
- */
-const LOG_SCALE_THRESHOLD = 10;
-
 export function throughputOption(
   curves: ScalingCurve[],
   axis: number[],
@@ -149,8 +139,7 @@ export function throughputOption(
   const values = curves
     .flatMap((c) => c.steps.map((s) => s.aggregate_median))
     .filter((v): v is number => v !== null && v > 0);
-  const useLog =
-    values.length > 1 && Math.max(...values) / Math.min(...values) > LOG_SCALE_THRESHOLD;
+  const useLog = needsLogScale(values);
   const base = baseOption(
     "Aggregate throughput",
     ink,
