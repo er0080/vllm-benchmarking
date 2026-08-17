@@ -27,8 +27,10 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type * as echarts from "echarts";
 
 import { analysisApi } from "./api";
+import type { Filters } from "./AnalysisFilters";
+import { toQuery } from "./AnalysisFilters";
 import { Chart, cssVar, seriesColors, useTheme } from "./chartkit";
-import type { DeviceBalance, DeviceBalanceGroup, RunBalance, RunSource } from "./types";
+import type { DeviceBalance, DeviceBalanceGroup, RunBalance } from "./types";
 
 /** Runs charted at once, worst first. The table below carries the rest. */
 const MAX_RUNS = 8;
@@ -200,11 +202,10 @@ function BalanceTable({ group }: { group: DeviceBalanceGroup }) {
   );
 }
 
-export function DeviceBalanceView() {
+export function DeviceBalanceView({ filters }: { filters: Filters }) {
   const [data, setData] = useState<DeviceBalance | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
-  const [source, setSource] = useState<RunSource>("real");
   const [groupId, setGroupId] = useState<string | null>(null);
   const [metricKey, setMetricKey] = useState<BarMetric["key"]>("sm_utilization_pct");
   const [showTable, setShowTable] = useState(false);
@@ -212,14 +213,14 @@ export function DeviceBalanceView() {
 
   const load = useCallback(async () => {
     try {
-      setData(await analysisApi.deviceBalance({ source }));
+      setData(await analysisApi.deviceBalance(toQuery(filters)));
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoaded(true);
     }
-  }, [source]);
+  }, [filters]);
 
   useEffect(() => {
     void load();
@@ -259,13 +260,6 @@ export function DeviceBalanceView() {
 
       <div className="card">
         <div className="toolbar">
-          <label>
-            Runs
-            <select value={source} onChange={(e) => setSource(e.target.value as RunSource)}>
-              <option value="real">Real measurements</option>
-              <option value="synthetic">Synthetic (mock / CPU backend)</option>
-            </select>
-          </label>
 
           {data && data.groups.length > 1 && (
             <label>
@@ -301,12 +295,6 @@ export function DeviceBalanceView() {
           <button onClick={() => void load()}>Refresh</button>
         </div>
 
-        {source === "synthetic" && (
-          <p className="notice">
-            Synthetic runs. These come from the mock agent or the CPU backend and are not
-            measurements of any real hardware.
-          </p>
-        )}
 
         {error && <p className="error">{error}</p>}
         {!loaded && <p className="muted">Loading…</p>}

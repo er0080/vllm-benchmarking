@@ -22,7 +22,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { analysisApi } from "./api";
-import type { Analysis, AnalysisPoint, Comparison, MetricComparison, RunSource } from "./types";
+import type { Filters } from "./AnalysisFilters";
+import { toQuery } from "./AnalysisFilters";
+import type { Analysis, AnalysisPoint, Comparison, MetricComparison } from "./types";
 
 function format(value: number | null): string {
   if (value === null || !Number.isFinite(value)) return "—";
@@ -93,18 +95,17 @@ function PointPicker({
   );
 }
 
-export function CompareView() {
+export function CompareView({ filters }: { filters: Filters }) {
   const [available, setAvailable] = useState<AnalysisPoint[]>([]);
   const [comparison, setComparison] = useState<Comparison | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
-  const [source, setSource] = useState<RunSource>("real");
   const [left, setLeft] = useState<string | null>(null);
   const [right, setRight] = useState<string | null>(null);
 
   const loadPoints = useCallback(async () => {
     try {
-      const data: Analysis = await analysisApi.points({ source });
+      const data: Analysis = await analysisApi.points(toQuery(filters));
       // Flattened across comparability groups on purpose: this view is allowed to
       // compare across them, and hiding the other groups behind a selector would make
       // the one comparison it uniquely permits the hardest one to ask for.
@@ -118,7 +119,7 @@ export function CompareView() {
     } finally {
       setLoaded(true);
     }
-  }, [source]);
+  }, [filters]);
 
   useEffect(() => {
     void loadPoints();
@@ -131,13 +132,13 @@ export function CompareView() {
     }
     let cancelled = false;
     analysisApi
-      .compare(left, right, source)
+      .compare(left, right, filters.source)
       .then((c) => !cancelled && setComparison(c))
       .catch((e) => !cancelled && setError(e instanceof Error ? e.message : String(e)));
     return () => {
       cancelled = true;
     };
-  }, [left, right, source]);
+  }, [left, right, filters.source]);
 
   const invalidating = useMemo(
     () => (comparison?.provenance_differences ?? []).filter((d) => d.invalidating),
@@ -154,13 +155,6 @@ export function CompareView() {
 
       <div className="card">
         <div className="toolbar">
-          <label>
-            Runs
-            <select value={source} onChange={(e) => setSource(e.target.value as RunSource)}>
-              <option value="real">Real measurements</option>
-              <option value="synthetic">Synthetic (mock / CPU backend)</option>
-            </select>
-          </label>
           {available.length > 0 && left && right && (
             <>
               <PointPicker label="Left" points={available} value={left} onChange={setLeft} />

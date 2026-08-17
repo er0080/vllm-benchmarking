@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { api } from "./api";
+import type { Filters } from "./AnalysisFilters";
+import { FilterBar, NO_FILTERS } from "./AnalysisFilters";
 import { CompareView } from "./CompareView";
 import { DeviceBalanceView } from "./DeviceBalanceView";
 import { LoadCurvesView } from "./LoadCurvesView";
@@ -168,6 +170,8 @@ function RegisterForm({ onRegistered }: { onRegistered: () => void }) {
   );
 }
 
+const ANALYSIS_TABS = new Set<string>(["analysis", "scaling", "load", "balance", "compare"]);
+
 type Tab = "hosts" | "runs" | "sweeps" | "analysis" | "scaling" | "load" | "balance" | "compare";
 
 export function App() {
@@ -175,6 +179,9 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [tab, setTab] = useState<Tab>("hosts");
+  // Held here rather than per view, so narrowing to a sweep on one tab still means
+  // that sweep on the next. Per-view filters make the tabs lie to each other.
+  const [filters, setFilters] = useState<Filters>(NO_FILTERS);
 
   const load = useCallback(async () => {
     try {
@@ -238,11 +245,21 @@ export function App() {
 
       {tab === "runs" && <RunsView />}
       {tab === "sweeps" && <SweepsView />}
-      {tab === "analysis" && <ParetoView />}
-      {tab === "scaling" && <ScalingView />}
-      {tab === "load" && <LoadCurvesView />}
-      {tab === "balance" && <DeviceBalanceView />}
-      {tab === "compare" && <CompareView />}
+      {ANALYSIS_TABS.has(tab) && (
+        <FilterBar
+          filters={filters}
+          onChange={setFilters}
+          // The scaling view hides the TP chips: filtering the axis under study to a
+          // single value is the one query that cannot produce a curve.
+          showTensorParallel={tab !== "scaling"}
+        />
+      )}
+
+      {tab === "analysis" && <ParetoView filters={filters} />}
+      {tab === "scaling" && <ScalingView filters={filters} />}
+      {tab === "load" && <LoadCurvesView filters={filters} />}
+      {tab === "balance" && <DeviceBalanceView filters={filters} />}
+      {tab === "compare" && <CompareView filters={filters} />}
     </div>
   );
 }
