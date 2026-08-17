@@ -198,3 +198,110 @@ export interface SweepCreate {
   replicates: number;
   replicate_order: "grouped" | "interleaved";
 }
+
+/**
+ * A chartable measurement and how to read it.
+ *
+ * Shipped by the API rather than hard-coded here so axis direction and per-GPU status
+ * have one definition. A view that decided on its own which metrics are "lower is
+ * better" would eventually draw a frontier upside down.
+ */
+export interface Metric {
+  key: string;
+  label: string;
+  unit: string;
+  better: "higher" | "lower";
+  per_gpu: boolean;
+  description: string;
+}
+
+/** One metric across a point's replicates. `median` is plotted; the rest is the band. */
+export interface Spread {
+  n: number;
+  median: number;
+  mean: number;
+  min: number;
+  max: number;
+  values: number[];
+  relative_range: number | null;
+}
+
+/**
+ * What a point's error band actually measures. `single` means one run and no band at
+ * all — which must look different from a band that happens to be narrow.
+ */
+export type SpreadBasis = "single" | "grouped" | "interleaved" | "mixed";
+
+export interface AnalysisPoint {
+  point_id: string;
+  config_hash: string;
+  config_name: string;
+  workload_hash: string;
+  workload_name: string;
+  tensor_parallel_size: number;
+  pipeline_parallel_size: number;
+  gpu_count: number;
+  max_concurrency: number | null;
+  request_rate: number | null;
+  num_prompts: number;
+  replicates: number;
+  run_ids: string[];
+  sweep_ids: string[];
+  spread_basis: SpreadBasis;
+  spread_note: string;
+  latest_finished_at: string | null;
+  on_pareto_frontier: boolean;
+  metrics: Record<string, Spread>;
+}
+
+/**
+ * Points that may legitimately share a chart. The API partitions, not the client — a
+ * view cannot overlay two vLLM versions by forgetting to check, because it is never
+ * handed them in one series.
+ */
+export interface AnalysisGroup {
+  group_id: string;
+  label: string;
+  gpu_host_id: string;
+  gpu_host_name: string;
+  gpu_model: string | null;
+  vllm_version: string | null;
+  bench_client_location: string;
+  warnings: string[];
+  run_count: number;
+  points: AnalysisPoint[];
+  pareto_point_ids: string[];
+}
+
+/** Runs the filters matched that no chart will show. */
+export interface AnalysisExcluded {
+  failed: number;
+  cancelled: number;
+  unfinished: number;
+  succeeded_without_summary: number;
+  other_source: number;
+  other_source_name: string;
+}
+
+export type RunSource = "real" | "synthetic";
+
+export interface Analysis {
+  source: RunSource;
+  run_count: number;
+  truncated: boolean;
+  limit: number;
+  pareto_x: string;
+  pareto_y: string;
+  metrics: Metric[];
+  excluded: AnalysisExcluded;
+  groups: AnalysisGroup[];
+}
+
+export interface AnalysisQuery {
+  source?: RunSource;
+  hostId?: string;
+  sweepIds?: string[];
+  tensorParallelSizes?: number[];
+  paretoX?: string;
+  paretoY?: string;
+}

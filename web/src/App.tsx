@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { api } from "./api";
+import { ParetoView } from "./ParetoView";
 import { RunsView } from "./RunsView";
 import { SweepsView } from "./SweepsView";
 import type { Host } from "./types";
@@ -163,7 +164,7 @@ function RegisterForm({ onRegistered }: { onRegistered: () => void }) {
   );
 }
 
-type Tab = "hosts" | "runs" | "sweeps";
+type Tab = "hosts" | "runs" | "sweeps" | "analysis";
 
 export function App() {
   const [hosts, setHosts] = useState<Host[]>([]);
@@ -190,11 +191,11 @@ export function App() {
     <div className="page">
       <header>
         <h1>vLLM Benchmarking</h1>
-        <p>Milestone 0.4.0 — sweeps.</p>
+        <p>Milestone 0.5.0 — analysis.</p>
       </header>
 
       <nav className="tabs">
-        {(["hosts", "runs", "sweeps"] as Tab[]).map((name) => (
+        {(["hosts", "runs", "sweeps", "analysis"] as Tab[]).map((name) => (
           <button key={name} aria-current={tab === name} onClick={() => setTab(name)}>
             {name.charAt(0).toUpperCase() + name.slice(1)}
           </button>
@@ -233,6 +234,7 @@ export function App() {
 
       {tab === "runs" && <RunsView />}
       {tab === "sweeps" && <SweepsView />}
+      {tab === "analysis" && <ParetoView />}
     </div>
   );
 }

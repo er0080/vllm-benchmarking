@@ -1,4 +1,6 @@
 import type {
+  Analysis,
+  AnalysisQuery,
   Config,
   Host,
   Run,
@@ -95,4 +97,26 @@ export const sweepsApi = {
   create: (body: SweepCreate) =>
     request<Sweep>("/sweeps", { method: "POST", body: JSON.stringify(body) }),
   cancel: (id: string) => request<Sweep>(`/sweeps/${id}/cancel`, { method: "POST" }),
+};
+
+/**
+ * The one query behind every analysis view.
+ *
+ * `source` takes a single population — there is no value meaning "both", so a synthetic
+ * run cannot be requested alongside a real one (invariant 7).
+ */
+export const analysisApi = {
+  points: (query: AnalysisQuery = {}) => {
+    const params = new URLSearchParams();
+    if (query.source) params.set("source", query.source);
+    if (query.hostId) params.set("host_id", query.hostId);
+    if (query.paretoX) params.set("pareto_x", query.paretoX);
+    if (query.paretoY) params.set("pareto_y", query.paretoY);
+    for (const id of query.sweepIds ?? []) params.append("sweep_id", id);
+    for (const tp of query.tensorParallelSizes ?? []) {
+      params.append("tensor_parallel_size", String(tp));
+    }
+    const qs = params.toString();
+    return request<Analysis>(`/analysis/points${qs ? `?${qs}` : ""}`);
+  },
 };

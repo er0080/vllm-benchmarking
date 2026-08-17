@@ -307,3 +307,116 @@ class SweepOut(BaseModel):
     # loading, so this is the number that predicts how long it will take — and the one
     # that makes the cost of interleaving replicates visible before committing to it.
     engine_starts: int = 0
+
+
+# ---------------------------------------------------------------------------
+# Analysis
+# ---------------------------------------------------------------------------
+
+
+class MetricOut(BaseModel):
+    """A chartable measurement and how to read it.
+
+    Shipped with the data rather than duplicated in the frontend so that axis direction
+    and per-GPU status have one definition. A view that had to remember on its own which
+    metrics are "lower is better" would eventually draw a Pareto frontier upside down.
+    """
+
+    key: str
+    label: str
+    unit: str
+    better: str
+    per_gpu: bool = False
+    description: str = ""
+
+
+class SpreadOut(BaseModel):
+    """One metric across a point's replicates.
+
+    ``median`` is the value; the rest is the uncertainty CLAUDE.md requires rendering.
+    The raw ``values`` are included because with three replicates a band is not enough
+    to see whether the odd one out was high or low.
+    """
+
+    n: int
+    median: float
+    mean: float
+    min: float
+    max: float
+    values: list[float]
+    relative_range: float | None = None
+
+
+class PointOut(BaseModel):
+    point_id: str
+    config_hash: str
+    config_name: str
+    workload_hash: str
+    workload_name: str
+
+    tensor_parallel_size: int
+    pipeline_parallel_size: int
+    gpu_count: int
+    max_concurrency: int | None = None
+    request_rate: float | None = None
+    num_prompts: int = 0
+
+    replicates: int
+    run_ids: list[uuid.UUID] = Field(default_factory=list)
+    sweep_ids: list[uuid.UUID] = Field(default_factory=list)
+    # What the band means — repeatability, run-to-run variance, or drift between
+    # sittings — and a sentence saying so, for the tooltip that has to justify it.
+    spread_basis: str
+    spread_note: str
+    latest_finished_at: dt.datetime | None = None
+
+    on_pareto_frontier: bool = False
+    metrics: dict[str, SpreadOut] = Field(default_factory=dict)
+
+
+class GroupOut(BaseModel):
+    """Points that may legitimately share a chart.
+
+    The API partitions rather than the client, so a view cannot overlay two vLLM
+    versions by forgetting to check: it is never handed them in one series.
+    """
+
+    group_id: str
+    label: str
+    gpu_host_id: uuid.UUID
+    gpu_host_name: str
+    gpu_model: str | None = None
+    vllm_version: str | None = None
+    bench_client_location: str
+
+    warnings: list[str] = Field(default_factory=list)
+    run_count: int = 0
+    points: list[PointOut] = Field(default_factory=list)
+    pareto_point_ids: list[str] = Field(default_factory=list)
+
+
+class ExcludedOut(BaseModel):
+    """Runs the filters matched that no chart will show.
+
+    A missing point and a point whose every replicate failed look identical on a chart
+    and mean opposite things, so the counts travel with the data.
+    """
+
+    failed: int = 0
+    cancelled: int = 0
+    unfinished: int = 0
+    succeeded_without_summary: int = 0
+    other_source: int = 0
+    other_source_name: str = "synthetic"
+
+
+class AnalysisOut(BaseModel):
+    source: str
+    run_count: int
+    truncated: bool = False
+    limit: int = 0
+    pareto_x: str
+    pareto_y: str
+    metrics: list[MetricOut] = Field(default_factory=list)
+    excluded: ExcludedOut = Field(default_factory=ExcludedOut)
+    groups: list[GroupOut] = Field(default_factory=list)

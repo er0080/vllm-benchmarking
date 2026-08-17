@@ -14,7 +14,8 @@ from collections.abc import AsyncIterator
 
 import httpx
 import pytest
-from sqlalchemy import select, text
+from conftest import database_url, reset_database
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vllmbench_api.main import app as api_app
@@ -33,12 +34,6 @@ max-num-seqs: 2                # was 1 — this is the fix
 """
 
 
-def _database_url() -> str:
-    return os.environ.get(
-        "DATABASE_URL", "postgresql+psycopg://vllmbench:vllmbench@localhost:5432/vllmbench"
-    )
-
-
 @pytest.fixture
 async def session() -> AsyncIterator[AsyncSession]:
     """A clean database, with the API wired to the same engine.
@@ -47,20 +42,14 @@ async def session() -> AsyncIterator[AsyncSession]:
     also runs the schema-version check and would need a live migration state, and what
     these tests exercise is the routers, not startup.
     """
-    engine = create_engine(_database_url())
+    engine = create_engine(database_url())
     factory = create_session_factory(engine)
     api_app.state.engine = engine
     api_app.state.sessions = factory
     api_app.state.settings = ApiSettings(token="test-token-not-a-real-secret")
 
+    await reset_database(engine)
     async with factory() as s:
-        async with engine.begin() as connection:
-            # Order matters: runs reference sweeps and hosts.
-            await connection.execute(text("DELETE FROM run_summary"))
-            await connection.execute(text("DELETE FROM run"))
-            await connection.execute(text("DELETE FROM sweep"))
-            await connection.execute(text("DELETE FROM gpu_device"))
-            await connection.execute(text("DELETE FROM gpu_host"))
         yield s
     await engine.dispose()
 

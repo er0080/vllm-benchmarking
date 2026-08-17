@@ -14,8 +14,10 @@
  * that makes a tensor-parallel run diagnosable; the mean of the two is the one summary
  * guaranteed to hide it (invariant 8).
  */
-import { useEffect, useMemo, useRef, useState } from "react";
-import * as echarts from "echarts";
+import { useEffect, useMemo, useState } from "react";
+import type * as echarts from "echarts";
+
+import { Chart, DASH, cssVar, seriesColors, useTheme } from "./chartkit";
 
 import { runsApi } from "./api";
 import type { RunTelemetry } from "./types";
@@ -57,75 +59,9 @@ const DEFAULT_METRIC: GpuMetric = GPU_METRICS[0];
  * It doubles as the secondary encoding that makes the series distinguishable without
  * color, for colorblind readers and for print.
  */
-const DASH = ["solid", "dashed", "dotted"] as const;
-
-function cssVar(name: string, fallback: string): string {
-  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-  return value || fallback;
-}
-
-/**
- * Series colors are assigned by entity, in fixed order — device 0 is always slot 1.
- * Deriving them from position in a filtered list would repaint every remaining device
- * whenever one was hidden, which silently changes what a reader has already learned to
- * associate with a color.
- */
-function seriesColors(): [string, string, string, string] {
-  return [
-    cssVar("--series-1", "#2a78d6"),
-    cssVar("--series-2", "#eb6834"),
-    cssVar("--series-3", "#1baf7a"),
-    cssVar("--series-4", "#eda100"),
-  ];
-}
-
 /** Seconds from the first sample, so the axis reads as "into the run". */
 function relativeSeconds(iso: string, origin: number): number {
   return (new Date(iso).getTime() - origin) / 1000;
-}
-
-function useTheme(): string {
-  // Re-render the charts when the theme changes; ECharts bakes colors in at option time.
-  const [theme, setTheme] = useState(() => document.documentElement.dataset.theme ?? "system");
-  useEffect(() => {
-    const observer = new MutationObserver(() =>
-      setTheme(document.documentElement.dataset.theme ?? "system"),
-    );
-    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
-    const media = window.matchMedia("(prefers-color-scheme: dark)");
-    const onMedia = () => setTheme((t) => t + " ");
-    media.addEventListener("change", onMedia);
-    return () => {
-      observer.disconnect();
-      media.removeEventListener("change", onMedia);
-    };
-  }, []);
-  return theme;
-}
-
-function Chart({ option, height }: { option: echarts.EChartsOption; height: number }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const chart = useRef<echarts.ECharts | null>(null);
-
-  useEffect(() => {
-    if (!ref.current) return;
-    chart.current = echarts.init(ref.current);
-    const resize = () => chart.current?.resize();
-    window.addEventListener("resize", resize);
-    return () => {
-      window.removeEventListener("resize", resize);
-      chart.current?.dispose();
-      chart.current = null;
-    };
-  }, []);
-
-  useEffect(() => {
-    // notMerge: a metric switch changes the series set, and merging would leave the
-    // previous metric's lines on the canvas underneath the new ones.
-    chart.current?.setOption(option, true);
-  }, [option]);
-
-  return <div ref={ref} style={{ width: "100%", height }} />;
 }
 
 /** Shared axis, grid and tooltip styling — recessive, so the data carries the ink. */
