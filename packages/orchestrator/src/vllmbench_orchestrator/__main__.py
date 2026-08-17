@@ -13,10 +13,13 @@ import asyncio
 import contextlib
 import logging
 import signal
+import uuid
 
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from vllmbench_db.enums import RunStatus, SweepStatus
+from vllmbench_db.models import Run, Sweep
 from vllmbench_db.session import create_engine, create_session_factory
 from vllmbench_orchestrator.runner import claim_next_run, execute_run
 from vllmbench_orchestrator.settings import OrchestratorSettings
@@ -51,6 +54,49 @@ async def _wait_for_database(
             await asyncio.sleep(2)
 
 
+# How often the cancellation watcher re-reads the database while a run is in flight.
+# The cost is one small query per interval against a run that may last an hour; the
+# benefit is that cancelling a sweep takes effect in seconds rather than at the end of
+# the current point.
+CANCEL_POLL_SECONDS = 3.0
+
+
+async def _watch_for_cancellation(
+    factory: async_sessionmaker[AsyncSession],
+    run_id: uuid.UUID,
+    sweep_id: uuid.UUID | None,
+    cancel: asyncio.Event,
+) -> None:
+    """Set ``cancel`` when this run, or the sweep it belongs to, is cancelled.
+
+    Runs on its own session. Sharing the executing run's session would mean two tasks
+    issuing statements on one connection, which SQLAlchemy's async session does not
+    support and which fails in ways that look like unrelated corruption.
+    """
+    while not cancel.is_set():
+        await asyncio.sleep(CANCEL_POLL_SECONDS)
+        try:
+            async with factory() as session:
+                if sweep_id is not None:
+                    sweep_status = await session.scalar(
+                        select(Sweep.status).where(Sweep.id == sweep_id)
+                    )
+                    if sweep_status is SweepStatus.CANCELLED:
+                        log.info("sweep %s cancelled; stopping run %s", sweep_id, run_id)
+                        cancel.set()
+                        return
+
+                run_status = await session.scalar(select(Run.status).where(Run.id == run_id))
+                if run_status is RunStatus.CANCELLED:
+                    log.info("run %s cancelled directly", run_id)
+                    cancel.set()
+                    return
+        except Exception:
+            # Never let the watcher kill the run it is watching. A database blip should
+            # cost a missed cancellation check, not a lost measurement.
+            log.exception("cancellation watch failed for run %s", run_id)
+
+
 async def _poll_once(factory: async_sessionmaker[AsyncSession], token: str) -> bool:
     """Claim and execute one run. Returns whether there was work to do.
 
@@ -61,7 +107,17 @@ async def _poll_once(factory: async_sessionmaker[AsyncSession], token: str) -> b
         run = await claim_next_run(session)
         if run is None:
             return False
-        await execute_run(session, run, token)
+
+        cancel = asyncio.Event()
+        watcher = asyncio.create_task(
+            _watch_for_cancellation(factory, run.id, run.sweep_id, cancel)
+        )
+        try:
+            await execute_run(session, run, token, cancel=cancel)
+        finally:
+            watcher.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await watcher
         return True
 
 

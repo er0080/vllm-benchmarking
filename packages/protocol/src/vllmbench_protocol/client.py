@@ -22,6 +22,7 @@ from vllmbench_protocol.wire import (
     AUTH_SCHEME,
     BenchRequest,
     BenchResponse,
+    CancelResponse,
     HealthResponse,
     HostInfo,
     ServerStatus,
@@ -161,3 +162,14 @@ class AgentClient:
     async def bench(self, request: BenchRequest) -> BenchResponse:
         response = await self._post("/bench", json=request.model_dump(mode="json"))
         return BenchResponse.model_validate(response.json())
+
+    async def cancel_bench(self) -> CancelResponse:
+        """Stop the benchmark in flight, if there is one.
+
+        Uses its own short timeout rather than the client's: this is called to reclaim a
+        host, often while the normal client is configured with no timeout at all so that
+        a model load can take as long as it needs. Waiting indefinitely to cancel would
+        defeat the point.
+        """
+        response = await self._client.post("/bench/cancel", timeout=30.0)
+        return CancelResponse.model_validate(self._checked(response).json())

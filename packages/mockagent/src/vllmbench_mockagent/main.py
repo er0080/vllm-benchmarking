@@ -14,6 +14,7 @@ has to infer it from circumstantial evidence like "the GPU model looks made up".
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import time
@@ -26,6 +27,7 @@ from vllmbench_protocol import PROTOCOL_VERSION, __version__
 from vllmbench_protocol.wire import (
     BenchRequest,
     BenchResponse,
+    CancelResponse,
     EngineSampleWire,
     GpuInfo,
     GpuSampleWire,
@@ -84,6 +86,10 @@ def create_app(token: str | None = None, protocol_version: int = PROTOCOL_VERSIO
 
     # Mirrors the real agent's single-server rule, so control-plane code that handles
     # "already running" is exercised here too.
+    # Set while a synthetic benchmark is "running", so cancellation can interrupt it the
+    # way the real agent interrupts a subprocess.
+    cancel = asyncio.Event()
+
     state: dict[str, object] = {
         "state": ServerState.STOPPED,
         "config_hash": None,
@@ -175,7 +181,17 @@ def create_app(token: str | None = None, protocol_version: int = PROTOCOL_VERSIO
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f"no ready server to benchmark (state={state['state']})",
             )
-        await asyncio.sleep(MOCK_BENCH_SECONDS)
+        cancel.clear()
+        # Race the synthetic duration against a cancellation, mirroring the real agent
+        # where the wait is on a subprocess that can be signalled.
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(cancel.wait(), timeout=MOCK_BENCH_SECONDS)
+        if cancel.is_set():
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="benchmark was cancelled before it produced a result",
+            )
+
         tp = _tp_from_config(state["config_yaml"])  # type: ignore[arg-type]
         raw = synthesize_bench_result(
             model=request.model,
@@ -212,6 +228,15 @@ def create_app(token: str | None = None, protocol_version: int = PROTOCOL_VERSIO
             engine_samples=[EngineSampleWire(**s) for s in engine_samples],
             gpu_samples=[GpuSampleWire(**s) for s in gpu_samples],
             telemetry_interval_seconds=interval,
+        )
+
+    @app.post("/bench/cancel", response_model=CancelResponse, dependencies=[Depends(require_token)])
+    async def bench_cancel() -> CancelResponse:
+        running = not cancel.is_set()
+        cancel.set()
+        return CancelResponse(
+            cancelled=running,
+            detail="synthetic benchmark signalled" if running else "no benchmark was running",
         )
 
     return app

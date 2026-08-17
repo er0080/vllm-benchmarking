@@ -250,6 +250,15 @@ class GpuSampleWire(_Wire):
     memory_clock_mhz: int | None = None
 
 
+class CancelResponse(_Wire):
+    """The outcome of asking the agent to stop what it is doing."""
+
+    # False means there was nothing running. Not an error: cancelling a sweep races the
+    # run finishing on its own, and both orders have to be safe.
+    cancelled: bool
+    detail: str = ""
+
+
 class BenchResponse(_Wire):
     """The result of one benchmark, plus what it took to get it."""
 
