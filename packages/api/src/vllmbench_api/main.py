@@ -14,7 +14,7 @@ from typing import Any
 from fastapi import FastAPI
 from sqlalchemy import text
 
-from vllmbench_api.routers import hosts, runs, sweeps
+from vllmbench_api.routers import analysis, hosts, runs, sweeps
 from vllmbench_api.settings import ApiSettings
 from vllmbench_db.schema_version import check_schema_version
 from vllmbench_db.session import create_engine, create_session_factory
@@ -53,6 +53,7 @@ app = FastAPI(
     openapi_url="/api/openapi.json",
 )
 
+app.include_router(analysis.router)
 app.include_router(hosts.router)
 app.include_router(runs.router)
 app.include_router(sweeps.router)

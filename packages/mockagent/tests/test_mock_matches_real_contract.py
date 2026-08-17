@@ -31,6 +31,12 @@ def mock_app():
     return create_mock_app(token=TOKEN)
 
 
+@pytest.fixture
+def mock_app_factory():
+    """Builds a *fresh* mock, for tests about state that accumulates across requests."""
+    return lambda: create_mock_app(token=TOKEN)
+
+
 def _client(app) -> httpx.AsyncClient:
     return httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),
@@ -209,3 +215,71 @@ class TestSyntheticResultsAreUsable:
             bench = (await http.post("/bench", json={"model": "m"})).json()
         assert bench["tensor_parallel_size"] == 4
         assert bench["device_indices"] == [0, 1, 2, 3]
+
+
+class TestReplicatesDiffer:
+    """Repeating a point must move the numbers, or the spread rendering is untestable.
+
+    Every analysis view draws a band across replicates and states what it measures. With
+    a mock that returns byte-identical results for repeated requests, that band is always
+    zero-width in development — so the one piece of the chart that exists to convey
+    uncertainty is the piece nobody can see working before it meets real data.
+    """
+
+    @staticmethod
+    async def _bench(http, *, concurrency: int = 16) -> dict:
+        response = await http.post(
+            "/bench", json={"model": "m", "num_prompts": 64, "max_concurrency": concurrency}
+        )
+        assert response.status_code == 200
+        return response.json()["raw_result"]
+
+    async def _ready(self, http) -> None:
+        start = await http.post(
+            "/server/start",
+            json={"config_yaml": "model: m\n", "config_hash": "c" * 16, "port": 8000},
+        )
+        assert start.status_code == 200
+
+    async def test_repeated_runs_of_one_point_vary(self, mock_app) -> None:
+        async with _client(mock_app) as http:
+            await self._ready(http)
+            runs = [await self._bench(http) for _ in range(3)]
+
+        throughputs = [r["output_throughput"] for r in runs]
+        assert len(set(throughputs)) == 3, "replicates must not be identical"
+        # Varied, but still recognisably the same measurement — a spread this wide would
+        # mean the mock was generating noise rather than plausible repeat measurements.
+        spread = (max(throughputs) - min(throughputs)) / min(throughputs)
+        assert 0 < spread < 0.25, spread
+
+    async def test_variation_is_reproducible_across_processes(self, mock_app_factory) -> None:
+        """Deterministic, so a test that asserts on mock output stays stable.
+
+        The variation comes from a per-process counter, not a random source: the same
+        sequence of requests to a fresh mock yields the same sequence of numbers.
+        """
+        first = []
+        second = []
+        for sink in (first, second):
+            async with _client(mock_app_factory()) as http:
+                await self._ready(http)
+                for _ in range(2):
+                    sink.append((await self._bench(http))["output_throughput"])
+
+        assert first == second
+
+    async def test_different_points_are_independent(self, mock_app) -> None:
+        # Replicate 0 of one workload must not be affected by how many times a different
+        # workload has been run, or the sweep order would change the numbers.
+        async with _client(mock_app) as http:
+            await self._ready(http)
+            a_first = await self._bench(http, concurrency=8)
+            await self._bench(http, concurrency=32)
+            await self._bench(http, concurrency=32)
+
+        async with _client(create_mock_app(token=TOKEN)) as http:
+            await self._ready(http)
+            a_alone = await self._bench(http, concurrency=8)
+
+        assert a_first["output_throughput"] == a_alone["output_throughput"]

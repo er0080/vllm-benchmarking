@@ -18,6 +18,7 @@ import contextlib
 import logging
 import os
 import time
+from collections import defaultdict
 
 from fastapi import Depends, FastAPI, HTTPException, status
 
@@ -89,6 +90,17 @@ def create_app(token: str | None = None, protocol_version: int = PROTOCOL_VERSIO
     # Set while a synthetic benchmark is "running", so cancellation can interrupt it the
     # way the real agent interrupts a subprocess.
     cancel = asyncio.Event()
+
+    # How many benchmarks this process has already run against each (config, workload).
+    # Fed to the synthesizer as the replicate seed so a point's replicates differ from
+    # each other, which is what makes the spread rendering in the analysis views
+    # exercisable without a GPU. Still deterministic: the same sequence of requests to a
+    # fresh mock produces the same sequence of numbers, so tests stay stable.
+    #
+    # The synthesizer has taken a replicate seed since it was written; nothing ever
+    # passed one, so every replicate came back byte-identical and the error bars in the
+    # Pareto view had zero width against the only data available in development.
+    replicate_counts: dict[str, int] = defaultdict(int)
 
     state: dict[str, object] = {
         "state": ServerState.STOPPED,
@@ -193,6 +205,9 @@ def create_app(token: str | None = None, protocol_version: int = PROTOCOL_VERSIO
             )
 
         tp = _tp_from_config(state["config_yaml"])  # type: ignore[arg-type]
+        point = f"{state['config_hash']}:{request.max_concurrency}:{request.num_prompts}"
+        replicate = replicate_counts[point]
+        replicate_counts[point] = replicate + 1
         raw = synthesize_bench_result(
             model=request.model,
             served_model_name=request.served_model_name,
@@ -202,6 +217,7 @@ def create_app(token: str | None = None, protocol_version: int = PROTOCOL_VERSIO
             input_len=request.random_input_len or 512,
             output_len=request.random_output_len or 128,
             config_hash=str(state["config_hash"]),
+            replicate_seed=str(replicate),
             tensor_parallel_size=tp,
         )
         devices = list(range(tp))

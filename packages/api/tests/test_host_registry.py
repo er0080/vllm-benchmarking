@@ -7,12 +7,11 @@ precisely enough that an operator knows which of three different things to fix.
 
 from __future__ import annotations
 
-import os
 from collections.abc import AsyncIterator
 
 import httpx
 import pytest
-from sqlalchemy import text
+from conftest import database_url, reset_database
 
 from vllmbench_api.main import app as api_app
 from vllmbench_api.settings import ApiSettings
@@ -26,13 +25,6 @@ pytestmark = pytest.mark.integration
 TOKEN = "test-token-not-a-real-secret"
 MOCK_URL = "http://mock-agent"
 STALE_URL = "http://stale-agent"
-
-
-def _database_url() -> str:
-    return os.environ.get(
-        "DATABASE_URL",
-        "postgresql+psycopg://vllmbench:change-me@localhost:5432/vllmbench",
-    )
 
 
 @pytest.fixture
@@ -63,18 +55,12 @@ async def client(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[httpx.AsyncCl
 
     monkeypatch.setattr("vllmbench_protocol.client.httpx.AsyncClient", patched)
 
-    engine = create_engine(_database_url())
+    engine = create_engine(database_url())
     api_app.state.engine = engine
     api_app.state.sessions = create_session_factory(engine)
     api_app.state.settings = ApiSettings(token=TOKEN)
 
-    async with engine.begin() as connection:
-        # Order matters: runs reference hosts, and runs are measurements that outlive
-        # the host record by design.
-        await connection.execute(text("DELETE FROM run_summary"))
-        await connection.execute(text("DELETE FROM run"))
-        await connection.execute(text("DELETE FROM gpu_device"))
-        await connection.execute(text("DELETE FROM gpu_host"))
+    await reset_database(engine)
 
     transport = httpx.ASGITransport(app=api_app)
     async with httpx.AsyncClient(transport=transport, base_url="http://api") as c:

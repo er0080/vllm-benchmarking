@@ -139,7 +139,7 @@ linked by sweep, which is what `replicate_idx` and immutability already provide.
 
 The payoff milestone. Load the `dataviz` skill before building these.
 
-- [ ] **Pareto frontier** — per-user output tok/s against per-GPU total tok/s, normalized
+- [x] **Pareto frontier** — per-user output tok/s against per-GPU total tok/s, normalized
       by device count so tensor-parallel configurations are honestly comparable
 - [ ] Tensor-parallel scaling view: throughput and latency against TP size, with per-GPU
       efficiency, answering whether TP=N earns its extra devices
@@ -147,8 +147,12 @@ The payoff milestone. Load the `dataviz` skill before building these.
 - [ ] Latency-versus-concurrency curves, p50 and p99
 - [ ] Throughput saturation curves against request rate
 - [ ] Side-by-side run and config comparison with a config diff
-- [ ] Replicate spread rendered, not averaged away
-- [ ] Filtering, and provenance guards that refuse to silently overlay incomparable runs
+- [x] Replicate spread rendered, not averaged away — median with a min/max cross, and
+      each point states whether its band measures back-to-back repeatability, run-to-run
+      variance, or drift between separate sittings
+- [x] Provenance guards that refuse to silently overlay incomparable runs — partitioning
+      happens in the API, so a view is never handed two vLLM versions in one series
+- [ ] Filtering beyond source, host and sweep
 - [ ] Saved views
 
 **Done when:** a tuning decision can be made from the UI alone, without exporting to a
