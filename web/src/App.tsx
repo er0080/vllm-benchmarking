@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { api } from "./api";
 import type { Filters } from "./AnalysisFilters";
-import { FilterBar, NO_FILTERS } from "./AnalysisFilters";
+import { FilterBar, NO_FILTERS, fromView } from "./AnalysisFilters";
 import { CompareView } from "./CompareView";
 import { DeviceBalanceView } from "./DeviceBalanceView";
 import { LoadCurvesView } from "./LoadCurvesView";
@@ -249,6 +249,13 @@ export function App() {
         <FilterBar
           filters={filters}
           onChange={setFilters}
+          view={tab}
+          onOpenView={(saved) => {
+            setFilters(fromView(saved));
+            // Reopen on the chart it was saved from, since "which view" is part of what
+            // was saved rather than a coincidence of where the reader happens to be.
+            if (ANALYSIS_TABS.has(saved.view)) setTab(saved.view as Tab);
+          }}
           // The scaling view hides the TP chips: filtering the axis under study to a
           // single value is the one query that cannot produce a curve.
           showTensorParallel={tab !== "scaling"}
