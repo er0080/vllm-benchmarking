@@ -1,0 +1,402 @@
+"""MCP server, mounted on this service at ``/mcp``.
+
+Implements ADR 0001, whose binding decisions are: mounted on the existing ``api`` service
+rather than a separate one, Streamable HTTP, bearer token, read and write tools shipped
+together, behind ``VLLMBENCH_MCP_ENABLED``.
+
+The decisive reason for mounting rather than splitting is that **there must be no way for
+the MCP surface to drift from the REST surface**. That is a property of code, not of
+intent, so the tools here call the same router functions the HTTP routes call. They are
+plain async functions taking a session; nothing is reimplemented, so a fix to a query is a
+fix to both interfaces at once and a divergence is not expressible.
+
+Two things this module owns that the REST surface does not need:
+
+*Context economy.* An agent pays for every token it reads. List tools cap their page size
+at a hard maximum regardless of what is asked for, and return summary fields rather than
+whole objects — a config's YAML is fetched deliberately with ``get_config``, not carried
+in every list result.
+
+*A stated population.* Every tool that returns measurements takes ``source`` and defaults
+to real. Invariant 7 is not something an agent should have to remember: as with the HTTP
+analysis endpoints, there is no value meaning both.
+"""
+
+from __future__ import annotations
+
+import uuid
+from collections.abc import Callable
+from typing import Any
+
+from mcp.server.auth.provider import AccessToken, TokenVerifier
+from mcp.server.auth.settings import AuthSettings
+from mcp.server.mcpserver import MCPServer
+from mcp.server.transport_security import TransportSecuritySettings
+from pydantic import AnyHttpUrl
+from sqlalchemy.ext.asyncio import async_sessionmaker
+from starlette.routing import Route
+from starlette.types import Receive, Scope, Send
+
+from vllmbench_api.analysis import PARETO_X, PARETO_Y, RunSource
+from vllmbench_api.routers import analysis as analysis_routes
+from vllmbench_api.routers import hosts as host_routes
+from vllmbench_api.routers import runs as run_routes
+from vllmbench_api.routers import sweeps as sweep_routes
+from vllmbench_api.schemas import RunOut
+from vllmbench_api.settings import ApiSettings
+from vllmbench_protocol import PROTOCOL_VERSION, __version__
+
+#: Hard ceilings, applied whatever a caller asks for. An agent that requests everything is
+#: usually not choosing to — it is defaulting — and a list that quietly grows without bound
+#: is how a long session runs out of context on the least interesting data it holds.
+MAX_PAGE = 100
+DEFAULT_PAGE = 25
+
+
+class StaticTokenVerifier(TokenVerifier):
+    """A single shared bearer token.
+
+    ADR 0001 names OAuth 2.1 as the standard for remote servers and this is not that. It
+    is deliberate for a LAN-only surface behind a feature flag: the deployment story is
+    one operator, one control plane, one token in an environment variable, and an OAuth
+    server would be more moving parts than the thing it protects.
+
+    An empty configured token disables the surface rather than accepting everything, which
+    is the failure mode a misconfigured deployment would otherwise have.
+    """
+
+    def __init__(self, token: str) -> None:
+        self._token = token
+
+    async def verify_token(self, token: str) -> AccessToken | None:
+        if not self._token or token != self._token:
+            return None
+        return AccessToken(token=token, client_id="vllmbench-mcp", scopes=["vllmbench"])
+
+
+def _page(limit: int | None) -> int:
+    """Clamp a requested page size.
+
+    ``None`` means "unasked" and takes the default; an explicit 0 or negative means the
+    caller asked for something impossible and gets one row rather than silently getting
+    twenty-five, which would look like the request had been honoured.
+    """
+    return max(1, min(DEFAULT_PAGE if limit is None else limit, MAX_PAGE))
+
+
+def _source(value: str) -> RunSource:
+    """Parse the population, refusing anything that is not one of the two.
+
+    An unrecognised value becomes an error rather than silently defaulting to real: an
+    agent asking for something this service does not have should be told so, not handed
+    numbers from a population it did not ask about.
+    """
+    try:
+        return RunSource(value)
+    except ValueError as exc:
+        raise ValueError(
+            f"source must be 'real' or 'synthetic', not {value!r}; there is no value meaning both"
+        ) from exc
+
+
+def build_mcp_server(sessions: async_sessionmaker[Any], settings: ApiSettings) -> MCPServer:
+    """Assemble the MCP server. Called only when the feature flag is on."""
+    server = MCPServer(
+        name="vllmbench",
+        title="vLLM Benchmarking",
+        version=__version__,
+        instructions=(
+            "Measure and tune vLLM serving configurations. Runs are immutable once "
+            "finished and no tool here mutates or deletes one. Results are partitioned by "
+            "provenance: figures from different GPUs, hosts or vLLM versions are never "
+            "returned as one comparable series. Throughput is reported per GPU as well as "
+            "aggregate, because a tensor-parallel run out-throughputs a single-GPU one "
+            "trivially while possibly being worse per device."
+        ),
+        token_verifier=StaticTokenVerifier(settings.mcp_token),
+        # The SDK requires auth settings alongside a verifier. This service is a resource
+        # server only — it verifies a token it was configured with and issues none — so
+        # the issuer URL is nominal. ADR 0001 names OAuth 2.1 as the standard for remote
+        # servers; that is post-1.0 work, and until then the surface is LAN-only behind a
+        # feature flag, which is what makes a shared secret proportionate.
+        auth=AuthSettings(
+            issuer_url=AnyHttpUrl("http://localhost:8000"),
+            resource_server_url=AnyHttpUrl("http://localhost:8000/mcp"),
+            required_scopes=["vllmbench"],
+        ),
+    )
+
+    def tool(fn: Callable[..., Any]) -> Callable[..., Any]:
+        return server.tool()(fn)
+
+    # -- Inventory ---------------------------------------------------------------
+
+    @tool
+    async def list_hosts() -> list[dict[str, Any]]:
+        """GPU hosts this control plane knows about, and what each last reported."""
+        async with sessions() as session:
+            found = await host_routes.list_hosts(session)
+            return [
+                {
+                    "id": str(host.id),
+                    "name": host.name,
+                    "gpu_count": host.gpu_count,
+                    "vllm_version": host.vllm_version,
+                    "gpu_models": sorted({d.name for d in host.devices}),
+                    # Stated on every host, so an agent never has to infer it. Anything
+                    # this host produces is quarantined from real measurements.
+                    "synthetic_source": host.synthetic_source,
+                    "last_seen_at": host.last_seen_at.isoformat() if host.last_seen_at else None,
+                }
+                for host in found
+            ]
+
+    @tool
+    async def list_configs(limit: int | None = None) -> list[dict[str, Any]]:
+        """Server configurations, newest first. YAML is omitted — use get_config."""
+        async with sessions() as session:
+            found = await run_routes.list_configs(session)
+            return [
+                {
+                    "config_hash": config.config_hash,
+                    "name": config.name,
+                    "notes": config.notes,
+                    "created_at": config.created_at.isoformat(),
+                }
+                for config in found[: _page(limit)]
+            ]
+
+    @tool
+    async def get_config(config_hash: str) -> dict[str, Any]:
+        """One configuration's exact YAML.
+
+        The text is the configuration: it is what gets written to disk and passed to
+        `vllm serve --config`, byte for byte. Nothing is normalized on the way in or out,
+        so what this returns is what ran.
+        """
+        async with sessions() as session:
+            for config in await run_routes.list_configs(session):
+                if config.config_hash == config_hash:
+                    return {
+                        "config_hash": config.config_hash,
+                        "name": config.name,
+                        "yaml": config.yaml,
+                        "notes": config.notes,
+                    }
+        raise ValueError(f"no config with hash {config_hash!r}")
+
+    @tool
+    async def list_workloads(limit: int | None = None) -> list[dict[str, Any]]:
+        """Benchmark workloads — the traffic each run was measured under."""
+        async with sessions() as session:
+            found = await run_routes.list_workloads(session)
+            return [
+                {
+                    "workload_hash": workload.workload_hash,
+                    "name": workload.name,
+                    "dataset_name": workload.dataset_name,
+                    "num_prompts": workload.num_prompts,
+                    # Null means unbounded, genuinely: no --max-concurrency, or
+                    # --request-rate inf. Not zero, which would mean the opposite.
+                    "max_concurrency": workload.max_concurrency,
+                    "request_rate": workload.request_rate,
+                    "input_len": workload.input_len,
+                    "output_len": workload.output_len,
+                }
+                for workload in found[: _page(limit)]
+            ]
+
+    # -- Sweeps ------------------------------------------------------------------
+
+    @tool
+    async def list_sweeps(limit: int | None = None) -> list[dict[str, Any]]:
+        """Sweeps, newest first, with run counts by status."""
+        async with sessions() as session:
+            found = await sweep_routes.list_sweeps(session)
+            return [
+                {
+                    "id": str(sweep.id),
+                    "name": sweep.name,
+                    "status": sweep.status,
+                    "replicates": sweep.replicates,
+                    "replicate_order": sweep.replicate_order,
+                    "is_synthetic": sweep.is_synthetic,
+                    "progress": sweep.progress.model_dump(),
+                    "engine_starts": sweep.engine_starts,
+                }
+                for sweep in found[: _page(limit)]
+            ]
+
+    @tool
+    async def get_sweep(sweep_id: str) -> dict[str, Any]:
+        """One sweep, including how far through it is."""
+        async with sessions() as session:
+            sweep = await sweep_routes.get_sweep(uuid.UUID(sweep_id), session)
+            return sweep.model_dump(mode="json")
+
+    # -- Runs --------------------------------------------------------------------
+
+    @tool
+    async def query_runs(limit: int | None = None) -> list[dict[str, Any]]:
+        """Recent runs with their headline metrics and the provenance behind them."""
+        async with sessions() as session:
+            found = await run_routes.list_runs(session, limit=_page(limit))
+            return [
+                {
+                    "id": str(run.id),
+                    "status": run.status,
+                    "config_hash": run.config_hash,
+                    "workload_hash": run.workload_hash,
+                    "vllm_version": run.vllm_version,
+                    "gpu_model": run.gpu_model,
+                    "gpu_count": run.gpu_count,
+                    "tensor_parallel_size": run.tensor_parallel_size,
+                    "is_synthetic": run.is_synthetic,
+                    "synthetic_source": run.synthetic_source,
+                    "finished_at": run.finished_at.isoformat() if run.finished_at else None,
+                    # The per-GPU figures, not the aggregate: the aggregate is not
+                    # comparable across tensor-parallel sizes and an agent reading a list
+                    # is exactly who would compare them.
+                    "total_token_throughput_per_gpu": (
+                        run.summary.total_token_throughput_per_gpu if run.summary else None
+                    ),
+                    "ttft_ms_p99": run.summary.ttft_ms_p99 if run.summary else None,
+                    "error": run.error,
+                }
+                for run in found
+            ]
+
+    @tool
+    async def get_run(run_id: str) -> dict[str, Any]:
+        """One run in full, including every flattened metric."""
+        async with sessions() as session:
+            # Through the same response model the HTTP route serializes with, rather than
+            # reading the ORM object directly: one definition of what a run looks like on
+            # the wire, so the two interfaces cannot describe it differently.
+            run = await run_routes.get_run(uuid.UUID(run_id), session)
+            return RunOut.model_validate(run).model_dump(mode="json")
+
+    # -- Analysis ----------------------------------------------------------------
+
+    @tool
+    async def get_pareto(
+        source: str = "real",
+        host_id: str | None = None,
+        sweep_id: str | None = None,
+        pareto_x: str = PARETO_X,
+        pareto_y: str = PARETO_Y,
+    ) -> dict[str, Any]:
+        """Measurement points, partitioned into sets that may honestly be compared.
+
+        Each group is one host, GPU model, vLLM version and benchmark-client location.
+        Points from different groups are never comparable as a series — that is why they
+        arrive separated rather than as one list to be sorted.
+
+        Each point is a median across its replicates with the spread beside it, and states
+        what that spread measures. A difference smaller than a point's own spread is not a
+        result.
+        """
+        async with sessions() as session:
+            result = await analysis_routes.analysis_points(
+                session,
+                source=_source(source),
+                host_id=uuid.UUID(host_id) if host_id else None,
+                sweep_id=[uuid.UUID(sweep_id)] if sweep_id else None,
+                pareto_x=pareto_x,
+                pareto_y=pareto_y,
+            )
+            return result.model_dump(mode="json")
+
+    @tool
+    async def compare_runs(left: str, right: str, source: str = "real") -> dict[str, Any]:
+        """Two measurement points side by side, with a diff of their configurations.
+
+        Takes ``point_id`` values from get_pareto. This is the one comparison that may
+        cross a provenance boundary — comparing two vLLM versions is a supported use — and
+        every difference between the two sides is listed in the result, flagged as
+        invalidating or merely notable.
+        """
+        async with sessions() as session:
+            result = await analysis_routes.analysis_compare(
+                session, left=left, right=right, source=_source(source)
+            )
+            return result.model_dump(mode="json")
+
+    @tool
+    async def get_run_telemetry(run_id: str, max_samples: int = 200) -> dict[str, Any]:
+        """Engine and per-device series for one run, downsampled.
+
+        Downsampled by stride rather than averaged, and per device rather than pooled. A
+        host-level average of two GPUs destroys the imbalance that makes a tensor-parallel
+        run diagnosable, and it is the summary most likely to look reassuring.
+        """
+        async with sessions() as session:
+            result = await run_routes.get_run_telemetry(uuid.UUID(run_id), session)
+            stride = max(1, len(result.engine) // max(1, max_samples))
+            gpu_stride = max(1, len(result.gpu) // max(1, max_samples))
+            return {
+                "run_id": str(result.run_id),
+                "gpu_indices": result.gpu_indices,
+                "sample_count": result.sample_count,
+                "stride": stride,
+                "engine": [s.model_dump(mode="json") for s in result.engine[::stride]],
+                "gpu": [s.model_dump(mode="json") for s in result.gpu[::gpu_stride]],
+            }
+
+    @tool
+    async def server_info() -> dict[str, Any]:
+        """What this control plane is, and what it will and will not do."""
+        return {
+            "version": __version__,
+            "protocol_version": PROTOCOL_VERSION,
+            "write_tools_enabled": settings.mcp_write_enabled,
+            "populations": [s.value for s in RunSource],
+            "notes": [
+                "Runs are immutable once terminal; no tool mutates or deletes one.",
+                "Real and synthetic runs are never returned together.",
+                "Throughput is reported per GPU as well as aggregate.",
+            ],
+        }
+
+    return server
+
+
+class _AtRoot:
+    """Serves a mounted ASGI app at the mount path itself, with no redirect.
+
+    Starlette's ``Mount("/mcp")`` matches ``/mcp/...`` but not bare ``/mcp``, which the
+    router then answers with a 307. An MCP client does not follow it, and the failure
+    surfaces as "Unexpected content type" rather than as a redirect — so the URL an
+    operator would naturally write appears broken for a reason nothing in the message
+    hints at.
+
+    This forwards to the *same* Starlette app the mount serves, with the path rewritten to
+    its root. Forwarding to that app rather than to the session manager underneath it is
+    the load-bearing part: the bearer-token check is middleware on that app, and calling
+    the manager directly would serve every request unauthenticated. Verified by a test
+    that a wrong token is refused — which is how the shortcut was caught.
+    """
+
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        await self._inner({**scope, "path": "/", "raw_path": b"/"}, receive, send)
+
+
+def mount_mcp(app: Any, server: MCPServer, settings: ApiSettings) -> None:
+    """Attach the MCP transport at ``/mcp``, answering with and without a trailing slash."""
+    inner = server.streamable_http_app(
+        streamable_http_path="/",
+        # ADR 0001 targets a stateless core, so the service can sit behind a proxy with no
+        # session affinity.
+        stateless_http=True,
+        transport_security=TransportSecuritySettings(
+            enable_dns_rebinding_protection=bool(settings.mcp_allowed_hosts),
+            allowed_hosts=list(settings.mcp_allowed_hosts),
+        ),
+    )
+    app.router.routes.append(
+        Route("/mcp", endpoint=_AtRoot(inner), methods=["GET", "POST", "DELETE"])
+    )
+    app.mount("/mcp", inner)
