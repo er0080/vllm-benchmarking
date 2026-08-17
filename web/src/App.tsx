@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { api } from "./api";
 import { RunsView } from "./RunsView";
+import { SweepsView } from "./SweepsView";
 import type { Host } from "./types";
 
 function formatBytes(bytes: number | null): string {
@@ -162,10 +163,13 @@ function RegisterForm({ onRegistered }: { onRegistered: () => void }) {
   );
 }
 
+type Tab = "hosts" | "runs" | "sweeps";
+
 export function App() {
   const [hosts, setHosts] = useState<Host[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const [tab, setTab] = useState<Tab>("hosts");
 
   const load = useCallback(async () => {
     try {
@@ -186,36 +190,49 @@ export function App() {
     <div className="page">
       <header>
         <h1>vLLM Benchmarking</h1>
-        <p>Milestone 0.2.0 — single run, end to end.</p>
+        <p>Milestone 0.4.0 — sweeps.</p>
       </header>
 
-      <section>
-        <h2>Register a GPU host</h2>
-        <div className="card">
-          <RegisterForm onRegistered={load} />
-          <p className="muted" style={{ marginBottom: 0, marginTop: "0.6rem" }}>
-            Registering performs a live handshake with the agent. It fails rather than
-            storing a host it cannot reach.
-          </p>
-        </div>
-      </section>
-
-      <section>
-        <h2>Hosts</h2>
-        {error && <p className="error">{error}</p>}
-        {!loaded && <p className="muted">Loading…</p>}
-        {loaded && hosts.length === 0 && !error && (
-          <p className="muted">
-            No hosts yet. Start the agent on your GPU host, or run{" "}
-            <code>make dev</code> to bring up the mock agent.
-          </p>
-        )}
-        {hosts.map((host) => (
-          <HostCard key={host.id} host={host} onChanged={load} />
+      <nav className="tabs">
+        {(["hosts", "runs", "sweeps"] as Tab[]).map((name) => (
+          <button key={name} aria-current={tab === name} onClick={() => setTab(name)}>
+            {name.charAt(0).toUpperCase() + name.slice(1)}
+          </button>
         ))}
-      </section>
+      </nav>
 
-      <RunsView />
+      {tab === "hosts" && (
+        <>
+          <section>
+            <h2>Register a GPU host</h2>
+            <div className="card">
+              <RegisterForm onRegistered={load} />
+              <p className="muted" style={{ marginBottom: 0, marginTop: "0.6rem" }}>
+                Registering performs a live handshake with the agent. It fails rather than
+                storing a host it cannot reach.
+              </p>
+            </div>
+          </section>
+
+          <section>
+            <h2>Hosts</h2>
+            {error && <p className="error">{error}</p>}
+            {!loaded && <p className="muted">Loading…</p>}
+            {loaded && hosts.length === 0 && !error && (
+              <p className="muted">
+                No hosts yet. Start the agent on your GPU host, or run{" "}
+                <code>make dev</code> to bring up the mock agent.
+              </p>
+            )}
+            {hosts.map((host) => (
+              <HostCard key={host.id} host={host} onChanged={load} />
+            ))}
+          </section>
+        </>
+      )}
+
+      {tab === "runs" && <RunsView />}
+      {tab === "sweeps" && <SweepsView />}
     </div>
   );
 }
