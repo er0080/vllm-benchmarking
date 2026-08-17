@@ -549,3 +549,64 @@ class DeviceBalanceOut(BaseModel):
     #: balanced run; it is one this view cannot speak about, and saying so beats an
     #: empty chart that looks like a clean bill of health.
     runs_without_telemetry: int = 0
+
+
+class DiffLineOut(BaseModel):
+    kind: str
+    text: str
+    left_no: int | None = None
+    right_no: int | None = None
+
+
+class ProvenanceDifferenceOut(BaseModel):
+    field: str
+    label: str
+    left: str | None = None
+    right: str | None = None
+    #: True for differences that would stop these two sharing a chart series. They do not
+    #: stop a side-by-side the reader explicitly asked for — comparing vLLM versions is a
+    #: supported use — but they must be stated.
+    invalidating: bool = False
+
+
+class ComparisonSideOut(BaseModel):
+    point_id: str
+    config_hash: str
+    config_name: str
+    config_yaml: str
+    workload_name: str
+    tensor_parallel_size: int
+    gpu_count: int
+    replicates: int
+    spread_basis: str
+    spread_note: str
+    gpu_host_name: str
+    gpu_model: str | None = None
+    vllm_version: str | None = None
+    bench_client_location: str
+    metrics: dict[str, SpreadOut] = Field(default_factory=dict)
+
+
+class MetricComparisonOut(BaseModel):
+    key: str
+    label: str
+    unit: str
+    better: str
+    left: float | None = None
+    right: float | None = None
+    #: Relative change from left to right. Null when either side is missing or the left
+    #: is zero.
+    change: float | None = None
+    #: Null for "no change" as well as "unmeasurable", so a view is never forced to
+    #: render an unchanged metric as a win.
+    is_improvement: bool | None = None
+
+
+class ComparisonOut(BaseModel):
+    source: str
+    left: ComparisonSideOut
+    right: ComparisonSideOut
+    config_diff: list[DiffLineOut] = Field(default_factory=list)
+    configs_identical: bool = False
+    provenance_differences: list[ProvenanceDifferenceOut] = Field(default_factory=list)
+    metrics: list[MetricComparisonOut] = Field(default_factory=list)

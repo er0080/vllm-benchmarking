@@ -18,7 +18,7 @@ from dataclasses import dataclass, replace
 from functools import lru_cache
 from typing import Annotated, Any, TypeVar
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import Select, func, select
 
 from vllmbench_api.analysis import (
@@ -35,8 +35,11 @@ from vllmbench_api.analysis import (
     RunSource,
     Spread,
     build_groups,
+    config_diff,
     derive_per_user_rates,
+    metric_delta,
     pareto_frontier,
+    provenance_differences,
     scaling_curves,
     spread_note,
 )
@@ -45,13 +48,18 @@ from vllmbench_api.hashing import config_hash
 from vllmbench_api.schemas import (
     AnalysisOut,
     BalanceMetricOut,
+    ComparisonOut,
+    ComparisonSideOut,
     DeviceBalanceGroupOut,
     DeviceBalanceOut,
     DeviceSummaryOut,
+    DiffLineOut,
     ExcludedOut,
     GroupOut,
+    MetricComparisonOut,
     MetricOut,
     PointOut,
+    ProvenanceDifferenceOut,
     RunBalanceOut,
     ScalingCurveOut,
     ScalingGroupOut,
@@ -636,4 +644,140 @@ async def analysis_device_balance(
         excluded=await _excluded(session, filters),
         groups=[g for g in out_groups if g.runs],
         runs_without_telemetry=sum(1 for run_id in by_run if run_id not in devices),
+    )
+
+
+def _comparison_side(point: Point, record: RunRecord, config_yaml: str) -> ComparisonSideOut:
+    return ComparisonSideOut(
+        point_id=_point_id(point),
+        config_hash=point.key.config_hash,
+        config_name=point.config_name,
+        config_yaml=config_yaml,
+        workload_name=point.workload_name,
+        tensor_parallel_size=point.tensor_parallel_size,
+        gpu_count=point.gpu_count,
+        replicates=point.replicates,
+        spread_basis=point.basis,
+        spread_note=spread_note(point.basis),
+        gpu_host_name=record.gpu_host_name,
+        gpu_model=record.gpu_model,
+        vllm_version=record.vllm_version,
+        bench_client_location=record.bench_client_location,
+        metrics={key: _spread_out(spread) for key, spread in point.metrics.items()},
+    )
+
+
+@router.get("/compare", response_model=ComparisonOut)
+async def analysis_compare(
+    session: SessionDep,
+    left: str,
+    right: str,
+    source: RunSource = RunSource.REAL,
+) -> ComparisonOut:
+    """Two measurement points side by side, with a diff of the configs behind them.
+
+    ``left`` and ``right`` are ``point_id`` values from ``/points`` — ``config_hash`` and
+    ``workload_hash`` joined by a colon.
+
+    Unlike every chart, this endpoint will happily compare across a comparability
+    boundary, and that is deliberate. A chart must not *silently* overlay two vLLM
+    versions; a side-by-side is where that comparison is the subject rather than an
+    accident, the reader named both sides, and every difference is listed back to them.
+    Refusing here would block the comparison the vLLM version policy exists to enable.
+
+    The config diff is over the exact stored text. Invariant 5 makes that text the config,
+    so "what is different about these two" is which bytes differ — not which parsed
+    settings differ, which would need opinions about vLLM's option set, would normalize
+    away the comment explaining a value, and would call two configs identical when one of
+    them declares a key twice.
+    """
+    wanted = {left, right}
+    hashes = [half for point_id in wanted for half in [point_id.split(":", 1)[0]]]
+
+    # Scoped to the two configs, so the query stays small whatever the history holds.
+    records = await _load_records(
+        session,
+        _Filters(source=source, config_hashes=hashes),
+        MAX_RUN_LIMIT,
+    )
+    points: dict[str, tuple[Point, RunRecord]] = {}
+    by_run = {record.run_id: record for record in records}
+    for group in build_groups(records):
+        for point in group.points:
+            point_id = _point_id(point)
+            if point_id in wanted and point_id not in points:
+                points[point_id] = (point, by_run[point.run_ids[0]])
+
+    missing = sorted(wanted - set(points))
+    if missing:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"no {source} measurement point for {', '.join(missing)}",
+        )
+
+    left_point, left_record = points[left]
+    right_point, right_record = points[right]
+
+    # Built with an explicit loop rather than dict(rows.all()): the two-column Row
+    # resolves to dict's bytes overload and the type checker rejects it.
+    yamls: dict[str, str] = {}
+    for digest, text in (
+        await session.execute(
+            select(ServerConfig.config_hash, ServerConfig.yaml).where(
+                ServerConfig.config_hash.in_(
+                    [left_point.key.config_hash, right_point.key.config_hash]
+                )
+            )
+        )
+    ).all():
+        yamls[digest] = text
+    left_yaml = yamls.get(left_point.key.config_hash, "")
+    right_yaml = yamls.get(right_point.key.config_hash, "")
+
+    diff = config_diff(left_yaml, right_yaml)
+    differences = provenance_differences(
+        left_point, right_point, {"left": left_record, "right": right_record}
+    )
+
+    return ComparisonOut(
+        source=str(source),
+        left=_comparison_side(left_point, left_record, left_yaml),
+        right=_comparison_side(right_point, right_record, right_yaml),
+        config_diff=[
+            DiffLineOut(
+                kind=line.kind, text=line.text, left_no=line.left_no, right_no=line.right_no
+            )
+            for line in diff
+        ],
+        # Content addressing makes this exact: the same hash is the same bytes.
+        configs_identical=left_point.key.config_hash == right_point.key.config_hash,
+        provenance_differences=[
+            ProvenanceDifferenceOut(
+                field=d.field,
+                label=d.label,
+                left=d.left,
+                right=d.right,
+                invalidating=d.invalidating,
+            )
+            for d in differences
+        ],
+        metrics=[
+            MetricComparisonOut(
+                key=spec.key,
+                label=spec.label,
+                unit=spec.unit,
+                better=spec.better,
+                left=left_value,
+                right=right_value,
+                change=change,
+                is_improvement=improvement,
+            )
+            for spec in METRICS
+            for left_value, right_value in [
+                (left_point.value(spec.key), right_point.value(spec.key))
+            ]
+            for change, improvement in [metric_delta(left_value, right_value, spec)]
+            # A metric neither side measured is left out rather than shown as two dashes.
+            if left_value is not None or right_value is not None
+        ],
     )

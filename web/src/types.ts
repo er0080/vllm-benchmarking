@@ -410,3 +410,59 @@ export interface DeviceBalance {
   groups: DeviceBalanceGroup[];
   runs_without_telemetry: number;
 }
+
+export interface DiffLine {
+  kind: "context" | "added" | "removed" | "header";
+  text: string;
+  left_no: number | null;
+  right_no: number | null;
+}
+
+export interface ProvenanceDifference {
+  field: string;
+  label: string;
+  left: string | null;
+  right: string | null;
+  /** True where this difference would stop the two sharing a chart series. */
+  invalidating: boolean;
+}
+
+export interface ComparisonSide {
+  point_id: string;
+  config_hash: string;
+  config_name: string;
+  config_yaml: string;
+  workload_name: string;
+  tensor_parallel_size: number;
+  gpu_count: number;
+  replicates: number;
+  spread_basis: SpreadBasis;
+  spread_note: string;
+  gpu_host_name: string;
+  gpu_model: string | null;
+  vllm_version: string | null;
+  bench_client_location: string;
+  metrics: Record<string, Spread>;
+}
+
+export interface MetricComparison {
+  key: string;
+  label: string;
+  unit: string;
+  better: "higher" | "lower";
+  left: number | null;
+  right: number | null;
+  change: number | null;
+  /** Null for "no change" as well as "unmeasurable" — never render unchanged as a win. */
+  is_improvement: boolean | null;
+}
+
+export interface Comparison {
+  source: RunSource;
+  left: ComparisonSide;
+  right: ComparisonSide;
+  config_diff: DiffLine[];
+  configs_identical: boolean;
+  provenance_differences: ProvenanceDifference[];
+  metrics: MetricComparison[];
+}
