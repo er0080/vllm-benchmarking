@@ -141,24 +141,39 @@ this framework exists to answer. Multi-node deployments are out of scope for 1.0
 
 ## Quick start
 
-> Not yet implemented — see [ROADMAP.md](ROADMAP.md) milestone 0.2.0.
-> This section describes the intended interface.
-
-**On the GPU host**, install the agent **into the vLLM environment**:
+**On the GPU host**, install the agent **into the vLLM environment**, from git:
 
 ```bash
-git clone https://github.com/er0080/vllm-benchmarking.git
-cd vllm-benchmarking
 source /path/to/your/vllm-env/.venv/bin/activate
-uv pip install ./packages/protocol ./packages/agent
+uv pip install "git+https://github.com/er0080/vllm-benchmarking@main#subdirectory=packages/agent"
 
 VLLMBENCH_TOKEN=... vllmbench-agent
 ```
+
+Install from git rather than from a local clone. `vllmbench-protocol` is a workspace
+member, so inside a checkout `uv pip install ./packages/agent` resolves it through
+`tool.uv.sources` and installs it **editable** — a `.pth` file pointing back at the
+checkout. Nothing complains, and the agent works until the clone is moved or deleted,
+at which point it dies with `ModuleNotFoundError: vllmbench_protocol`. Installing from
+git resolves the same workspace inside a throwaway clone and installs both packages
+normally, pinned to a commit that `pip show`/`direct_url.json` records — which is
+better provenance than a directory path anyway.
+
+Replace `@main` with a milestone tag (`@v0.3.0`) to pin a GPU host to a known commit.
 
 Installing into the vLLM environment rather than beside it is deliberate, and it adds
 nothing: vLLM's server is itself a FastAPI and uvicorn application using pydantic,
 psutil and NVML, so every one of the agent's dependencies is already present. Only the
 two small pure-Python packages above get added.
+
+Verify the install is self-contained — this is the check that would have caught the
+editable-install trap:
+
+```bash
+python -c "import vllmbench_agent, vllmbench_protocol; print(vllmbench_protocol.__version__)"
+ls "$VIRTUAL_ENV"/lib/python*/site-packages/_editable_impl_vllmbench_*.pth 2>/dev/null \
+  && echo "NOT self-contained — reinstall from git"
+```
 
 If isolation is genuinely required — a shared host, an immutable environment — install
 the agent elsewhere and set `VLLMBENCH_VLLM_BIN` to the absolute path of the `vllm`

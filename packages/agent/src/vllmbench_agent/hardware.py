@@ -13,6 +13,7 @@ import logging
 import os
 import shutil
 import subprocess
+import sysconfig
 from pathlib import Path
 
 from vllmbench_protocol.wire import GpuInfo
@@ -26,11 +27,84 @@ log = logging.getLogger(__name__)
 _PROBE_TIMEOUT_SECONDS = 120
 
 
-def resolve_vllm_binary(configured: str = "") -> str | None:
-    """Locate the `vllm` executable: explicit setting first, then PATH."""
+def _executable(path: Path) -> str | None:
+    return str(path) if path.is_file() and os.access(path, os.X_OK) else None
+
+
+def child_environment(executable: str) -> dict[str, str]:
+    """The environment to launch vLLM in: ours, plus the venv's bin on PATH.
+
+    vLLM shells out to tooling of its own — `ninja`, for the inductor compile step —
+    and expects to find it the way an operator's shell would, because the operator
+    activated the venv first. The agent does not activate anything: it execs the binary
+    by absolute path, so the child inherits a bare PATH and vLLM's own subprocess call
+    dies with ``FileNotFoundError: 'ninja'``.
+
+    That failure is worse than it sounds, because it is *intermittent*. It only fires
+    when inductor actually has to compile; with a warm cache from an earlier manual run
+    everything succeeds. The first real runs on the GPU host passed for exactly that
+    reason, and the failure surfaced only when a changed setting invalidated the cache
+    key — which is to say, it would have surfaced constantly during a sweep, whose whole
+    job is to vary settings.
+
+    This is not the PATH manipulation README warns against. That warning is about using
+    PATH to *find* `vllm`, which we do not do. This is about handing the engine the
+    environment it was installed into, which is what activating a venv means.
+    """
+    env = dict(os.environ)
+    bin_dir = str(Path(executable).resolve().parent)
+    existing = env.get("PATH", "")
+    if bin_dir not in existing.split(os.pathsep):
+        env["PATH"] = f"{bin_dir}{os.pathsep}{existing}" if existing else bin_dir
+    return env
+
+
+def vllm_binary_search_detail(configured: str = "") -> str:
+    """Say where we looked, for the error raised when we found nothing.
+
+    "No `vllm` executable found" on a host that visibly has vLLM installed is a message
+    that sends people to the wrong place — usually to PATH, which is the one answer
+    README tells them not to use.
+    """
     if configured:
-        path = Path(configured)
-        return str(path) if path.is_file() and os.access(path, os.X_OK) else None
+        return f"VLLMBENCH_VLLM_BIN is set to {configured!r}, which is not an executable file"
+    scripts = sysconfig.get_path("scripts") or "(unknown)"
+    return (
+        f"looked in this interpreter's script directory ({scripts}) and on PATH. "
+        "Install the agent into the vLLM environment (it adds no new dependencies), "
+        "or set VLLMBENCH_VLLM_BIN to the absolute path of the vllm executable."
+    )
+
+
+def resolve_vllm_binary(configured: str = "") -> str | None:
+    """Locate the `vllm` executable.
+
+    Order: the explicit setting, then this interpreter's own script directory, then PATH.
+
+    The middle step is the one that matters, and it was missing. The documented, and
+    recommended, deployment installs the agent *into* the vLLM environment, where `vllm`
+    sits beside the very interpreter running this code. Looking only at PATH meant that
+    arrangement worked for everything except the thing it exists for: the agent imported
+    vLLM successfully, reported the correct version on `/host-info`, presented as
+    entirely healthy, and then failed every single run with "no `vllm` executable found".
+
+    Nothing about that failure points at PATH, and the fix people reach for is to put the
+    venv on PATH — which README explicitly warns against, because PATH is invisible in
+    `ps`, lost across systemd units and tmux sessions, and silently wrong after a reboot.
+    Asking the interpreter where its own scripts live needs no environment at all.
+    """
+    if configured:
+        return _executable(Path(configured))
+
+    # sysconfig rather than Path(sys.executable).parent: it is correct for a venv, for a
+    # system install, and for the Windows Scripts/ layout, and it does not care whether
+    # sys.executable happens to be a symlink into a uv-managed interpreter.
+    scripts = sysconfig.get_path("scripts")
+    if scripts:
+        found = _executable(Path(scripts) / "vllm")
+        if found:
+            return found
+
     return shutil.which("vllm")
 
 

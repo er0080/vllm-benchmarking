@@ -20,7 +20,11 @@ import time
 from collections import deque
 from pathlib import Path
 
-from vllmbench_agent.hardware import resolve_vllm_binary
+from vllmbench_agent.hardware import (
+    child_environment,
+    resolve_vllm_binary,
+    vllm_binary_search_detail,
+)
 from vllmbench_protocol.wire import BenchRequest, BenchResponse
 
 log = logging.getLogger(__name__)
@@ -44,10 +48,7 @@ def build_argv(
     """
     executable = resolve_vllm_binary(vllm_bin)
     if executable is None:
-        raise BenchError(
-            "no `vllm` executable found. Install the agent into the vLLM environment "
-            "(it adds no new dependencies), or set VLLMBENCH_VLLM_BIN."
-        )
+        raise BenchError(f"no `vllm` executable found: {vllm_binary_search_detail(vllm_bin)}")
 
     argv = [
         executable,
@@ -57,6 +58,7 @@ def build_argv(
         "vllm",
         "--base-url",
         base_url,
+        # --model is the weights identifier; vLLM loads the tokenizer from it.
         "--model",
         request.model,
         "--dataset-name",
@@ -67,6 +69,11 @@ def build_argv(
         "--result-filename",
         str(result_path),
     ]
+
+    # Omitted when equal to the model, matching vLLM's own default, so the command line
+    # stays the shortest thing that reproduces the run.
+    if request.served_model_name and request.served_model_name != request.model:
+        argv += ["--served-model-name", request.served_model_name]
 
     if request.dataset_path:
         argv += ["--dataset-path", request.dataset_path]
@@ -108,6 +115,9 @@ async def run_benchmark(
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             start_new_session=True,
+            # Same reasoning as the server: the benchmark client is vLLM too, and it
+            # loads a tokenizer and may compile.
+            env=child_environment(argv[0]),
         )
     except OSError as exc:
         shutil.rmtree(workdir, ignore_errors=True)

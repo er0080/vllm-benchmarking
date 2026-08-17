@@ -320,11 +320,15 @@ class TestServedModelName:
 
     Taken from a real config on the first GPU host: `model: Qwen/Qwen3.8-27B-FP8` with
     `served-model-name: Qwen3.8-27B`. The server's /v1/models reports only the alias, so
-    benchmarking the HF id would 404 every run. The mock never produced this because its
-    configs had no alias.
+    requesting the HF id 404s every run. The mock never produced this because its configs
+    had no alias.
+
+    Both names have to travel, to different flags. `--model` is the weights, and vLLM
+    loads the tokenizer from it; `--served-model-name` is what goes in the request body.
+    Sending one name for both is wrong in whichever direction you pick.
     """
 
-    async def test_alias_is_preferred_over_the_weights_path(
+    async def test_both_names_travel_to_their_own_flags(
         self, session: AsyncSession, route_to_mock
     ) -> None:
         route_to_mock(create_mock_app(token=TOKEN))
@@ -344,21 +348,54 @@ class TestServedModelName:
         assert finished is not None
         assert finished.status is RunStatus.SUCCEEDED, finished.error
         assert finished.raw_result is not None
-        # The benchmark ran against the alias the engine actually serves.
-        assert finished.raw_result["model_id"] == "Qwen3.8-27B"
+
+        # The tokenizer came from the weights, not the alias. Getting this backwards is
+        # how a run reports plausible numbers computed against the wrong tokenizer.
+        assert finished.raw_result["model_id"] == "Qwen/Qwen3.8-27B-FP8"
+        assert finished.raw_result["tokenizer_id"] == "Qwen/Qwen3.8-27B-FP8"
+        # ...and the requests went to the alias the engine actually answers to.
+        assert finished.raw_result["served_model_name"] == "Qwen3.8-27B"
 
     async def test_hyphenated_keys_are_understood(self) -> None:
         # Real vLLM configs use hyphens; ours used underscores. Both are accepted by
         # vLLM, so both must be accepted here.
-        from vllmbench_orchestrator.runner import _model_from_config
+        from vllmbench_orchestrator.runner import _model_names_from_config
 
         config = ServerConfig(
             config_hash="a" * 64, name="c", yaml="served-model-name: aliased\nmodel: w/p\n"
         )
-        assert _model_from_config(config) == "aliased"
+        assert _model_names_from_config(config) == ("w/p", "aliased")
+
+    async def test_alias_never_replaces_the_weights_id(self) -> None:
+        """The alias must not end up as ``--model``.
+
+        This is the regression that matters. vLLM loads the *tokenizer* from ``--model``,
+        so passing the alias there either kills the benchmark (alias is not a repo id) or,
+        worse, silently tokenizes against an unrelated tokenizer and records input-token
+        counts that are confidently wrong.
+        """
+        from vllmbench_orchestrator.runner import _model_names_from_config
+
+        config = ServerConfig(
+            config_hash="c" * 64,
+            name="c",
+            yaml="model: Qwen/Qwen3.8-27B-FP8\nserved-model-name: Qwen3.8-27B\n",
+        )
+        weights, alias = _model_names_from_config(config)
+        assert weights == "Qwen/Qwen3.8-27B-FP8"
+        assert alias == "Qwen3.8-27B"
 
     async def test_plain_model_still_works(self) -> None:
-        from vllmbench_orchestrator.runner import _model_from_config
+        from vllmbench_orchestrator.runner import _model_names_from_config
 
         config = ServerConfig(config_hash="b" * 64, name="c", yaml="model: facebook/opt-125m\n")
-        assert _model_from_config(config) == "facebook/opt-125m"
+        assert _model_names_from_config(config) == ("facebook/opt-125m", None)
+
+    async def test_config_without_model_is_rejected(self) -> None:
+        # A config with only an alias cannot be benchmarked: there is nothing to load a
+        # tokenizer from, and guessing would mean inventing provenance.
+        from vllmbench_orchestrator.runner import RunFailed, _model_names_from_config
+
+        config = ServerConfig(config_hash="d" * 64, name="c", yaml="served-model-name: alias\n")
+        with pytest.raises(RunFailed, match="model:"):
+            _model_names_from_config(config)

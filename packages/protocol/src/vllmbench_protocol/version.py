@@ -26,4 +26,9 @@ __all__ = ["PROTOCOL_VERSION", "__version__"]
 
 __version__ = "0.1.0"
 
-PROTOCOL_VERSION = 2
+# 3: BenchRequest carries `served_model_name` separately from `model`. An agent still on
+#    2 receives only `model` and passes it as `--model`, which is what vLLM loads the
+#    *tokenizer* from — so an alias there silently tokenizes with the wrong tokenizer and
+#    records wrong input-token counts. That is a data-corruption difference, not a
+#    feature difference, which is exactly what this number exists to refuse.
+PROTOCOL_VERSION = 3

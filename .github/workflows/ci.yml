@@ -65,6 +65,66 @@ jobs:
       - name: Web build
         run: cd web && npm run build
 
+  # --- Tier 1b ------------------------------------------------------------------
+  # The agent's install is a contract with the GPU host, so it gets verified rather
+  # than assumed — the same rule CLAUDE.md applies to anything vLLM produces.
+  #
+  # This job exists because the documented install was wrong and nothing caught it.
+  # `uv pip install ./packages/agent` from inside the workspace resolves
+  # vllmbench-protocol through `tool.uv.sources` and installs it *editable*: a .pth
+  # pointing back at the checkout. It works perfectly until the checkout moves, and
+  # then the agent dies with ModuleNotFoundError on a host with no source tree and no
+  # obvious explanation. That is exactly what happened on the first real GPU host.
+  #
+  # So the test is not "does it import" — it is "does it import once the thing it was
+  # installed from no longer exists".
+
+  agent-install:
+    name: Tier 1 — agent installs self-contained
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+
+      # Install from a throwaway clone, then delete it. Installing from $GITHUB_WORKSPACE
+      # would leave the source present and prove nothing.
+      - name: Install the agent from git into a clean venv
+        run: |
+          set -euo pipefail
+          git clone --no-hardlinks . /tmp/agent-src
+          uv venv --python 3.12 /tmp/agent-venv
+          VIRTUAL_ENV=/tmp/agent-venv uv pip install \
+            "git+file:///tmp/agent-src@$(git rev-parse HEAD)#subdirectory=packages/agent"
+          rm -rf /tmp/agent-src
+
+      - name: No package may reference a source checkout
+        run: python3 scripts/check_agent_install.py /tmp/agent-venv
+
+      # Importing proves the packages are present; starting proves the dependency list
+      # is complete. A missing runtime dep (psutil, without which the orphan reaper
+      # refuses to reap) is invisible to an import check in a venv that has it already.
+      - name: The installed agent starts and serves /health
+        run: |
+          set -euo pipefail
+          /tmp/agent-venv/bin/python -c \
+            "import vllmbench_agent, vllmbench_protocol; print(vllmbench_protocol.__version__)"
+          VLLMBENCH_TOKEN=ci-test-token-0123456789 VLLMBENCH_PORT=9110 \
+            /tmp/agent-venv/bin/vllmbench-agent &
+          for _ in $(seq 1 40); do
+            if curl -fsS http://127.0.0.1:9110/health > /tmp/health.json; then
+              cat /tmp/health.json; echo
+              exit 0
+            fi
+            sleep 0.5
+          done
+          echo "::error::agent did not answer /health within 20s"
+          exit 1
+
   # --- Tier 2a ------------------------------------------------------------------
   # Real Postgres. Migrations from empty, then integration tests.
 

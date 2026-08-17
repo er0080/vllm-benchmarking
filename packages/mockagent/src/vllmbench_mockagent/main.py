@@ -177,6 +177,7 @@ def create_app(token: str | None = None, protocol_version: int = PROTOCOL_VERSIO
         tp = _tp_from_config(state["config_yaml"])  # type: ignore[arg-type]
         raw = synthesize_bench_result(
             model=request.model,
+            served_model_name=request.served_model_name,
             num_prompts=request.num_prompts,
             max_concurrency=request.max_concurrency,
             request_rate=request.request_rate,

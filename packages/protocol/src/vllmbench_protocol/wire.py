@@ -161,7 +161,24 @@ class BenchRequest(_Wire):
     here would be one more thing to drift.
     """
 
+    # Two names, because vLLM uses them for two different things and conflating them
+    # corrupts results rather than failing.
+    #
+    #   model              -> `--model`, which is the *weights* identifier. vLLM loads
+    #                         the tokenizer from it, so it must be a real HF repo id or
+    #                         local path.
+    #   served_model_name  -> `--served-model-name`, the alias the API answers to, which
+    #                         is what goes in the request body.
+    #
+    # A config with `served-model-name: Qwen3.8-27B` over `model: Qwen/Qwen3.8-27B-FP8`
+    # serves under the alias, so requesting `model:` 404s. Sending the alias as `--model`
+    # instead fixes the 404 and breaks tokenization: if the alias is not a valid repo id
+    # the benchmark dies, and if it happens to be one, it tokenizes with somebody else's
+    # tokenizer and reports confident, wrong input-token counts.
     model: str = Field(min_length=1)
+    # None means "same as model", which is vLLM's own default for the flag.
+    served_model_name: str | None = None
+
     dataset_name: str = "random"
     dataset_path: str | None = None
     hf_name: str | None = None
