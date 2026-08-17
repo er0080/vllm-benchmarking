@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { api } from "./api";
+import { DeviceBalanceView } from "./DeviceBalanceView";
 import { LoadCurvesView } from "./LoadCurvesView";
 import { ParetoView } from "./ParetoView";
 import { RunsView } from "./RunsView";
@@ -166,7 +167,7 @@ function RegisterForm({ onRegistered }: { onRegistered: () => void }) {
   );
 }
 
-type Tab = "hosts" | "runs" | "sweeps" | "analysis" | "scaling" | "load";
+type Tab = "hosts" | "runs" | "sweeps" | "analysis" | "scaling" | "load" | "balance";
 
 export function App() {
   const [hosts, setHosts] = useState<Host[]>([]);
@@ -197,7 +198,7 @@ export function App() {
       </header>
 
       <nav className="tabs">
-        {(["hosts", "runs", "sweeps", "analysis", "scaling", "load"] as Tab[]).map((name) => (
+        {(["hosts", "runs", "sweeps", "analysis", "scaling", "load", "balance"] as Tab[]).map((name) => (
           <button key={name} aria-current={tab === name} onClick={() => setTab(name)}>
             {name.charAt(0).toUpperCase() + name.slice(1)}
           </button>
@@ -239,6 +240,7 @@ export function App() {
       {tab === "analysis" && <ParetoView />}
       {tab === "scaling" && <ScalingView />}
       {tab === "load" && <LoadCurvesView />}
+      {tab === "balance" && <DeviceBalanceView />}
     </div>
   );
 }

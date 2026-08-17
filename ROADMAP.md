@@ -145,7 +145,9 @@ The payoff milestone. Load the `dataviz` skill before building these.
       TP size, answering whether TP=N earns its extra devices. Curves are keyed by config
       family — the config text with its TP line normalized away — so a curve is never
       assembled from configurations that differ in anything else
-- [ ] Per-device utilization comparison to expose imbalance within a TP group
+- [x] Per-device utilization comparison to expose imbalance within a TP group — grouped
+      bars, one per device, per run rather than per point, so a single execution that
+      split badly is not averaged away by its replicates
 - [x] Latency-versus-concurrency curves, median and p99 drawn together so the gap between
       them — the queueing signal a median alone hides — is the thing you see first
 - [x] Throughput saturation curves against request rate or concurrency, sharing the load
