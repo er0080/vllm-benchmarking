@@ -45,6 +45,20 @@ const GPU_METRICS = [
 
 const DEFAULT_METRIC: GpuMetric = GPU_METRICS[0];
 
+/**
+ * Line style per device, on top of color.
+ *
+ * Not decoration. Two GPUs in a tensor-parallel run frequently sit at *exactly* the same
+ * utilization — that is what balanced work looks like — and two solid lines at the same
+ * value render as one, so the later series silently erases the earlier one. A chart whose
+ * whole purpose is showing each device separately must not disappear a device when the
+ * devices agree. Keyed to position in the device list, so a device keeps its style.
+ *
+ * It doubles as the secondary encoding that makes the series distinguishable without
+ * color, for colorblind readers and for print.
+ */
+const DASH = ["solid", "dashed", "dotted"] as const;
+
 function cssVar(name: string, fallback: string): string {
   const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   return value || fallback;
@@ -206,15 +220,26 @@ export function TelemetryTimeline({ runId }: { runId: string }) {
       borderRadius: 3,
     });
 
-    const line = (name: string, color: string, points: [number, number][], label: object) => ({
+    const line = (
+      name: string,
+      color: string,
+      points: [number, number][],
+      label: object,
+      /** Secondary encoding, keyed to the device — see DASH. */
+      dash: "solid" | "dashed" | "dotted" = "solid",
+    ) => ({
       name,
       type: "line" as const,
       showSymbol: false,
       symbolSize: 8,
-      lineStyle: { width: 2, color },
+      lineStyle: { width: 2, color, type: dash },
       itemStyle: { color },
       data: points,
       endLabel: label,
+      // Direct labels are selective by definition: where two series converge their end
+      // labels overlap and become unreadable, so the collided one is dropped. Identity
+      // survives because the legend is always present.
+      labelLayout: { hideOverlap: true },
       emphasis: { focus: "series" as const },
     });
 
@@ -281,6 +306,7 @@ export function TelemetryTimeline({ runId }: { runId: string }) {
             ];
           }),
         endLabel((v) => `${v.toFixed(metric.scale ? 1 : 0)}${metric.unit}`),
+        DASH[position % DASH.length],
       ),
     );
 
@@ -290,12 +316,13 @@ export function TelemetryTimeline({ runId }: { runId: string }) {
       // already names it. Spread so the key is absent rather than explicitly undefined.
       ...(data.gpu_indices.length > 1
         ? {
+            // No icon override: the legend swatch draws the actual line, dash and all,
+            // which is what makes the secondary encoding legible.
             legend: {
               top: 2,
               right: 8,
               textStyle: { color: muted, fontSize: 11 },
-              icon: "roundRect",
-              itemWidth: 12,
+              itemWidth: 18,
               itemHeight: 8,
             },
           }

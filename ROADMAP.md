@@ -79,17 +79,29 @@ See [docs/hardware-verification.md](docs/hardware-verification.md).
 
 Turns "which config won" into "why it won."
 
-- [ ] Agent: sample vLLM `/metrics` during runs — KV cache utilization, prefix cache hit
-      rate, running and waiting queue depth, preemptions
-- [ ] Agent: sample NVML **per device** during runs — SM utilization, memory, power,
+- [x] Agent: sample vLLM `/metrics` during runs — KV cache utilization, prefix cache
+      counters, running and waiting queue depth, preemptions
+- [x] Agent: sample NVML **per device** during runs — SM utilization, memory, power,
       temperature, clocks — for every GPU participating in the run
-- [ ] Bounded, low-overhead sampling loops with configurable interval
-- [ ] Run detail page: telemetry timeline aligned to the benchmark window, with per-device
+- [x] Bounded, low-overhead sampling loops with configurable interval
+- [x] Run detail page: telemetry timeline aligned to the benchmark window, with per-device
       series rather than a host-level average
 
 **Done when:** a saturated run visibly shows KV cache pressure and a growing waiting queue
 on the run detail timeline, and a tensor-parallel run shows each participating GPU as its
 own series.
+
+**Status:** complete, and demonstrated on real hardware. A deliberately saturated run
+(`max-num-seqs: 32`, 256 concurrent) on 2× RTX 3090 produced a timeline whose numbers
+cross-check exactly: running pinned at 32, waiting at 224 — precisely 256 − 32 — and KV
+cache at 5%, which says that configuration was *admission*-limited rather than
+memory-limited. Those have opposite fixes, and the summary row alone cannot tell them
+apart.
+
+The `/metrics` parser was written against payloads captured from a live engine, one idle
+and one under 128-way concurrency. That is what surfaced the prefix collision between
+`num_requests_waiting` and `num_requests_waiting_by_reason`, which would have recorded a
+queue depth of zero while 64 requests were queued.
 
 ---
 
