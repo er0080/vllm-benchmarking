@@ -356,6 +356,15 @@ Pre-1.0 there are no published artifacts. Compose builds images locally; the age
 installed on the GPU host with `uv pip install git+<repo>@<tag>`. Tags are cut for
 milestones so a GPU host can be pinned to a known commit.
 
+**From git, never from a local clone.** `vllmbench-protocol` is a workspace member, so
+inside a checkout `uv pip install ./packages/agent` resolves it via `tool.uv.sources` and
+installs it *editable* — leaving the GPU host's environment dependent on a source tree
+that nobody thinks of as load-bearing. It works until the clone is deleted, then the
+agent dies with `ModuleNotFoundError` on a machine with no source and no explanation.
+This is verified, not trusted: `agent-install` in `ci.yml` installs from a throwaway
+clone, deletes it, and fails if anything in the resulting environment still points at a
+directory.
+
 From 1.0.0, a `v*` tag triggers publishing control-plane images to GHCR — built for
 `linux/amd64` and `linux/arm64` — and attaching the agent wheel to a GitHub Release. The
 agent wheel itself is pure Python and arch-independent. Do not build the release workflow
