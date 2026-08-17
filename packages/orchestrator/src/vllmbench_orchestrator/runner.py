@@ -15,11 +15,12 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+import uuid
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from vllmbench_db.enums import RunStatus
+from vllmbench_db.enums import RunStatus, SweepStatus
 from vllmbench_db.models import (
     EngineSample,
     GpuHost,
@@ -27,6 +28,7 @@ from vllmbench_db.models import (
     Run,
     RunSummary,
     ServerConfig,
+    Sweep,
     Workload,
 )
 from vllmbench_protocol import AgentClient, AgentError
@@ -49,11 +51,18 @@ async def claim_next_run(session: AsyncSession) -> Run | None:
 
     SKIP LOCKED rather than a plain lock: a second worker should move on to other work
     rather than block behind the first.
+
+    Ordered by ``queued_at`` then ``sweep_seq``. A sweep materializes all of its runs in
+    one transaction, so Postgres stamps them with an identical ``now()`` and FIFO alone
+    leaves the order to chance — which matters because the plan deliberately keeps runs
+    sharing a server config adjacent. Executing a sweep in arbitrary order would still
+    produce correct measurements, but would restart the engine on nearly every run, and a
+    restart is minutes for a large model.
     """
     run = await session.scalar(
         select(Run)
         .where(Run.status == RunStatus.QUEUED)
-        .order_by(Run.queued_at)
+        .order_by(Run.queued_at, Run.sweep_seq.nulls_first())
         .limit(1)
         .with_for_update(skip_locked=True)
     )
@@ -62,9 +71,70 @@ async def claim_next_run(session: AsyncSession) -> Run | None:
 
     run.status = RunStatus.STARTING
     run.started_at = dt.datetime.now(dt.UTC)
+    if run.sweep_id is not None:
+        await _mark_sweep_running(session, run.sweep_id)
     await session.commit()
     log.info("claimed run %s", run.id)
     return run
+
+
+async def _mark_sweep_running(session: AsyncSession, sweep_id: uuid.UUID) -> None:
+    """Move a sweep from queued to running when its first run is claimed."""
+    sweep = await session.get(Sweep, sweep_id)
+    if sweep is None or sweep.status is not SweepStatus.QUEUED:
+        return
+    sweep.status = SweepStatus.RUNNING
+    sweep.started_at = dt.datetime.now(dt.UTC)
+
+
+async def settle_sweep(session: AsyncSession, sweep_id: uuid.UUID) -> None:
+    """Close a sweep out once none of its runs can still change.
+
+    Derived from the runs rather than counted as they finish, so a crash between a run
+    finishing and the sweep being updated cannot leave the sweep permanently mid-flight.
+    The runs are the record; the sweep's status is a summary of them.
+
+    A sweep with any failed run is failed. Partial success is still a failure to deliver
+    the matrix that was asked for, and a sweep that reports success while missing points
+    would have to be checked run-by-run to be trusted — which is what the status exists to
+    avoid.
+    """
+    sweep = await session.get(Sweep, sweep_id)
+    if sweep is None or sweep.status in (
+        SweepStatus.SUCCEEDED,
+        SweepStatus.FAILED,
+        SweepStatus.CANCELLED,
+    ):
+        return
+
+    counts: dict[RunStatus, int] = {}
+    for run_status, count in (
+        await session.execute(
+            select(Run.status, func.count()).where(Run.sweep_id == sweep_id).group_by(Run.status)
+        )
+    ).all():
+        counts[run_status] = count
+
+    outstanding = sum(
+        counts.get(state, 0)
+        for state in (RunStatus.QUEUED, RunStatus.STARTING, RunStatus.BENCHMARKING)
+    )
+    if outstanding:
+        return
+
+    failed = counts.get(RunStatus.FAILED, 0)
+    total = sum(counts.values())
+    if failed:
+        sweep.status = SweepStatus.FAILED
+        sweep.error = f"{failed} of {total} runs failed"
+    elif counts.get(RunStatus.CANCELLED, 0) and not counts.get(RunStatus.SUCCEEDED, 0):
+        sweep.status = SweepStatus.CANCELLED
+    else:
+        sweep.status = SweepStatus.SUCCEEDED
+
+    sweep.finished_at = dt.datetime.now(dt.UTC)
+    await session.commit()
+    log.info("sweep %s finished: %s", sweep_id, sweep.status)
 
 
 async def execute_run(session: AsyncSession, run: Run, token: str) -> None:
@@ -176,6 +246,16 @@ async def execute_run(session: AsyncSession, run: Run, token: str) -> None:
             except AgentError as exc:
                 log.error("run %s: could not stop the server: %s", run.id, exc)
         await client.aclose()
+
+        # After teardown, and outside the success path, so a sweep is closed out whether
+        # its last run succeeded, failed, or died in a way that only `_fail` recorded.
+        if run.sweep_id is not None:
+            try:
+                await settle_sweep(session, run.sweep_id)
+            except Exception:
+                # The runs are the record; a sweep whose summary status lagged is a
+                # cosmetic problem, and it must not turn into a failed run.
+                log.exception("could not settle sweep %s", run.sweep_id)
 
 
 async def client_start_server(client: AgentClient, config: ServerConfig):

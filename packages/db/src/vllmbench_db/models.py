@@ -45,6 +45,7 @@ from vllmbench_db.base import Base, created_at_column, uuid_pk
 from vllmbench_db.enums import (
     BenchClientLocation,
     InitiatedBy,
+    ReplicateOrder,
     RunStatus,
     SweepStatus,
 )
@@ -208,6 +209,12 @@ class Sweep(Base):
 
     gpu_host_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("gpu_host.id"), index=True)
     replicates: Mapped[int] = mapped_column(Integer, default=3)
+    # Recorded, not inferred: whether a point's replicates ran back-to-back or spread
+    # across the sweep decides whether the spread means "repeatability" or "run-to-run
+    # variance", and a chart drawing error bars is claiming one of them.
+    replicate_order: Mapped[ReplicateOrder] = mapped_column(
+        _enum(ReplicateOrder, "replicate_order"), default=ReplicateOrder.GROUPED
+    )
 
     initiated_by: Mapped[InitiatedBy] = mapped_column(_enum(InitiatedBy, "initiated_by"))
     initiated_by_client: Mapped[str | None] = mapped_column(String(128))
@@ -251,6 +258,11 @@ class Run(Base):
     id: Mapped[uuid.UUID] = uuid_pk()
     sweep_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("sweep.id"), index=True)
     replicate_idx: Mapped[int] = mapped_column(Integer, default=0)
+    # Position in the sweep's plan. Explicit rather than derived from queued_at, because
+    # the order is a decision — it is chosen to keep runs sharing a server config
+    # adjacent, so the engine restarts once per config instead of once per run — and an
+    # ordering that matters should not depend on timestamp ties.
+    sweep_seq: Mapped[int | None] = mapped_column(Integer)
 
     server_config_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("server_config.id"), index=True)
     workload_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workload.id"), index=True)
