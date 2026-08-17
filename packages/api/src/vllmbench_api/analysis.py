@@ -25,6 +25,7 @@ Invariant 7 is enforced by construction rather than by a filter: the caller choo
 from __future__ import annotations
 
 import datetime as dt
+import difflib
 import enum
 import statistics
 import uuid
@@ -756,3 +757,129 @@ class RunBalance:
     def is_single_device(self) -> bool:
         """A one-device run has no balance to report, and that is not a warning."""
         return len(self.devices) < 2
+
+
+# ---------------------------------------------------------------------------
+# Side-by-side comparison
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class DiffLine:
+    """One line of a config diff, tagged by what happened to it."""
+
+    kind: Literal["context", "added", "removed", "header"]
+    text: str
+    #: Line number in the left and right configs, where the line exists in each.
+    left_no: int | None = None
+    right_no: int | None = None
+
+
+def config_diff(left: str, right: str) -> list[DiffLine]:
+    """A line diff of two configs' exact text.
+
+    A *text* diff, not a comparison of parsed settings. Invariant 5 makes the YAML the
+    config — what is stored is what runs — so the honest answer to "what is different
+    about these two" is which bytes differ. Parsing to compare key by key would need
+    opinions about vLLM's option set that rot with every release, would silently normalize
+    away the comments an author wrote to explain a value, and would report two configs as
+    identical when one of them has a duplicated key that changes what the engine does.
+    """
+    left_lines = left.splitlines()
+    right_lines = right.splitlines()
+    out: list[DiffLine] = []
+
+    matcher = difflib.SequenceMatcher(a=left_lines, b=right_lines, autojunk=False)
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            for offset in range(i2 - i1):
+                out.append(
+                    DiffLine(
+                        kind="context",
+                        text=left_lines[i1 + offset],
+                        left_no=i1 + offset + 1,
+                        right_no=j1 + offset + 1,
+                    )
+                )
+            continue
+        # Removals before additions within a change, so a modified line reads as its old
+        # value followed by its new one rather than the two interleaved.
+        for index in range(i1, i2):
+            out.append(DiffLine(kind="removed", text=left_lines[index], left_no=index + 1))
+        for index in range(j1, j2):
+            out.append(DiffLine(kind="added", text=right_lines[index], right_no=index + 1))
+    return out
+
+
+@dataclass(frozen=True, slots=True)
+class ProvenanceDifference:
+    """One fact that differs between two runs being compared."""
+
+    field: str
+    label: str
+    left: str | None
+    right: str | None
+    #: ``invalidating`` differences are the ones that stop the two being one series on a
+    #: chart. They do *not* stop a deliberate side-by-side: comparing two vLLM versions is
+    #: a headline use of this tool. The difference between the two situations is that here
+    #: the reader named both sides and is being told exactly what changed.
+    invalidating: bool
+
+
+_COMPARED_FIELDS: tuple[tuple[str, str, bool], ...] = (
+    ("gpu_host_name", "GPU host", True),
+    ("gpu_model", "GPU model", True),
+    ("vllm_version", "vLLM version", True),
+    ("bench_client_location", "Benchmark client", True),
+    ("driver_version", "Driver version", False),
+    ("cuda_version", "CUDA version", False),
+    ("workload_name", "Workload", False),
+    ("tensor_parallel_size", "Tensor parallel size", False),
+    ("gpu_count", "GPU count", False),
+)
+
+
+def provenance_differences(
+    left: Point, right: Point, sides: Mapping[str, RunRecord]
+) -> list[ProvenanceDifference]:
+    """Every recorded fact that is not the same on both sides.
+
+    Listed rather than used to refuse. A chart must not silently overlay two vLLM
+    versions; a comparison the reader explicitly asked for is where that difference is
+    the subject, and hiding it behind a refusal would block the feature the version
+    policy exists to enable.
+    """
+    out: list[ProvenanceDifference] = []
+    for field_name, label, invalidating in _COMPARED_FIELDS:
+        a = getattr(sides["left"], field_name, None)
+        b = getattr(sides["right"], field_name, None)
+        if field_name in {"tensor_parallel_size", "gpu_count"}:
+            a = getattr(left, field_name, a)
+            b = getattr(right, field_name, b)
+        if a != b:
+            out.append(
+                ProvenanceDifference(
+                    field=field_name,
+                    label=label,
+                    left=None if a is None else str(a),
+                    right=None if b is None else str(b),
+                    invalidating=invalidating,
+                )
+            )
+    return out
+
+
+def metric_delta(
+    left: float | None, right: float | None, spec: MetricSpec
+) -> tuple[float | None, bool | None]:
+    """Relative change from left to right, and whether it is an improvement.
+
+    ``None`` improvement when the change is zero or unmeasurable, so a view has three
+    states to render rather than being forced to call "no change" a win.
+    """
+    if left is None or right is None or left == 0:
+        return None, None
+    change = (right - left) / abs(left)
+    if change == 0:
+        return 0.0, None
+    return change, (change > 0) if spec.better == "higher" else (change < 0)

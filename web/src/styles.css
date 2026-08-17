@@ -444,3 +444,47 @@ select[multiple] {
 .tabs button:hover:not(:disabled) {
   color: var(--text);
 }
+
+/* Config diff. Monospace and per-line tinting, because the config is text and the
+   question is which bytes changed — a rendered "settings changed" summary would be a
+   different, less exact claim (invariant 5). */
+.diff {
+  margin: 0;
+  padding: 0.6rem 0;
+  overflow-x: auto;
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  line-height: 1.5;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.diff > div {
+  padding: 0 0.7rem;
+  white-space: pre;
+}
+
+.diff-gutter {
+  display: inline-block;
+  width: 1.1rem;
+  color: var(--text-muted);
+}
+
+/* Tinted backgrounds, never colour alone: the +/− in the gutter carries the same
+   information for a reader who cannot distinguish the two hues. */
+.diff-added {
+  background: color-mix(in srgb, var(--series-3) 16%, transparent);
+}
+
+.diff-removed {
+  background: color-mix(in srgb, var(--series-2) 16%, transparent);
+}
+
+.delta-better {
+  color: var(--series-3);
+}
+
+.delta-worse {
+  color: var(--danger);
+}

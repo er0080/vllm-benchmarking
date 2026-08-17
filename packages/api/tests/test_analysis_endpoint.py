@@ -716,3 +716,154 @@ async def test_synthetic_balance_is_a_separate_population(
 
     assert (await client.get(BALANCE)).json()["groups"] == []
     assert (await client.get(BALANCE, params={"source": "synthetic"})).json()["groups"] != []
+
+
+COMPARE = "/api/analysis/compare"
+
+
+async def test_comparison_diffs_the_exact_config_text(
+    client: httpx.AsyncClient, world: World
+) -> None:
+    host = await world.host("ubuntu-llm")
+    workload = await world.a_workload()
+    a = await world.config("seqs-8", yaml="model: m\nmax-num-seqs: 8   # baseline\n")
+    b = await world.config("seqs-64", yaml="model: m\nmax-num-seqs: 64  # baseline\n")
+    await world.run(host, a, workload, per_gpu=1000.0, tpot=25.0)
+    await world.run(host, b, workload, per_gpu=1600.0, tpot=50.0)
+
+    body = (
+        await client.get(
+            COMPARE,
+            params={
+                "left": f"{a.config_hash}:{workload.workload_hash}",
+                "right": f"{b.config_hash}:{workload.workload_hash}",
+            },
+        )
+    ).json()
+
+    assert body["configs_identical"] is False
+    changed = [line for line in body["config_diff"] if line["kind"] != "context"]
+    assert [line["text"] for line in changed] == [
+        "max-num-seqs: 8   # baseline",
+        "max-num-seqs: 64  # baseline",
+    ]
+    # The comment travelled with the line, because the diff is over stored bytes.
+    assert all("# baseline" in line["text"] for line in changed)
+
+
+async def test_deltas_know_which_direction_is_better(
+    client: httpx.AsyncClient, world: World
+) -> None:
+    host = await world.host("ubuntu-llm")
+    workload = await world.a_workload()
+    a = await world.config("a", yaml="model: m\nmax-num-seqs: 8\n")
+    b = await world.config("b", yaml="model: m\nmax-num-seqs: 64\n")
+    await world.run(host, a, workload, per_gpu=1000.0, tpot=25.0)
+    await world.run(host, b, workload, per_gpu=1500.0, tpot=50.0)
+
+    body = (
+        await client.get(
+            COMPARE,
+            params={
+                "left": f"{a.config_hash}:{workload.workload_hash}",
+                "right": f"{b.config_hash}:{workload.workload_hash}",
+            },
+        )
+    ).json()
+
+    by_key = {m["key"]: m for m in body["metrics"]}
+    throughput = by_key["total_token_throughput_per_gpu"]
+    assert throughput["change"] == pytest.approx(0.5)
+    assert throughput["is_improvement"] is True
+    # The classic trade-off: throughput up, per-user rate halved. Both are stated.
+    per_user = by_key["per_user_output_tok_s"]
+    assert per_user["change"] == pytest.approx(-0.5)
+    assert per_user["is_improvement"] is False
+
+
+async def test_comparing_across_vllm_versions_is_allowed_and_named(
+    client: httpx.AsyncClient, world: World
+) -> None:
+    """The one place a comparability boundary may be crossed.
+
+    Charts must never silently overlay two vLLM versions. A side-by-side the reader
+    explicitly asked for is where that comparison is the subject — refusing here would
+    block the use the version policy exists to enable — so it runs, and every difference
+    is listed back.
+    """
+    host = await world.host("ubuntu-llm")
+    workload = await world.a_workload()
+    config = await world.config("same", yaml="model: m\n")
+    old = await world.config("same-b", yaml="model: m\nmax-num-seqs: 8\n")
+    await world.run(host, config, workload, vllm_version="0.25.1", per_gpu=1000.0)
+    await world.run(host, old, workload, vllm_version="0.26.0", per_gpu=1200.0)
+
+    body = (
+        await client.get(
+            COMPARE,
+            params={
+                "left": f"{config.config_hash}:{workload.workload_hash}",
+                "right": f"{old.config_hash}:{workload.workload_hash}",
+            },
+        )
+    ).json()
+
+    versions = [d for d in body["provenance_differences"] if d["field"] == "vllm_version"]
+    assert versions and versions[0]["invalidating"] is True
+    assert (versions[0]["left"], versions[0]["right"]) == ("0.25.1", "0.26.0")
+
+
+async def test_comparing_a_point_with_itself_reports_no_differences(
+    client: httpx.AsyncClient, world: World
+) -> None:
+    host = await world.host("ubuntu-llm")
+    workload = await world.a_workload()
+    config = await world.config("only", yaml="model: m\n")
+    await world.run(host, config, workload, per_gpu=1000.0)
+
+    point_id = f"{config.config_hash}:{workload.workload_hash}"
+    body = (await client.get(COMPARE, params={"left": point_id, "right": point_id})).json()
+
+    assert body["configs_identical"] is True
+    assert body["provenance_differences"] == []
+    assert all(line["kind"] == "context" for line in body["config_diff"])
+
+
+async def test_an_unknown_point_is_a_404_naming_it(client: httpx.AsyncClient, world: World) -> None:
+    host = await world.host("ubuntu-llm")
+    workload = await world.a_workload()
+    config = await world.config("only", yaml="model: m\n")
+    await world.run(host, config, workload)
+
+    response = await client.get(
+        COMPARE,
+        params={
+            "left": f"{config.config_hash}:{workload.workload_hash}",
+            "right": "nope:nope",
+        },
+    )
+    assert response.status_code == 404
+    assert "nope:nope" in response.json()["detail"]
+
+
+async def test_a_synthetic_point_is_not_reachable_from_a_real_comparison(
+    client: httpx.AsyncClient, world: World
+) -> None:
+    """Invariant 7 holds here too, and this is the endpoint that could most plausibly
+    leak: it takes two point ids and puts their numbers side by side."""
+    real_host = await world.host("ubuntu-llm")
+    mock = await world.host("mock", synthetic="mock_agent")
+    workload = await world.a_workload()
+    a = await world.config("a", yaml="model: m\n")
+    b = await world.config("b", yaml="model: m\nmax-num-seqs: 8\n")
+    await world.run(real_host, a, workload, per_gpu=1000.0)
+    await world.run(mock, b, workload, per_gpu=99999.0)
+
+    response = await client.get(
+        COMPARE,
+        params={
+            "left": f"{a.config_hash}:{workload.workload_hash}",
+            "right": f"{b.config_hash}:{workload.workload_hash}",
+        },
+    )
+    assert response.status_code == 404, "a real comparison cannot reach a synthetic point"

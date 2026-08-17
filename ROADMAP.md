@@ -152,7 +152,10 @@ The payoff milestone. Load the `dataviz` skill before building these.
       them — the queueing signal a median alone hides — is the thing you see first
 - [x] Throughput saturation curves against request rate or concurrency, sharing the load
       axis with the latency curves
-- [ ] Side-by-side run and config comparison with a config diff
+- [x] Side-by-side comparison with a diff of the exact config text. The one view allowed
+      to cross a comparability boundary — charts must never silently overlay two vLLM
+      versions, but a side-by-side the reader named both sides of is where that
+      comparison is the subject, and every difference is listed back
 - [x] Replicate spread rendered, not averaged away — median with a min/max cross, and
       each point states whether its band measures back-to-back repeatability, run-to-run
       variance, or drift between separate sittings

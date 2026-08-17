@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { api } from "./api";
+import { CompareView } from "./CompareView";
 import { DeviceBalanceView } from "./DeviceBalanceView";
 import { LoadCurvesView } from "./LoadCurvesView";
 import { ParetoView } from "./ParetoView";
@@ -167,7 +168,7 @@ function RegisterForm({ onRegistered }: { onRegistered: () => void }) {
   );
 }
 
-type Tab = "hosts" | "runs" | "sweeps" | "analysis" | "scaling" | "load" | "balance";
+type Tab = "hosts" | "runs" | "sweeps" | "analysis" | "scaling" | "load" | "balance" | "compare";
 
 export function App() {
   const [hosts, setHosts] = useState<Host[]>([]);
@@ -198,7 +199,7 @@ export function App() {
       </header>
 
       <nav className="tabs">
-        {(["hosts", "runs", "sweeps", "analysis", "scaling", "load", "balance"] as Tab[]).map((name) => (
+        {(["hosts", "runs", "sweeps", "analysis", "scaling", "load", "balance", "compare"] as Tab[]).map((name) => (
           <button key={name} aria-current={tab === name} onClick={() => setTab(name)}>
             {name.charAt(0).toUpperCase() + name.slice(1)}
           </button>
@@ -241,6 +242,7 @@ export function App() {
       {tab === "scaling" && <ScalingView />}
       {tab === "load" && <LoadCurvesView />}
       {tab === "balance" && <DeviceBalanceView />}
+      {tab === "compare" && <CompareView />}
     </div>
   );
 }

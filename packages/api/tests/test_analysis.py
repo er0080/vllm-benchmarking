@@ -28,9 +28,11 @@ from vllmbench_api.analysis import (
     build_groups,
     build_point,
     comparability_key,
+    config_diff,
     derive_per_user_rates,
     group_warnings,
     imbalance,
+    metric_delta,
     pareto_frontier,
     scaling_curves,
     spread_basis,
@@ -599,3 +601,72 @@ class TestDeviceBalance:
         )
         assert balance.is_single_device
         assert balance.worst_imbalance is None
+
+
+class TestConfigDiff:
+    """A text diff of two configs, because the text *is* the config (invariant 5)."""
+
+    def test_one_changed_value(self) -> None:
+        left = "model: m\nmax-num-seqs: 8\n"
+        right = "model: m\nmax-num-seqs: 64\n"
+        lines = config_diff(left, right)
+        assert [(line.kind, line.text) for line in lines] == [
+            ("context", "model: m"),
+            ("removed", "max-num-seqs: 8"),
+            ("added", "max-num-seqs: 64"),
+        ]
+
+    def test_removals_precede_additions_within_a_change(self) -> None:
+        # So a modified line reads as its old value then its new one, rather than the two
+        # interleaved and the reader reconstructing which was which.
+        lines = config_diff("a: 1\nb: 2\n", "a: 9\nb: 8\n")
+        assert [line.kind for line in lines] == ["removed", "removed", "added", "added"]
+
+    def test_line_numbers_track_both_sides(self) -> None:
+        lines = config_diff("a: 1\nb: 2\n", "a: 1\nc: 3\nb: 2\n")
+        added = next(line for line in lines if line.kind == "added")
+        assert added.right_no == 2 and added.left_no is None
+
+    def test_identical_configs_are_all_context(self) -> None:
+        lines = config_diff("model: m\n", "model: m\n")
+        assert all(line.kind == "context" for line in lines)
+
+    def test_comments_are_compared_like_any_other_line(self) -> None:
+        """A comment change is a real change to the file the engine is handed.
+
+        Comparing parsed settings would call these identical, and the author's note about
+        *why* a value is what it is would silently differ between two configs a reader
+        was told were the same.
+        """
+        lines = config_diff("x: 1  # was 2\n", "x: 1  # tuned 2026-08\n")
+        assert any(line.kind == "removed" for line in lines)
+
+    def test_a_duplicated_key_shows_up(self) -> None:
+        # Two declarations of one key change what the engine does and are invisible to
+        # anything that compares parsed settings.
+        lines = config_diff("tp: 1\n", "tp: 1\ntp: 2\n")
+        assert [line.text for line in lines if line.kind == "added"] == ["tp: 2"]
+
+
+class TestMetricDelta:
+    def test_higher_is_better_improves_when_it_rises(self) -> None:
+        change, better = metric_delta(100.0, 120.0, METRICS_BY_KEY[PARETO_X])
+        assert change == pytest.approx(0.2)
+        assert better is True
+
+    def test_lower_is_better_improves_when_it_falls(self) -> None:
+        change, better = metric_delta(200.0, 100.0, METRICS_BY_KEY["ttft_ms_p99"])
+        assert change == pytest.approx(-0.5)
+        assert better is True
+
+    def test_no_change_is_neither_better_nor_worse(self) -> None:
+        # Three states, so a view is not forced to render "unchanged" as a win.
+        change, better = metric_delta(100.0, 100.0, METRICS_BY_KEY[PARETO_X])
+        assert change == 0.0
+        assert better is None
+
+    def test_a_missing_side_is_unmeasurable(self) -> None:
+        assert metric_delta(None, 100.0, METRICS_BY_KEY[PARETO_X]) == (None, None)
+
+    def test_a_zero_baseline_does_not_divide(self) -> None:
+        assert metric_delta(0.0, 100.0, METRICS_BY_KEY[PARETO_X]) == (None, None)

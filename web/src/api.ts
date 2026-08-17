@@ -1,12 +1,14 @@
 import type {
   Analysis,
   AnalysisQuery,
-  DeviceBalance,
-  Scaling,
+  Comparison,
   Config,
+  DeviceBalance,
   Host,
   Run,
+  RunSource,
   RunTelemetry,
+  Scaling,
   Sweep,
   SweepCreate,
   Workload,
@@ -132,6 +134,14 @@ export const analysisApi = {
     const qs = params.toString();
     return request<Scaling>(`/analysis/scaling${qs ? `?${qs}` : ""}`);
   },
+
+  // Two point ids, deliberately allowed to cross a comparability boundary: a chart must
+  // not silently overlay two vLLM versions, but a side-by-side the reader asked for is
+  // where that comparison is the subject and every difference is listed back.
+  compare: (left: string, right: string, source: RunSource = "real") =>
+    request<Comparison>(
+      `/analysis/compare?${new URLSearchParams({ left, right, source }).toString()}`,
+    ),
 
   deviceBalance: (query: AnalysisQuery = {}) => {
     const params = new URLSearchParams();
