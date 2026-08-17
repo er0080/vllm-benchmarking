@@ -16,6 +16,7 @@ import pytest
 from vllmbench_api.sweep_plan import (
     PlannedRun,
     SweepPlanError,
+    config_family_text,
     engine_starts,
     expand,
     read_tensor_parallel_size,
@@ -232,3 +233,49 @@ class TestExpand:
     ) -> None:
         with pytest.raises(SweepPlanError, match=message):
             expand(config_count=configs, workload_count=workloads, replicates=replicates)
+
+
+class TestConfigFamily:
+    """Grouping configs that differ only in tensor-parallel width.
+
+    The scaling view is built on this: a curve assembled from configs that differ in
+    anything else is a comparison of configurations wearing a scaling chart's clothes.
+    """
+
+    def test_widths_of_one_config_share_a_family(self) -> None:
+        assert config_family_text(tensor_parallel_variant(REAL_CONFIG, 1)) == config_family_text(
+            tensor_parallel_variant(REAL_CONFIG, 8)
+        )
+
+    def test_absent_and_explicit_one_are_the_same_config(self) -> None:
+        # "no tensor-parallel line" and "tensor-parallel-size: 1" describe the same
+        # engine, so they must land in the same family.
+        assert config_family_text("model: m\nmax-num-seqs: 8\n") == config_family_text(
+            "model: m\nmax-num-seqs: 8\ntensor-parallel-size: 1\n"
+        )
+
+    def test_position_of_the_line_does_not_change_the_family(self) -> None:
+        """Why the line is deleted rather than rewritten to 1.
+
+        Rewriting leaves the key where the author put it and appends it when absent, so
+        two identical engines would land in different families purely because of where
+        the line sat in the file.
+        """
+        first = config_family_text("tensor-parallel-size: 2\nmodel: m\nmax-num-seqs: 8\n")
+        last = config_family_text("model: m\nmax-num-seqs: 8\ntensor-parallel-size: 4\n")
+        assert first == last == "model: m\nmax-num-seqs: 8\n"
+
+    def test_any_other_difference_splits_the_family(self) -> None:
+        assert config_family_text("model: m\nmax-num-seqs: 8\n") != config_family_text(
+            "model: m\nmax-num-seqs: 64\n"
+        )
+
+    def test_an_ambiguous_config_is_its_own_family(self) -> None:
+        # Two top-level declarations: which one vLLM honours is already unknowable, so
+        # this config stands alone rather than being folded in with a guess.
+        ambiguous = "tensor-parallel-size: 1\nmodel: m\ntensor-parallel-size: 2\n"
+        assert config_family_text(ambiguous) == ambiguous
+
+    def test_comments_and_indented_occurrences_survive(self) -> None:
+        config = "model: m\n#tensor-parallel-size: 9\nnested:\n  tensor-parallel-size: 4\n"
+        assert config_family_text(config) == config

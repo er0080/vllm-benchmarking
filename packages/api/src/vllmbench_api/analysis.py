@@ -196,6 +196,10 @@ class RunRecord:
     config_name: str = ""
     workload_hash: str = ""
     workload_name: str = ""
+    #: Hash of the config text with its tensor-parallel line normalized out. Points
+    #: sharing it are the same engine configuration measured at different widths, which
+    #: is the only grouping under which a scaling curve means anything.
+    config_family: str = ""
 
     # Topology (invariant 8 provenance, reported by the agent from what actually ran)
     gpu_count: int = 1
@@ -394,6 +398,8 @@ class Point:
     key: PointKey
     config_name: str
     workload_name: str
+    #: See RunRecord.config_family.
+    family: str
 
     tensor_parallel_size: int
     pipeline_parallel_size: int
@@ -454,6 +460,7 @@ def build_point(records: Sequence[RunRecord]) -> Point:
         key=PointKey(config_hash=head.config_hash, workload_hash=head.workload_hash),
         config_name=head.config_name,
         workload_name=head.workload_name,
+        family=head.config_family or head.config_hash,
         tensor_parallel_size=tp,
         pipeline_parallel_size=pp,
         gpu_count=gpus,
@@ -543,3 +550,131 @@ def pareto_frontier(points: Sequence[Point], x: MetricSpec, y: MetricSpec) -> li
     ]
     frontier.sort(key=lambda p: (p.value(x.key) or 0.0, p.value(y.key) or 0.0))
     return frontier
+
+
+# ---------------------------------------------------------------------------
+# Tensor-parallel scaling
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class ScalingStep:
+    """One tensor-parallel width on a scaling curve."""
+
+    tensor_parallel_size: int
+    point: Point
+
+    #: Aggregate throughput relative to the baseline width. What "twice the GPUs went
+    #: twice as fast" means, and the number an operator feels.
+    speedup: float | None
+    #: Per-GPU throughput relative to the baseline width — parallel efficiency. 1.0 means
+    #: each added device pulled its weight; 0.5 means half of them were wasted.
+    efficiency: float | None
+
+    #: Stated rather than inferred from ``speedup == 1.0``. The ratios are floats and
+    #: which step defines them is a fact about the curve, not something to recover by
+    #: comparing one to a literal.
+    is_baseline: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class ScalingCurve:
+    """How one configuration, running one workload, responds to more devices.
+
+    Keyed by *config family* rather than by config: a curve whose points are different
+    configurations is not a scaling measurement, it is a comparison of configurations
+    that happen to have different widths. The family is the config text with its
+    tensor-parallel line normalized out, so members are the same engine setup at
+    different widths and nothing else.
+    """
+
+    family: str
+    config_name: str
+    workload_hash: str
+    workload_name: str
+    max_concurrency: int | None
+    baseline_tp: int
+    steps: tuple[ScalingStep, ...]
+
+    @property
+    def baseline_is_single_gpu(self) -> bool:
+        """Whether efficiency here means what "parallel efficiency" usually means.
+
+        Relative to TP=1 it is the standard figure. Relative to anything else it is a
+        ratio against a baseline that was itself already parallel, and a view reporting
+        "78% efficient" without saying so is making a claim it did not measure.
+        """
+        return self.baseline_tp == 1
+
+
+def scaling_curves(points: Sequence[Point], *, metric_key: str) -> list[ScalingCurve]:
+    """Group points into scaling curves, one per config family and workload.
+
+    A curve needs at least two widths to say anything, so single-width families are
+    dropped — with one point there is no scaling to report, and drawing it would invite
+    reading a single measurement as a trend.
+
+    Efficiency is computed from each width's median, which is what the throughput chart
+    plots. Propagating the replicate spread through a ratio would need the joint
+    distribution of two independently-measured widths; the spread stays visible on the
+    throughput axis instead of being folded into a derived number that hides it.
+    """
+    by_curve: dict[tuple[str, str], list[Point]] = {}
+    for point in points:
+        by_curve.setdefault((point.family, point.key.workload_hash), []).append(point)
+
+    curves: list[ScalingCurve] = []
+    for (family, workload_hash), members in by_curve.items():
+        widths = sorted(members, key=lambda p: p.tensor_parallel_size)
+        usable = [p for p in widths if p.value(metric_key) is not None]
+        if len({p.tensor_parallel_size for p in usable}) < 2:
+            continue
+
+        baseline = usable[0]
+        base_per_gpu = baseline.value(metric_key)
+        base_tp = baseline.tensor_parallel_size
+        # Aggregate is reconstructed from the per-GPU figure rather than read from a
+        # separate column, so speedup and efficiency are guaranteed to be the same
+        # measurement seen two ways rather than two numbers that can disagree.
+        base_aggregate = (base_per_gpu or 0.0) * baseline.gpu_count
+
+        steps: list[ScalingStep] = []
+        for point in usable:
+            per_gpu = point.value(metric_key)
+            if per_gpu is None or not base_per_gpu:
+                steps.append(
+                    ScalingStep(
+                        tensor_parallel_size=point.tensor_parallel_size,
+                        point=point,
+                        speedup=None,
+                        efficiency=None,
+                        is_baseline=point is baseline,
+                    )
+                )
+                continue
+            aggregate = per_gpu * point.gpu_count
+            steps.append(
+                ScalingStep(
+                    tensor_parallel_size=point.tensor_parallel_size,
+                    point=point,
+                    speedup=aggregate / base_aggregate if base_aggregate else None,
+                    efficiency=per_gpu / base_per_gpu,
+                    is_baseline=point is baseline,
+                )
+            )
+
+        head = baseline
+        curves.append(
+            ScalingCurve(
+                family=family,
+                config_name=head.config_name,
+                workload_hash=workload_hash,
+                workload_name=head.workload_name,
+                max_concurrency=head.max_concurrency,
+                baseline_tp=base_tp,
+                steps=tuple(steps),
+            )
+        )
+
+    curves.sort(key=lambda c: (c.workload_name, c.max_concurrency or 0, c.config_name))
+    return curves

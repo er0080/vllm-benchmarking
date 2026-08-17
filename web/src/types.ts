@@ -305,3 +305,59 @@ export interface AnalysisQuery {
   paretoX?: string;
   paretoY?: string;
 }
+
+export interface ScalingStep {
+  tensor_parallel_size: number;
+  gpu_count: number;
+  point_id: string;
+  config_name: string;
+  is_baseline: boolean;
+  /** Aggregate throughput relative to the baseline width — what an operator feels. */
+  speedup: number | null;
+  /** Per-GPU throughput relative to the baseline — parallel efficiency. */
+  efficiency: number | null;
+  per_gpu: Spread | null;
+  aggregate_median: number | null;
+}
+
+export interface ScalingCurve {
+  family: string;
+  config_name: string;
+  workload_hash: string;
+  workload_name: string;
+  max_concurrency: number | null;
+  baseline_tp: number;
+  /**
+   * False when the narrowest width measured was itself already parallel. Efficiency
+   * against a TP=2 baseline is not the parallel efficiency a reader assumes, and the
+   * view must say so rather than print a number that reads as one.
+   */
+  baseline_is_single_gpu: boolean;
+  steps: ScalingStep[];
+}
+
+export interface ScalingGroup {
+  group_id: string;
+  label: string;
+  gpu_host_id: string;
+  gpu_host_name: string;
+  gpu_model: string | null;
+  vllm_version: string | null;
+  bench_client_location: string;
+  warnings: string[];
+  run_count: number;
+  curves: ScalingCurve[];
+}
+
+export interface Scaling {
+  source: RunSource;
+  run_count: number;
+  truncated: boolean;
+  limit: number;
+  metric: string;
+  metrics: Metric[];
+  excluded: AnalysisExcluded;
+  groups: ScalingGroup[];
+  /** Config families measured at only one width — not an error, but not a curve either. */
+  single_width_families: number;
+}

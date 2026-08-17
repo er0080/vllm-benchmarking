@@ -11,11 +11,11 @@ from collections.abc import AsyncIterator
 
 import httpx
 import pytest
-from conftest import database_url, reset_database
 
 from vllmbench_api.main import app as api_app
 from vllmbench_api.settings import ApiSettings
 from vllmbench_db.session import create_engine, create_session_factory
+from vllmbench_db.testing import reset_database, test_database_url
 from vllmbench_mockagent.main import SYNTHETIC_SOURCE
 from vllmbench_mockagent.main import create_app as create_mock_app
 from vllmbench_protocol import PROTOCOL_VERSION
@@ -55,7 +55,7 @@ async def client(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[httpx.AsyncCl
 
     monkeypatch.setattr("vllmbench_protocol.client.httpx.AsyncClient", patched)
 
-    engine = create_engine(database_url())
+    engine = create_engine(test_database_url())
     api_app.state.engine = engine
     api_app.state.sessions = create_session_factory(engine)
     api_app.state.settings = ApiSettings(token=TOKEN)
