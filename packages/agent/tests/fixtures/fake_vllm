@@ -12,6 +12,7 @@ Behaviour is driven by FAKE_VLLM_MODE:
 
     ready          serve normally (default)
     crash          exit non-zero during "model load"
+    crash_deep     fail with the root cause buried far above a long outer traceback
     never_ready    stay alive, answer /health, never register a model
     ignore_sigterm refuse to die politely, forcing the SIGKILL escalation path
     hang           serve nothing at all
@@ -88,6 +89,26 @@ def serve(port: int) -> None:
         print("ERROR CUDA out of memory: tried to allocate 40.00 GiB", file=sys.stderr, flush=True)
         print("ERROR engine core failed to start", flush=True)
         sys.exit(3)
+
+    if MODE == "crash_deep":
+        # The shape real vLLM actually fails in: the worker's exception first, then a
+        # long outer unwind, ending on a line that tells you to look further up. A tail
+        # of any reasonable size keeps only the pointer and drops what it points at.
+        print("(EngineCore pid=123) ERROR EngineCore failed to start.", flush=True)
+        print(
+            "(EngineCore pid=123) FileNotFoundError: [Errno 2] "
+            "No such file or directory: 'ninja'",
+            flush=True,
+        )
+        for i in range(300):
+            print(f'(APIServer pid=99)   File "vllm/v1/engine/core.py", line {i}, in _step', flush=True)
+            print("(APIServer pid=99)     return func(*args, **kwargs)", flush=True)
+        print(
+            "(APIServer pid=99) RuntimeError: Engine core initialization failed. "
+            "See root cause above. Failed core proc(s): {}",
+            flush=True,
+        )
+        sys.exit(1)
 
     if MODE != "never_ready":
         _model_registered = True

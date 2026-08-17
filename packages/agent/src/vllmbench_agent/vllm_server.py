@@ -17,6 +17,7 @@ import asyncio
 import contextlib
 import logging
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -28,6 +29,7 @@ from pathlib import Path
 import httpx
 
 from vllmbench_agent.hardware import (
+    child_environment,
     devices_for_process,
     resolve_vllm_binary,
     vllm_binary_search_detail,
@@ -40,13 +42,24 @@ log = logging.getLogger(__name__)
 LOG_TAIL_LINES = 200
 READINESS_POLL_SECONDS = 2.0
 
+# How many distinct root-cause lines to retain. Small: these are one-line summaries, and
+# a failure with more than a handful of distinct exception types has a different problem.
+ROOT_CAUSE_LINES = 12
+
+# A terminal exception line — `SomeError: message` — after vLLM's own log decoration.
+# Deliberately narrow. Matching anything containing "error" would match every line of a
+# decorated traceback and refill the buffer with the noise this exists to see past.
+_ROOT_CAUSE = re.compile(
+    r"(?:^|\s)(?P<exc>[A-Za-z_][A-Za-z0-9_.]*(?:Error|Exception|Interrupt))\s*:\s*\S"
+)
+
 
 class ServerError(RuntimeError):
     """The server could not be started, or died while starting."""
 
 
 def _spawn(argv: list[str]) -> subprocess.Popen[str]:
-    """Launch vLLM in its own process group.
+    """Launch vLLM in its own process group, in the environment it expects.
 
     ``start_new_session`` is what makes teardown reliable: vLLM forks a worker per
     device, and signalling only the parent leaves those workers alive holding VRAM.
@@ -58,6 +71,7 @@ def _spawn(argv: list[str]) -> subprocess.Popen[str]:
         text=True,
         bufsize=1,
         start_new_session=True,
+        env=child_environment(argv[0]),
     )
 
 
@@ -100,6 +114,7 @@ class VllmServer:
 
         self._process: subprocess.Popen[str] | None = None
         self._log: deque[str] = deque(maxlen=LOG_TAIL_LINES)
+        self._root_causes: deque[str] = deque(maxlen=ROOT_CAUSE_LINES)
         self._reader: asyncio.Task[None] | None = None
         self._config_dir: Path | None = None
 
@@ -276,6 +291,7 @@ class VllmServer:
 
     def _reset(self) -> None:
         self._log.clear()
+        self._root_causes.clear()
         self._error = None
         self._ready_at = None
 
@@ -292,17 +308,46 @@ class VllmServer:
             shutil.rmtree(self._config_dir, ignore_errors=True)
             self._config_dir = None
 
+    def _startup_failure(self, exit_code: int) -> str:
+        """Compose the message an operator actually has to act on.
+
+        Root causes first and deduplicated, then the tail for context. The ordering is
+        the point: the useful line is typically hundreds of lines from the end, and the
+        end is where the "see above" lives.
+        """
+        parts = [f"vLLM exited with code {exit_code} during startup."]
+
+        seen: list[str] = []
+        for line in self._root_causes:
+            if line not in seen:
+                seen.append(line)
+        if seen:
+            parts.append("\nLikely cause:\n" + "\n".join(f"  {line}" for line in seen))
+
+        parts.append("\nLast output:\n" + "\n".join(list(self._log)[-25:]))
+        return "\n".join(parts)
+
     def _fail(self, message: str) -> None:
         self._state = ServerState.FAILED
         self._error = message
         log.error("vLLM server failed: %s", message)
 
     async def _drain_output(self, process: subprocess.Popen[str]) -> None:
-        """Keep a bounded tail of the server's output.
+        """Keep a bounded tail of the server's output, plus any root causes seen.
 
         Bounded because a model load can emit tens of thousands of lines and the agent
         runs on the machine under test — unbounded buffering would be a memory leak on
         the box whose behaviour we are trying not to perturb.
+
+        The tail alone is not enough, and that cost real debugging time. vLLM prints the
+        actual exception from the worker, then unwinds through several hundred lines of
+        outer traceback before ending with ``RuntimeError: Engine core initialization
+        failed. See root cause above.`` — so a tail keeps the sentence telling you to
+        look elsewhere and discards the thing it points at. Here the root cause was
+        ``FileNotFoundError: 'ninja'``, which names the problem exactly.
+
+        So terminal exception lines are collected as they stream past, independently of
+        how far from the end they land.
         """
         assert process.stdout is not None
         loop = asyncio.get_running_loop()
@@ -310,7 +355,10 @@ class VllmServer:
             line = await loop.run_in_executor(None, process.stdout.readline)
             if not line:
                 return
-            self._log.append(line.rstrip("\n"))
+            stripped = line.rstrip("\n")
+            self._log.append(stripped)
+            if _ROOT_CAUSE.search(stripped):
+                self._root_causes.append(stripped.strip())
 
     async def _await_readiness(self, timeout_seconds: float) -> None:
         """Poll until the server is genuinely serving, or fail with a real reason."""
@@ -325,10 +373,10 @@ class VllmServer:
 
                 exit_code = process.poll()
                 if exit_code is not None:
-                    # Died during startup. The tail is the only useful thing we have, and
-                    # without it the operator gets "it failed" and nothing else.
-                    tail = "\n".join(list(self._log)[-25:])
-                    message = f"vLLM exited with code {exit_code} during startup:\n{tail}"
+                    # Died during startup. Lead with the root causes: vLLM's last words
+                    # are usually "See root cause above", and the tail is the part that
+                    # does not contain it.
+                    message = self._startup_failure(exit_code)
                     self._fail(message)
                     raise ServerError(message)
 

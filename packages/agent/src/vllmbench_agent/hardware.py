@@ -31,6 +31,34 @@ def _executable(path: Path) -> str | None:
     return str(path) if path.is_file() and os.access(path, os.X_OK) else None
 
 
+def child_environment(executable: str) -> dict[str, str]:
+    """The environment to launch vLLM in: ours, plus the venv's bin on PATH.
+
+    vLLM shells out to tooling of its own — `ninja`, for the inductor compile step —
+    and expects to find it the way an operator's shell would, because the operator
+    activated the venv first. The agent does not activate anything: it execs the binary
+    by absolute path, so the child inherits a bare PATH and vLLM's own subprocess call
+    dies with ``FileNotFoundError: 'ninja'``.
+
+    That failure is worse than it sounds, because it is *intermittent*. It only fires
+    when inductor actually has to compile; with a warm cache from an earlier manual run
+    everything succeeds. The first real runs on the GPU host passed for exactly that
+    reason, and the failure surfaced only when a changed setting invalidated the cache
+    key — which is to say, it would have surfaced constantly during a sweep, whose whole
+    job is to vary settings.
+
+    This is not the PATH manipulation README warns against. That warning is about using
+    PATH to *find* `vllm`, which we do not do. This is about handing the engine the
+    environment it was installed into, which is what activating a venv means.
+    """
+    env = dict(os.environ)
+    bin_dir = str(Path(executable).resolve().parent)
+    existing = env.get("PATH", "")
+    if bin_dir not in existing.split(os.pathsep):
+        env["PATH"] = f"{bin_dir}{os.pathsep}{existing}" if existing else bin_dir
+    return env
+
+
 def vllm_binary_search_detail(configured: str = "") -> str:
     """Say where we looked, for the error raised when we found nothing.
 

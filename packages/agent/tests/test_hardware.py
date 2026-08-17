@@ -19,7 +19,11 @@ from pathlib import Path
 
 import pytest
 
-from vllmbench_agent.hardware import resolve_vllm_binary, vllm_binary_search_detail
+from vllmbench_agent.hardware import (
+    child_environment,
+    resolve_vllm_binary,
+    vllm_binary_search_detail,
+)
 
 
 def _make_executable(path: Path, body: str = "#!/bin/sh\nexit 0\n") -> Path:
@@ -136,3 +140,47 @@ def test_real_interpreter_scripts_dir_is_discoverable() -> None:
     scripts = sysconfig.get_path("scripts")
     assert scripts
     assert os.path.isdir(scripts)
+
+
+class TestChildEnvironment:
+    """The environment vLLM is launched in.
+
+    vLLM shells out to its own tooling — `ninja` for the inductor compile — and finds it
+    the way an activated venv would. The agent execs by absolute path and activates
+    nothing, so without this the child gets a bare PATH and dies with
+    ``FileNotFoundError: 'ninja'``.
+
+    The reason it needs a test rather than a comment: the failure is intermittent. With a
+    warm compile cache everything passes, which is how the first real runs on the GPU
+    host succeeded while being broken.
+    """
+
+    def test_puts_the_executable_directory_on_path(self, tmp_path: Path) -> None:
+        executable = _make_executable(tmp_path / "venv" / "bin" / "vllm")
+        env = child_environment(str(executable))
+        assert env["PATH"].split(os.pathsep)[0] == str(tmp_path / "venv" / "bin")
+
+    def test_keeps_the_rest_of_path(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("PATH", "/usr/bin:/bin")
+        executable = _make_executable(tmp_path / "venv" / "bin" / "vllm")
+        env = child_environment(str(executable))
+        assert env["PATH"].endswith("/usr/bin:/bin")
+
+    def test_does_not_duplicate_an_entry_already_present(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        bin_dir = tmp_path / "venv" / "bin"
+        executable = _make_executable(bin_dir / "vllm")
+        monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}/usr/bin")
+        env = child_environment(str(executable))
+        assert env["PATH"].split(os.pathsep).count(str(bin_dir)) == 1
+
+    def test_inherits_the_agent_environment(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # HF_HOME decides which weights the engine resolves, so losing it would mean
+        # re-downloading models and, worse, benchmarking a different snapshot than the
+        # operator's own runs use.
+        monkeypatch.setenv("HF_HOME", "/data/hf")
+        executable = _make_executable(tmp_path / "venv" / "bin" / "vllm")
+        assert child_environment(str(executable))["HF_HOME"] == "/data/hf"

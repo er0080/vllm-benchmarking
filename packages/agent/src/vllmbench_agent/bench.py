@@ -20,7 +20,11 @@ import time
 from collections import deque
 from pathlib import Path
 
-from vllmbench_agent.hardware import resolve_vllm_binary, vllm_binary_search_detail
+from vllmbench_agent.hardware import (
+    child_environment,
+    resolve_vllm_binary,
+    vllm_binary_search_detail,
+)
 from vllmbench_protocol.wire import BenchRequest, BenchResponse
 
 log = logging.getLogger(__name__)
@@ -111,6 +115,9 @@ async def run_benchmark(
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             start_new_session=True,
+            # Same reasoning as the server: the benchmark client is vLLM too, and it
+            # loads a tokenizer and may compile.
+            env=child_environment(argv[0]),
         )
     except OSError as exc:
         shutil.rmtree(workdir, ignore_errors=True)

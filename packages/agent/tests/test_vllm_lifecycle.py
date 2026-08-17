@@ -100,6 +100,29 @@ class TestStartup:
         # without it the operator gets "it failed" and nothing actionable.
         assert "out of memory" in message.lower()
 
+    async def test_root_cause_survives_a_long_outer_traceback(
+        self, server: VllmServer, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The failure vLLM actually produces, and the one a tail cannot report.
+
+        Real vLLM prints the worker's exception, unwinds through hundreds of lines, and
+        signs off with "See root cause above". Keeping only a tail keeps the pointer and
+        discards the target — which on the first GPU host meant reporting "Engine core
+        initialization failed" when the answer was that `ninja` was not on PATH.
+        """
+        monkeypatch.setenv("FAKE_VLLM_MODE", "crash_deep")
+        with pytest.raises(ServerError) as exc:
+            await server.start(
+                config_yaml=CONFIG,
+                config_hash=CONFIG_HASH,
+                port=_free_port(),
+                readiness_timeout_seconds=30,
+            )
+        message = str(exc.value)
+        assert "ninja" in message, "the root cause was dropped in favour of the traceback"
+        # And it must lead, not be buried: an operator reads the top of the message.
+        assert message.index("ninja") < message.index("Last output")
+
     async def test_a_failed_start_leaves_nothing_running(
         self, server: VllmServer, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
