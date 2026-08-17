@@ -22,12 +22,15 @@ from fastapi import APIRouter, Query
 from sqlalchemy import Select, func, select
 
 from vllmbench_api.analysis import (
+    BALANCE_METRICS,
     METRICS,
     METRICS_BY_KEY,
     PARETO_X,
     PARETO_Y,
+    DeviceSummary,
     Group,
     Point,
+    RunBalance,
     RunRecord,
     RunSource,
     Spread,
@@ -41,10 +44,15 @@ from vllmbench_api.deps import SessionDep
 from vllmbench_api.hashing import config_hash
 from vllmbench_api.schemas import (
     AnalysisOut,
+    BalanceMetricOut,
+    DeviceBalanceGroupOut,
+    DeviceBalanceOut,
+    DeviceSummaryOut,
     ExcludedOut,
     GroupOut,
     MetricOut,
     PointOut,
+    RunBalanceOut,
     ScalingCurveOut,
     ScalingGroupOut,
     ScalingOut,
@@ -53,7 +61,15 @@ from vllmbench_api.schemas import (
 )
 from vllmbench_api.sweep_plan import config_family_text
 from vllmbench_db.enums import RunStatus
-from vllmbench_db.models import GpuHost, Run, RunSummary, ServerConfig, Sweep, Workload
+from vllmbench_db.models import (
+    GpuHost,
+    GpuSample,
+    Run,
+    RunSummary,
+    ServerConfig,
+    Sweep,
+    Workload,
+)
 
 #: Any SELECT the filters can narrow — the row query and the count queries alike.
 #: Bound to ``Select[Any]`` because ``Select`` is invariant in its row type, so a
@@ -482,4 +498,142 @@ async def analysis_scaling(
         excluded=await _excluded(session, filters),
         groups=[g for g in out_groups if g.curves],
         single_width_families=single_width,
+    )
+
+
+@router.get("/device-balance", response_model=DeviceBalanceOut)
+async def analysis_device_balance(
+    session: SessionDep,
+    source: RunSource = RunSource.REAL,
+    host_id: uuid.UUID | None = None,
+    sweep_id: Annotated[list[uuid.UUID] | None, Query()] = None,
+    config_hash: Annotated[list[str] | None, Query()] = None,
+    tensor_parallel_size: Annotated[list[int] | None, Query()] = None,
+    since: dt.datetime | None = None,
+    limit: int = DEFAULT_RUN_LIMIT,
+) -> DeviceBalanceOut:
+    """How evenly a tensor-parallel run's devices shared the work.
+
+    This is the question ``gpu_sample`` is keyed per device to answer. One GPU at 60%
+    while its peer sits at 95% means a third of a device was idle for the whole run — a
+    finding that the host-level average, the one number it would have been cheaper to
+    store, destroys completely.
+
+    Per run rather than per measurement point. Imbalance is a property of one execution,
+    and averaging it across replicates would hide a single run that went wrong — which is
+    exactly the run worth looking at.
+    """
+    capped = max(1, min(limit, MAX_RUN_LIMIT))
+    filters = _Filters(
+        source=source,
+        host_id=host_id,
+        sweep_ids=sweep_id,
+        config_hashes=config_hash,
+        tensor_parallel_sizes=tensor_parallel_size,
+        since=since,
+    )
+
+    records = await _load_records(session, filters, capped)
+    by_run = {record.run_id: record for record in records}
+
+    # Aggregated in the database, grouped exactly the way the table is keyed. Pulling
+    # every sample back to average it here would move tens of thousands of rows per run
+    # to compute six numbers per device.
+    devices: dict[uuid.UUID, list[DeviceSummary]] = {}
+    if by_run:
+        rows = await session.execute(
+            select(
+                GpuSample.run_id,
+                GpuSample.gpu_index,
+                func.count().label("samples"),
+                func.avg(GpuSample.sm_utilization_pct),
+                func.max(GpuSample.sm_utilization_pct),
+                # Peak rather than mean: VRAM is claimed and held, so the high-water mark
+                # is what the device actually needed. A mean would be dragged down by the
+                # ramp at the start of every run.
+                func.max(GpuSample.memory_used_bytes),
+                func.avg(GpuSample.power_watts),
+            )
+            .where(GpuSample.run_id.in_(list(by_run)))
+            .group_by(GpuSample.run_id, GpuSample.gpu_index)
+            .order_by(GpuSample.run_id, GpuSample.gpu_index)
+        )
+        for run_id, gpu_index, samples, sm_mean, sm_max, memory, power in rows:
+            devices.setdefault(run_id, []).append(
+                DeviceSummary(
+                    gpu_index=gpu_index,
+                    samples=samples,
+                    sm_utilization_pct=float(sm_mean) if sm_mean is not None else None,
+                    sm_utilization_max=float(sm_max) if sm_max is not None else None,
+                    memory_used_bytes=float(memory) if memory is not None else None,
+                    power_watts=float(power) if power is not None else None,
+                )
+            )
+
+    groups = build_groups(records)
+    out_groups: list[DeviceBalanceGroupOut] = []
+    for group in groups:
+        balances: list[RunBalance] = []
+        for point in group.points:
+            for run_id in point.run_ids:
+                found = devices.get(run_id)
+                if not found:
+                    continue
+                record = by_run[run_id]
+                balances.append(
+                    RunBalance(
+                        run_id=run_id,
+                        config_name=point.config_name,
+                        workload_name=point.workload_name,
+                        tensor_parallel_size=record.tensor_parallel_size,
+                        gpu_count=record.gpu_count,
+                        replicate_idx=record.replicate_idx,
+                        finished_at=record.finished_at,
+                        devices=tuple(found),
+                    )
+                )
+        # Worst first: the reason to open this view is to find the run that went wrong,
+        # not to page through the ones that did not.
+        balances.sort(key=lambda b: (-(b.worst_imbalance or -1.0), b.config_name))
+        out_groups.append(
+            DeviceBalanceGroupOut(
+                **_group_header(group),  # type: ignore[arg-type]
+                runs=[
+                    RunBalanceOut(
+                        run_id=balance.run_id,
+                        config_name=balance.config_name,
+                        workload_name=balance.workload_name,
+                        tensor_parallel_size=balance.tensor_parallel_size,
+                        gpu_count=balance.gpu_count,
+                        replicate_idx=balance.replicate_idx,
+                        finished_at=balance.finished_at,
+                        devices=[
+                            DeviceSummaryOut(
+                                gpu_index=device.gpu_index,
+                                samples=device.samples,
+                                sm_utilization_pct=device.sm_utilization_pct,
+                                sm_utilization_max=device.sm_utilization_max,
+                                memory_used_bytes=device.memory_used_bytes,
+                                power_watts=device.power_watts,
+                            )
+                            for device in balance.devices
+                        ],
+                        imbalances=balance.imbalances,
+                        worst_imbalance=balance.worst_imbalance,
+                        is_single_device=balance.is_single_device,
+                    )
+                    for balance in balances
+                ],
+            )
+        )
+
+    return DeviceBalanceOut(
+        source=str(source),
+        run_count=len(records),
+        truncated=len(records) >= capped,
+        limit=capped,
+        metrics=[BalanceMetricOut(key=key, label=label) for key, label in BALANCE_METRICS],
+        excluded=await _excluded(session, filters),
+        groups=[g for g in out_groups if g.runs],
+        runs_without_telemetry=sum(1 for run_id in by_run if run_id not in devices),
     )

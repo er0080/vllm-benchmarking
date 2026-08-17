@@ -489,3 +489,63 @@ class ScalingOut(BaseModel):
     #: ever run one way — but a reader looking for a config that is missing from the
     #: chart deserves to be told why rather than assuming it was never measured.
     single_width_families: int = 0
+
+
+class DeviceSummaryOut(BaseModel):
+    """One GPU's behaviour over one run."""
+
+    gpu_index: int
+    samples: int
+    sm_utilization_pct: float | None = None
+    sm_utilization_max: float | None = None
+    memory_used_bytes: float | None = None
+    power_watts: float | None = None
+
+
+class BalanceMetricOut(BaseModel):
+    key: str
+    label: str
+
+
+class RunBalanceOut(BaseModel):
+    run_id: uuid.UUID
+    config_name: str
+    workload_name: str
+    tensor_parallel_size: int
+    gpu_count: int
+    replicate_idx: int = 0
+    finished_at: dt.datetime | None = None
+    devices: list[DeviceSummaryOut] = Field(default_factory=list)
+    #: Per metric, ``(max - min) / max`` across devices. Null where fewer than two
+    #: devices reported, or where the busiest sat at zero.
+    imbalances: dict[str, float | None] = Field(default_factory=dict)
+    worst_imbalance: float | None = None
+    #: A one-device run has no balance to report, which is not the same as balanced.
+    is_single_device: bool = False
+
+
+class DeviceBalanceGroupOut(BaseModel):
+    group_id: str
+    label: str
+    gpu_host_id: uuid.UUID
+    gpu_host_name: str
+    gpu_model: str | None = None
+    vllm_version: str | None = None
+    bench_client_location: str
+    warnings: list[str] = Field(default_factory=list)
+    run_count: int = 0
+    runs: list[RunBalanceOut] = Field(default_factory=list)
+
+
+class DeviceBalanceOut(BaseModel):
+    source: str
+    run_count: int
+    truncated: bool = False
+    limit: int = 0
+    metrics: list[BalanceMetricOut] = Field(default_factory=list)
+    excluded: ExcludedOut = Field(default_factory=ExcludedOut)
+    groups: list[DeviceBalanceGroupOut] = Field(default_factory=list)
+    #: Runs whose telemetry was never sampled. A run with no per-device rows is not a
+    #: balanced run; it is one this view cannot speak about, and saying so beats an
+    #: empty chart that looks like a clean bill of health.
+    runs_without_telemetry: int = 0

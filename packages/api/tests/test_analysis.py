@@ -19,8 +19,10 @@ from vllmbench_api.analysis import (
     PARETO_Y,
     PER_USER_OUTPUT_TOK_S,
     PER_USER_OUTPUT_TOK_S_P99,
+    DeviceSummary,
     Point,
     PointKey,
+    RunBalance,
     RunRecord,
     RunSource,
     build_groups,
@@ -28,6 +30,7 @@ from vllmbench_api.analysis import (
     comparability_key,
     derive_per_user_rates,
     group_warnings,
+    imbalance,
     pareto_frontier,
     scaling_curves,
     spread_basis,
@@ -520,3 +523,79 @@ class TestScalingCurves:
         )
         (curve,) = curves
         assert all(s.efficiency is None for s in curve.steps)
+
+
+class TestDeviceBalance:
+    """Imbalance within a tensor-parallel group, the thing per-device keying exists for."""
+
+    @staticmethod
+    def devices(*utilizations: float | None) -> list[DeviceSummary]:
+        return [
+            DeviceSummary(gpu_index=i, samples=30, sm_utilization_pct=u)
+            for i, u in enumerate(utilizations)
+        ]
+
+    def test_balanced_devices_report_zero(self) -> None:
+        assert imbalance(self.devices(95.0, 95.0), "sm_utilization_pct") == 0.0
+
+    def test_the_classic_finding(self) -> None:
+        # One device at 60% while its peer sits at 95%: a third of one device idle.
+        result = imbalance(self.devices(60.0, 95.0), "sm_utilization_pct")
+        assert result == pytest.approx(0.368, abs=0.001)
+
+    def test_measured_against_the_busiest_not_the_absolute_scale(self) -> None:
+        """The same 20-point gap means different things at different loads.
+
+        Twenty points apart at 90% is a mild split; twenty points apart at 25% means the
+        quiet device did almost nothing. A fraction of the busiest device says so.
+        """
+        high = imbalance(self.devices(70.0, 90.0), "sm_utilization_pct")
+        low = imbalance(self.devices(5.0, 25.0), "sm_utilization_pct")
+        assert high is not None and low is not None and low > high
+
+    def test_one_device_has_no_imbalance(self) -> None:
+        # Not zero: zero would claim the devices were measured and agreed.
+        assert imbalance(self.devices(80.0), "sm_utilization_pct") is None
+
+    def test_an_idle_group_is_not_imbalanced(self) -> None:
+        # Everything at zero would divide by zero and manufacture a finding out of
+        # "nothing was running".
+        assert imbalance(self.devices(0.0, 0.0), "sm_utilization_pct") is None
+
+    def test_devices_missing_the_metric_are_ignored(self) -> None:
+        assert imbalance(self.devices(90.0, None), "sm_utilization_pct") is None
+        assert imbalance(self.devices(90.0, None, 45.0), "sm_utilization_pct") == 0.5
+
+    def test_worst_imbalance_across_metrics(self) -> None:
+        balance = RunBalance(
+            run_id=uuid.uuid4(),
+            config_name="c",
+            workload_name="w",
+            tensor_parallel_size=2,
+            gpu_count=2,
+            replicate_idx=0,
+            finished_at=EPOCH,
+            devices=(
+                DeviceSummary(0, 30, sm_utilization_pct=95.0, memory_used_bytes=20e9),
+                DeviceSummary(1, 30, sm_utilization_pct=60.0, memory_used_bytes=19.8e9),
+            ),
+        )
+        assert balance.imbalances["sm_utilization_pct"] == pytest.approx(0.368, abs=0.001)
+        # Memory being near-identical is the normal case — TP splits weights evenly — so
+        # the headline has to be the metric that actually moved.
+        assert balance.worst_imbalance == pytest.approx(0.368, abs=0.001)
+        assert not balance.is_single_device
+
+    def test_a_single_device_run_is_flagged_rather_than_scored(self) -> None:
+        balance = RunBalance(
+            run_id=uuid.uuid4(),
+            config_name="c",
+            workload_name="w",
+            tensor_parallel_size=1,
+            gpu_count=1,
+            replicate_idx=0,
+            finished_at=EPOCH,
+            devices=(DeviceSummary(0, 30, sm_utilization_pct=95.0),),
+        )
+        assert balance.is_single_device
+        assert balance.worst_imbalance is None

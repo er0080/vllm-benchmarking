@@ -361,3 +361,52 @@ export interface Scaling {
   /** Config families measured at only one width — not an error, but not a curve either. */
   single_width_families: number;
 }
+
+export interface DeviceSummary {
+  gpu_index: number;
+  samples: number;
+  sm_utilization_pct: number | null;
+  sm_utilization_max: number | null;
+  memory_used_bytes: number | null;
+  power_watts: number | null;
+}
+
+export interface RunBalance {
+  run_id: string;
+  config_name: string;
+  workload_name: string;
+  tensor_parallel_size: number;
+  gpu_count: number;
+  replicate_idx: number;
+  finished_at: string | null;
+  devices: DeviceSummary[];
+  /** Per metric, (max - min) / max across devices. Null when it cannot be measured. */
+  imbalances: Record<string, number | null>;
+  worst_imbalance: number | null;
+  /** A one-device run has no balance to report — not the same as balanced. */
+  is_single_device: boolean;
+}
+
+export interface DeviceBalanceGroup {
+  group_id: string;
+  label: string;
+  gpu_host_id: string;
+  gpu_host_name: string;
+  gpu_model: string | null;
+  vllm_version: string | null;
+  bench_client_location: string;
+  warnings: string[];
+  run_count: number;
+  runs: RunBalance[];
+}
+
+export interface DeviceBalance {
+  source: RunSource;
+  run_count: number;
+  truncated: boolean;
+  limit: number;
+  metrics: { key: string; label: string }[];
+  excluded: AnalysisExcluded;
+  groups: DeviceBalanceGroup[];
+  runs_without_telemetry: number;
+}

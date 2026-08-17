@@ -1,6 +1,7 @@
 import type {
   Analysis,
   AnalysisQuery,
+  DeviceBalance,
   Scaling,
   Config,
   Host,
@@ -130,5 +131,14 @@ export const analysisApi = {
     for (const id of query.sweepIds ?? []) params.append("sweep_id", id);
     const qs = params.toString();
     return request<Scaling>(`/analysis/scaling${qs ? `?${qs}` : ""}`);
+  },
+
+  deviceBalance: (query: AnalysisQuery = {}) => {
+    const params = new URLSearchParams();
+    if (query.source) params.set("source", query.source);
+    if (query.hostId) params.set("host_id", query.hostId);
+    for (const id of query.sweepIds ?? []) params.append("sweep_id", id);
+    const qs = params.toString();
+    return request<DeviceBalance>(`/analysis/device-balance${qs ? `?${qs}` : ""}`);
   },
 };

@@ -22,6 +22,7 @@ from vllmbench_api.settings import ApiSettings
 from vllmbench_db.enums import InitiatedBy, ReplicateOrder, RunStatus, SweepStatus
 from vllmbench_db.models import (
     GpuHost,
+    GpuSample,
     Run,
     RunSummary,
     ServerConfig,
@@ -578,3 +579,140 @@ async def test_a_family_survives_the_tp_line_moving(
     (group,) = (await client.get(SCALING)).json()["groups"]
     (curve,) = group["curves"]
     assert len(curve["steps"]) == 2
+
+
+BALANCE = "/api/analysis/device-balance"
+
+
+async def _telemetry(
+    world: World, run: Run, *, per_device: dict[int, float], memory: float = 20e9
+) -> None:
+    """Per-device samples for one run, at the utilizations given."""
+    base = dt.datetime.now(dt.UTC)
+    for index, utilization in per_device.items():
+        for tick in range(4):
+            world.session.add(
+                GpuSample(
+                    run_id=run.id,
+                    gpu_index=index,
+                    sampled_at=base + dt.timedelta(seconds=tick),
+                    sm_utilization_pct=utilization,
+                    memory_used_bytes=int(memory),
+                    power_watts=200.0 + utilization,
+                )
+            )
+    await world.session.commit()
+
+
+async def test_imbalance_within_a_tensor_parallel_group_is_surfaced(
+    client: httpx.AsyncClient, world: World
+) -> None:
+    """The reason gpu_sample is keyed per device.
+
+    A host-level average of 77.5% would have looked entirely healthy while a third of one
+    device sat idle for the whole run.
+    """
+    host = await world.host("ubuntu-llm")
+    config = await world.config("tp2")
+    workload = await world.a_workload()
+    run = await world.run(host, config, workload, tp=2)
+    await _telemetry(world, run, per_device={0: 95.0, 1: 60.0})
+
+    (group,) = (await client.get(BALANCE)).json()["groups"]
+    (balance,) = group["runs"]
+
+    assert [d["gpu_index"] for d in balance["devices"]] == [0, 1]
+    assert [d["sm_utilization_pct"] for d in balance["devices"]] == [95.0, 60.0]
+    assert balance["imbalances"]["sm_utilization_pct"] == pytest.approx(0.368, abs=0.001)
+    assert balance["is_single_device"] is False
+
+
+async def test_a_balanced_run_reports_zero_not_nothing(
+    client: httpx.AsyncClient, world: World
+) -> None:
+    host = await world.host("ubuntu-llm")
+    run = await world.run(host, await world.config("tp2"), await world.a_workload(), tp=2)
+    await _telemetry(world, run, per_device={0: 90.0, 1: 90.0})
+
+    (group,) = (await client.get(BALANCE)).json()["groups"]
+    assert group["runs"][0]["worst_imbalance"] == 0.0
+
+
+async def test_a_single_device_run_is_flagged_rather_than_scored(
+    client: httpx.AsyncClient, world: World
+) -> None:
+    # "No imbalance measurable" and "perfectly balanced" are different facts, and a
+    # single-GPU run reading as 0.0 would be the second when it is the first.
+    host = await world.host("ubuntu-llm")
+    run = await world.run(host, await world.config("tp1"), await world.a_workload(), tp=1)
+    await _telemetry(world, run, per_device={0: 90.0})
+
+    (group,) = (await client.get(BALANCE)).json()["groups"]
+    balance = group["runs"][0]
+    assert balance["is_single_device"] is True
+    assert balance["worst_imbalance"] is None
+
+
+async def test_runs_are_ordered_worst_first(client: httpx.AsyncClient, world: World) -> None:
+    host = await world.host("ubuntu-llm")
+    workload = await world.a_workload()
+    fine = await world.run(host, await world.config("fine"), workload, tp=2)
+    broken = await world.run(host, await world.config("broken"), workload, tp=2)
+    await _telemetry(world, fine, per_device={0: 90.0, 1: 88.0})
+    await _telemetry(world, broken, per_device={0: 95.0, 1: 20.0})
+
+    (group,) = (await client.get(BALANCE)).json()["groups"]
+    # The reason to open this view is to find the run that went wrong.
+    assert [r["config_name"] for r in group["runs"]] == ["broken", "fine"]
+
+
+async def test_a_run_without_telemetry_is_counted_not_shown(
+    client: httpx.AsyncClient, world: World
+) -> None:
+    """An unsampled run is one this view cannot speak about.
+
+    Showing it as balanced would be a clean bill of health nobody measured.
+    """
+    host = await world.host("ubuntu-llm")
+    await world.run(host, await world.config("unsampled"), await world.a_workload(), tp=2)
+
+    body = (await client.get(BALANCE)).json()
+    assert body["groups"] == []
+    assert body["runs_without_telemetry"] == 1
+
+
+async def test_each_replicate_is_reported_separately(
+    client: httpx.AsyncClient, world: World
+) -> None:
+    """Averaging imbalance across replicates would hide the one run that went wrong.
+
+    That run is precisely the one worth looking at, so balance is per execution while
+    every other view aggregates.
+    """
+    host = await world.host("ubuntu-llm")
+    config = await world.config("tp2")
+    workload = await world.a_workload()
+    sweep = await world.sweep(host)
+    good = await world.run(host, config, workload, sweep=sweep, tp=2, replicate_idx=0)
+    bad = await world.run(host, config, workload, sweep=sweep, tp=2, replicate_idx=1)
+    await _telemetry(world, good, per_device={0: 90.0, 1: 89.0})
+    await _telemetry(world, bad, per_device={0: 90.0, 1: 30.0})
+
+    (group,) = (await client.get(BALANCE)).json()["groups"]
+    assert len(group["runs"]) == 2
+    assert group["runs"][0]["run_id"] == str(bad.id)
+    # Replicates are told apart by index, since this view lists executions rather than
+    # points and both replicates carry the same config and workload name.
+    assert {r["replicate_idx"] for r in group["runs"]} == {0, 1}
+    assert group["runs"][0]["worst_imbalance"] == pytest.approx(2 / 3, abs=0.01)
+
+
+async def test_synthetic_balance_is_a_separate_population(
+    client: httpx.AsyncClient, world: World
+) -> None:
+    mock = await world.host("mock", synthetic="mock_agent")
+    run = await world.run(mock, await world.config("tp2"), await world.a_workload(), tp=2)
+    await _telemetry(world, run, per_device={0: 99.0, 1: 10.0})
+
+    assert (await client.get(BALANCE)).json()["groups"] == []
+    assert (await client.get(BALANCE, params={"source": "synthetic"})).json()["groups"] != []

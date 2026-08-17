@@ -678,3 +678,81 @@ def scaling_curves(points: Sequence[Point], *, metric_key: str) -> list[ScalingC
 
     curves.sort(key=lambda c: (c.workload_name, c.max_concurrency or 0, c.config_name))
     return curves
+
+
+# ---------------------------------------------------------------------------
+# Per-device balance
+# ---------------------------------------------------------------------------
+
+#: Metrics whose imbalance across a tensor-parallel group is diagnostic, and how to read
+#: a gap in each. Kept small deliberately: temperature and clocks differ between devices
+#: for reasons that have nothing to do with the work split, so reporting their spread
+#: would train the reader to ignore the number.
+BALANCE_METRICS: tuple[tuple[str, str], ...] = (
+    ("sm_utilization_pct", "SM utilization"),
+    ("memory_used_bytes", "Memory used"),
+    ("power_watts", "Power draw"),
+)
+
+
+@dataclass(frozen=True, slots=True)
+class DeviceSummary:
+    """One GPU's behaviour over one run."""
+
+    gpu_index: int
+    samples: int
+    sm_utilization_pct: float | None = None
+    sm_utilization_max: float | None = None
+    memory_used_bytes: float | None = None
+    power_watts: float | None = None
+
+    def value(self, key: str) -> float | None:
+        return getattr(self, key, None)
+
+
+def imbalance(devices: Sequence[DeviceSummary], key: str) -> float | None:
+    """How far apart the devices sat, as a fraction of the busiest one.
+
+    ``(max - min) / max``: 0.0 is perfectly balanced, 0.35 means the quietest device did
+    a third less than the busiest. A fraction rather than an absolute gap because the
+    same 20-point spread means something different at 90% utilization than at 25%.
+
+    ``None`` when fewer than two devices reported, or when the busiest is at zero —
+    "nothing was running" is not an imbalance, and dividing by it would manufacture one.
+    """
+    values = [value for device in devices if (value := device.value(key)) is not None]
+    if len(values) < 2:
+        return None
+    top = max(values)
+    return (top - min(values)) / top if top > 0 else None
+
+
+@dataclass(frozen=True, slots=True)
+class RunBalance:
+    """One run's devices, and how evenly they shared the work."""
+
+    run_id: uuid.UUID
+    config_name: str
+    workload_name: str
+    tensor_parallel_size: int
+    gpu_count: int
+    #: Which replicate of its point this was. Needed because this view lists executions
+    #: rather than points, so three replicates otherwise appear as three identically
+    #: labelled bars with no way to tell which is which.
+    replicate_idx: int
+    finished_at: dt.datetime | None
+    devices: tuple[DeviceSummary, ...]
+
+    @property
+    def imbalances(self) -> dict[str, float | None]:
+        return {key: imbalance(self.devices, key) for key, _ in BALANCE_METRICS}
+
+    @property
+    def worst_imbalance(self) -> float | None:
+        found = [value for value in self.imbalances.values() if value is not None]
+        return max(found) if found else None
+
+    @property
+    def is_single_device(self) -> bool:
+        """A one-device run has no balance to report, and that is not a warning."""
+        return len(self.devices) < 2
