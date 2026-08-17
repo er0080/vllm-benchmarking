@@ -488,3 +488,32 @@ select[multiple] {
 .delta-worse {
   color: var(--danger);
 }
+
+/* The shared filter bar. Sits above the charts rather than inside any one of them,
+   because the selection applies to all of them. */
+.filters {
+  margin-bottom: 1rem;
+}
+
+.chips {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0;
+  padding: 0 0.5rem 0.2rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.chips legend {
+  padding: 0 0.3rem;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.chip {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.85rem;
+}

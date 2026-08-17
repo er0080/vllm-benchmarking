@@ -161,7 +161,9 @@ The payoff milestone. Load the `dataviz` skill before building these.
       variance, or drift between separate sittings
 - [x] Provenance guards that refuse to silently overlay incomparable runs — partitioning
       happens in the API, so a view is never handed two vLLM versions in one series
-- [ ] Filtering beyond source, host and sweep
+- [x] Filtering — population, host, sweep and tensor-parallel size, held above the views
+      rather than inside each, so narrowing on one tab still means the same thing on the
+      next
 - [ ] Saved views
 
 **Done when:** a tuning decision can be made from the UI alone, without exporting to a

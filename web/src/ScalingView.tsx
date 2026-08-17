@@ -28,8 +28,10 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type * as echarts from "echarts";
 
 import { analysisApi } from "./api";
+import type { Filters } from "./AnalysisFilters";
+import { toQuery } from "./AnalysisFilters";
 import { Chart, DASH, SYMBOLS, cssVar, needsLogScale, seriesColors, useTheme } from "./chartkit";
-import type { Metric, RunSource, Scaling, ScalingCurve, ScalingGroup } from "./types";
+import type { Metric, Scaling, ScalingCurve, ScalingGroup } from "./types";
 
 /** The palette's validated slot count. Beyond it, series are listed rather than drawn. */
 const MAX_SERIES = 4;
@@ -253,11 +255,10 @@ function CurveTable({ curves }: { curves: ScalingCurve[] }) {
   );
 }
 
-export function ScalingView() {
+export function ScalingView({ filters }: { filters: Filters }) {
   const [data, setData] = useState<Scaling | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
-  const [source, setSource] = useState<RunSource>("real");
   const [groupId, setGroupId] = useState<string | null>(null);
   const [family, setFamily] = useState<string | null>(null);
   const [showTable, setShowTable] = useState(false);
@@ -265,14 +266,14 @@ export function ScalingView() {
 
   const load = useCallback(async () => {
     try {
-      setData(await analysisApi.scaling({ source }));
+      setData(await analysisApi.scaling(toQuery(filters)));
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoaded(true);
     }
-  }, [source]);
+  }, [filters]);
 
   useEffect(() => {
     void load();
@@ -333,13 +334,6 @@ export function ScalingView() {
 
       <div className="card">
         <div className="toolbar">
-          <label>
-            Runs
-            <select value={source} onChange={(e) => setSource(e.target.value as RunSource)}>
-              <option value="real">Real measurements</option>
-              <option value="synthetic">Synthetic (mock / CPU backend)</option>
-            </select>
-          </label>
 
           {data && data.groups.length > 1 && (
             <label>
@@ -374,12 +368,6 @@ export function ScalingView() {
           <button onClick={() => void load()}>Refresh</button>
         </div>
 
-        {source === "synthetic" && (
-          <p className="notice">
-            Synthetic runs. These come from the mock agent or the CPU backend and are not
-            measurements of any real hardware.
-          </p>
-        )}
 
         {error && <p className="error">{error}</p>}
         {!loaded && <p className="muted">Loading…</p>}

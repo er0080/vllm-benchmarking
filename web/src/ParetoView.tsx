@@ -35,14 +35,15 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type * as echarts from "echarts";
 
 import { analysisApi } from "./api";
+import type { Filters } from "./AnalysisFilters";
+import { toQuery } from "./AnalysisFilters";
 import { Chart, SYMBOLS, cssVar, seriesColors, useTheme } from "./chartkit";
 import type {
   Analysis,
   AnalysisGroup,
   AnalysisPoint,
   Metric,
-  RunSource,
-  Spread,
+    Spread,
 } from "./types";
 
 /**
@@ -369,11 +370,10 @@ function ExcludedNote({ data }: { data: Analysis }) {
   );
 }
 
-export function ParetoView() {
+export function ParetoView({ filters }: { filters: Filters }) {
   const [data, setData] = useState<Analysis | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
-  const [source, setSource] = useState<RunSource>("real");
   const [groupId, setGroupId] = useState<string | null>(null);
   const [xKey, setXKey] = useState<string | null>(null);
   const [yKey, setYKey] = useState<string | null>(null);
@@ -382,14 +382,14 @@ export function ParetoView() {
 
   const load = useCallback(async () => {
     try {
-      setData(await analysisApi.points({ source }));
+      setData(await analysisApi.points(toQuery(filters)));
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoaded(true);
     }
-  }, [source]);
+  }, [filters]);
 
   useEffect(() => {
     void load();
@@ -428,13 +428,6 @@ export function ParetoView() {
 
       <div className="card">
         <div className="toolbar">
-          <label>
-            Runs
-            <select value={source} onChange={(e) => setSource(e.target.value as RunSource)}>
-              <option value="real">Real measurements</option>
-              <option value="synthetic">Synthetic (mock / CPU backend)</option>
-            </select>
-          </label>
 
           {data && data.groups.length > 1 && (
             <label>
@@ -490,13 +483,6 @@ export function ParetoView() {
           <button onClick={() => void load()}>Refresh</button>
         </div>
 
-        {source === "synthetic" && (
-          <p className="notice">
-            Synthetic runs. These come from the mock agent or the CPU backend and are not
-            measurements of any real hardware. They are quarantined from real results and
-            can never appear on the same chart as one.
-          </p>
-        )}
 
         {error && <p className="error">{error}</p>}
         {!loaded && <p className="muted">Loading…</p>}
@@ -509,8 +495,8 @@ export function ParetoView() {
                 {" "}
                 There {data.excluded.other_source === 1 ? "is" : "are"}{" "}
                 {data.excluded.other_source} {data.excluded.other_source_name} run
-                {data.excluded.other_source === 1 ? "" : "s"}, shown under the other Runs
-                setting above.
+                {data.excluded.other_source === 1 ? "" : "s"} matching these filters, under
+                the other Runs setting in the filter bar.
               </>
             )}
           </p>
