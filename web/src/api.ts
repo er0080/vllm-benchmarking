@@ -1,4 +1,4 @@
-import type { Config, Host, Run, Workload } from "./types";
+import type { Config, Host, Run, RunTelemetry, Workload } from "./types";
 
 const BASE = "/api";
 
@@ -67,6 +67,9 @@ export const workloadsApi = {
 export const runsApi = {
   list: () => request<Run[]>("/runs"),
   get: (id: string) => request<Run>(`/runs/${id}`),
+  // Separate from get(): the runs list polls every 2s while anything is in flight, and
+  // a long run's telemetry is thousands of samples.
+  telemetry: (id: string) => request<RunTelemetry>(`/runs/${id}/telemetry`),
   create: (gpuHostId: string, serverConfigId: string, workloadId: string) =>
     request<Run>("/runs", {
       method: "POST",

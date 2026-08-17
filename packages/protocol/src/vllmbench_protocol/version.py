@@ -31,4 +31,7 @@ __version__ = "0.1.0"
 #    *tokenizer* from — so an alias there silently tokenizes with the wrong tokenizer and
 #    records wrong input-token counts. That is a data-corruption difference, not a
 #    feature difference, which is exactly what this number exists to refuse.
-PROTOCOL_VERSION = 3
+# 4: BenchResponse carries telemetry, and BenchRequest can set the sampling interval.
+#    An agent on 3 returns no samples at all, which a control plane on 4 would record as
+#    a run that was genuinely never sampled rather than one whose agent cannot sample.
+PROTOCOL_VERSION = 4

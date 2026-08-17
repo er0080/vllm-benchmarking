@@ -28,6 +28,7 @@ from vllmbench_agent.hardware import (
     probe_vllm_version,
 )
 from vllmbench_agent.settings import AgentSettings
+from vllmbench_agent.telemetry import TelemetrySampler
 from vllmbench_agent.vllm_server import ServerError, VllmServer
 from vllmbench_protocol import PROTOCOL_VERSION, __version__
 from vllmbench_protocol.wire import (
@@ -146,14 +147,39 @@ def create_app(settings: AgentSettings | None = None) -> FastAPI:
         if request.reset_caches_first:
             await server.reset_caches()
 
+        # Started after the cache reset and stopped after the client exits, so the
+        # window the telemetry covers is the window the benchmark measured. Sampling
+        # across the reset would put a KV-cache cliff in the series that belongs to
+        # neither run.
+        sampler = TelemetrySampler(
+            base_url=server.base_url(),
+            device_indices=server.status().device_indices,
+            interval_seconds=request.telemetry_interval_seconds
+            or settings.telemetry_interval_seconds,
+        )
+        sampler.start()
+
         try:
-            return await run_benchmark(
+            response = await run_benchmark(
                 request, base_url=server.base_url(), vllm_bin=settings.vllm_bin
             )
         except BenchError as exc:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
             ) from exc
+        finally:
+            # Unconditional: a failed benchmark must not leave a sampler running against
+            # the engine that the next one is about to measure.
+            await sampler.stop()
+
+        return response.model_copy(
+            update={
+                "engine_samples": sampler.engine_samples,
+                "gpu_samples": sampler.gpu_samples,
+                "telemetry_decimated": sampler.decimated,
+                "telemetry_interval_seconds": sampler.effective_interval_seconds,
+            }
+        )
 
     return app
 

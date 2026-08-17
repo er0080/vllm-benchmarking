@@ -125,3 +125,34 @@ export interface Run {
   log_excerpt: string | null;
   summary: RunSummary | null;
 }
+
+export interface EngineSample {
+  sampled_at: string;
+  num_requests_running: number | null;
+  num_requests_waiting: number | null;
+  /** 0..1, exactly as vLLM emits it. Multiply for display; never store the percent. */
+  kv_cache_usage_fraction: number | null;
+  num_preemptions_total: number | null;
+  prefix_cache_queries_total: number | null;
+  prefix_cache_hits_total: number | null;
+}
+
+export interface GpuSample {
+  sampled_at: string;
+  gpu_index: number;
+  sm_utilization_pct: number | null;
+  memory_used_bytes: number | null;
+  power_watts: number | null;
+  temperature_c: number | null;
+  sm_clock_mhz: number | null;
+  memory_clock_mhz: number | null;
+}
+
+export interface RunTelemetry {
+  run_id: string;
+  engine: EngineSample[];
+  gpu: GpuSample[];
+  /** Devices that actually produced samples, in ascending order. */
+  gpu_indices: number[];
+  sample_count: number;
+}

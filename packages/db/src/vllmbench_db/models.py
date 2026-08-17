@@ -384,7 +384,10 @@ class EngineSample(Base):
     run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("run.id", ondelete="CASCADE"))
     sampled_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True))
 
-    kv_cache_usage_pct: Mapped[float | None] = mapped_column()
+    # A 0..1 fraction, stored exactly as vLLM emits it. vLLM calls the metric
+    # `kv_cache_usage_perc` but reports 0.112 for 11.2%, so inheriting that suffix here
+    # would invite a chart that renders an eighth-full cache as "0.1%".
+    kv_cache_usage_fraction: Mapped[float | None] = mapped_column()
     num_requests_running: Mapped[int | None] = mapped_column(Integer)
     num_requests_waiting: Mapped[int | None] = mapped_column(Integer)
 

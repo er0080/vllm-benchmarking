@@ -19,13 +19,16 @@ from vllmbench_api.hashing import config_hash, normalize_yaml, workload_hash
 from vllmbench_api.schemas import (
     ConfigCreate,
     ConfigOut,
+    EngineSampleOut,
+    GpuSampleOut,
     RunCreate,
     RunOut,
+    RunTelemetryOut,
     WorkloadCreate,
     WorkloadOut,
 )
 from vllmbench_db.enums import InitiatedBy, RunStatus
-from vllmbench_db.models import GpuHost, Run, ServerConfig, Workload
+from vllmbench_db.models import EngineSample, GpuHost, GpuSample, Run, ServerConfig, Workload
 
 router = APIRouter(prefix="/api", tags=["runs"])
 
@@ -175,3 +178,47 @@ async def get_run(run_id: uuid.UUID, session: SessionDep) -> Run:
     if run is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="run not found")
     return run
+
+
+@router.get("/runs/{run_id}/telemetry", response_model=RunTelemetryOut)
+async def get_run_telemetry(run_id: uuid.UUID, session: SessionDep) -> RunTelemetryOut:
+    """The engine and per-device series for one run.
+
+    A separate endpoint rather than an expansion of the run payload: a long run can carry
+    thousands of samples, and the runs list polls every two seconds while anything is in
+    flight. Attaching telemetry to that would multiply the cost of the poll by the size
+    of the largest run on the page.
+
+    Per device, never aggregated here. One device at 60% while its peer sits at 95% is
+    the finding; the mean of the two is not (invariant 8, and the `gpu_sample` keying
+    rule in CLAUDE.md).
+    """
+    if await session.get(Run, run_id) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="run not found")
+
+    engine = list(
+        (
+            await session.execute(
+                select(EngineSample)
+                .where(EngineSample.run_id == run_id)
+                .order_by(EngineSample.sampled_at)
+            )
+        ).scalars()
+    )
+    gpu = list(
+        (
+            await session.execute(
+                select(GpuSample)
+                .where(GpuSample.run_id == run_id)
+                .order_by(GpuSample.sampled_at, GpuSample.gpu_index)
+            )
+        ).scalars()
+    )
+
+    return RunTelemetryOut(
+        run_id=run_id,
+        engine=[EngineSampleOut.model_validate(s) for s in engine],
+        gpu=[GpuSampleOut.model_validate(s) for s in gpu],
+        gpu_indices=sorted({s.gpu_index for s in gpu}),
+        sample_count=len(engine) + len(gpu),
+    )

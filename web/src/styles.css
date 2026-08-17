@@ -10,6 +10,16 @@
   --warn-text: #7a5a00;
   --danger: #b42318;
   --radius: 8px;
+
+  /* Data-viz slots. Assigned by entity in fixed order and never cycled: series 1 is
+     always "running" / device 0, series 2 always "waiting" / device 1, so filtering
+     the chart never repaints the survivors. Validated for CVD separation and contrast
+     against this surface in both modes. */
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --series-4: #eda100;
+  --grid-line: #e8eaee;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
 }
 
@@ -25,6 +35,13 @@
     --warn-border: #7a5f1e;
     --warn-text: #f0c674;
     --danger: #f87171;
+    /* Stepped for the dark surface, not flipped: the same hues re-picked so they
+       still clear the contrast and CVD gates against #171a21. */
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
+    --series-4: #c98500;
+    --grid-line: #242833;
   }
 }
 
@@ -39,6 +56,11 @@
   --warn-border: #7a5f1e;
   --warn-text: #f0c674;
   --danger: #f87171;
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+  --series-4: #c98500;
+  --grid-line: #242833;
 }
 
 * {
@@ -340,4 +362,25 @@ tr.clickable:hover td {
   background: color-mix(in srgb, var(--danger) 12%, transparent);
   border-color: color-mix(in srgb, var(--danger) 45%, transparent);
   color: var(--danger);
+}
+
+/* Chart controls sit in one row above the charts they filter, so the relationship is
+   positional rather than something the reader has to infer. */
+.chart-controls {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  margin: 4px 0 8px;
+}
+
+.chart-controls label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.chart-controls .spacer {
+  flex: 1;
 }

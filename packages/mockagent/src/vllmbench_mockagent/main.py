@@ -21,12 +21,14 @@ import time
 from fastapi import Depends, FastAPI, HTTPException, status
 
 from vllmbench_agent.auth import token_dependency
-from vllmbench_mockagent.synthetic import synthesize_bench_result
+from vllmbench_mockagent.synthetic import synthesize_bench_result, synthesize_telemetry
 from vllmbench_protocol import PROTOCOL_VERSION, __version__
 from vllmbench_protocol.wire import (
     BenchRequest,
     BenchResponse,
+    EngineSampleWire,
     GpuInfo,
+    GpuSampleWire,
     HealthResponse,
     HostInfo,
     ServerState,
@@ -186,13 +188,30 @@ def create_app(token: str | None = None, protocol_version: int = PROTOCOL_VERSIO
             config_hash=str(state["config_hash"]),
             tensor_parallel_size=tp,
         )
+        devices = list(range(tp))
+        interval = request.telemetry_interval_seconds or 1.0
+        # The synthetic benchmark takes seconds while a real one takes minutes, so the
+        # window is stretched to a realistic length. A three-sample timeline would let
+        # the chart look finished without ever having rendered a series.
+        engine_samples, gpu_samples = synthesize_telemetry(
+            duration_seconds=max(MOCK_BENCH_SECONDS, 120.0),
+            interval_seconds=interval,
+            device_indices=devices,
+            max_concurrency=request.max_concurrency,
+            config_hash=str(state["config_hash"]),
+            tensor_parallel_size=tp,
+        )
+
         return BenchResponse(
             raw_result=raw,
             duration_seconds=MOCK_BENCH_SECONDS,
             stdout_tail=["Serving Benchmark Result (synthetic)"],
             tensor_parallel_size=tp,
             pipeline_parallel_size=1,
-            device_indices=list(range(tp)),
+            device_indices=devices,
+            engine_samples=[EngineSampleWire(**s) for s in engine_samples],
+            gpu_samples=[GpuSampleWire(**s) for s in gpu_samples],
+            telemetry_interval_seconds=interval,
         )
 
     return app

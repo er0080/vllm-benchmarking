@@ -20,10 +20,18 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vllmbench_db.enums import RunStatus
-from vllmbench_db.models import GpuHost, Run, RunSummary, ServerConfig, Workload
+from vllmbench_db.models import (
+    EngineSample,
+    GpuHost,
+    GpuSample,
+    Run,
+    RunSummary,
+    ServerConfig,
+    Workload,
+)
 from vllmbench_protocol import AgentClient, AgentError
 from vllmbench_protocol.bench_result import BenchResultError, flatten_bench_result
-from vllmbench_protocol.wire import BenchRequest, HostInfo, StartServerRequest
+from vllmbench_protocol.wire import BenchRequest, BenchResponse, HostInfo, StartServerRequest
 
 log = logging.getLogger("vllmbench.orchestrator.runner")
 
@@ -142,6 +150,8 @@ async def execute_run(session: AsyncSession, run: Run, token: str) -> None:
         summary = RunSummary(run_id=run.id, **flat)
         session.add(summary)
 
+        _record_telemetry(session, run, response)
+
         run.status = RunStatus.SUCCEEDED
         run.finished_at = dt.datetime.now(dt.UTC)
         await session.commit()
@@ -195,6 +205,63 @@ async def client_bench(
             random_input_len=workload.input_len,
             random_output_len=workload.output_len,
         )
+    )
+
+
+def _record_telemetry(session: AsyncSession, run: Run, response: BenchResponse) -> None:
+    """Turn the agent's offset-based samples into absolute rows.
+
+    The agent reports offsets from the moment sampling began rather than wall-clock
+    timestamps, and they are anchored here. Two hosts are involved and their clocks are
+    not synchronised — the GPU host has no reason to run NTP against ours — so trusting
+    its wall clock would let a few seconds of skew slide the whole timeline out of the
+    window it is meant to describe. Offsets from a known anchor cannot skew.
+
+    The anchor is the moment the benchmark ended minus its measured duration, because
+    that is the pair of facts we hold most precisely: the response arrived just now, and
+    it says how long it took.
+    """
+    if not response.engine_samples and not response.gpu_samples:
+        return
+
+    anchor = dt.datetime.now(dt.UTC) - dt.timedelta(seconds=response.duration_seconds)
+
+    for sample in response.engine_samples:
+        session.add(
+            EngineSample(
+                run_id=run.id,
+                sampled_at=anchor + dt.timedelta(seconds=sample.offset_seconds),
+                num_requests_running=sample.num_requests_running,
+                num_requests_waiting=sample.num_requests_waiting,
+                kv_cache_usage_fraction=sample.kv_cache_usage_fraction,
+                num_preemptions_total=sample.num_preemptions_total,
+                prefix_cache_queries_total=sample.prefix_cache_queries_total,
+                prefix_cache_hits_total=sample.prefix_cache_hits_total,
+            )
+        )
+
+    for gpu in response.gpu_samples:
+        session.add(
+            GpuSample(
+                run_id=run.id,
+                gpu_index=gpu.gpu_index,
+                sampled_at=anchor + dt.timedelta(seconds=gpu.offset_seconds),
+                sm_utilization_pct=gpu.sm_utilization_pct,
+                memory_used_bytes=gpu.memory_used_bytes,
+                power_watts=gpu.power_watts,
+                temperature_c=gpu.temperature_c,
+                sm_clock_mhz=gpu.sm_clock_mhz,
+                memory_clock_mhz=gpu.memory_clock_mhz,
+            )
+        )
+
+    log.info(
+        "run %s: %d engine samples, %d gpu samples at %.1fs resolution%s",
+        run.id,
+        len(response.engine_samples),
+        len(response.gpu_samples),
+        response.telemetry_interval_seconds or 0.0,
+        " (decimated)" if response.telemetry_decimated else "",
     )
 
 
