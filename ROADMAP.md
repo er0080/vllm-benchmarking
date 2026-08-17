@@ -146,8 +146,10 @@ The payoff milestone. Load the `dataviz` skill before building these.
       family — the config text with its TP line normalized away — so a curve is never
       assembled from configurations that differ in anything else
 - [ ] Per-device utilization comparison to expose imbalance within a TP group
-- [ ] Latency-versus-concurrency curves, p50 and p99
-- [ ] Throughput saturation curves against request rate
+- [x] Latency-versus-concurrency curves, median and p99 drawn together so the gap between
+      them — the queueing signal a median alone hides — is the thing you see first
+- [x] Throughput saturation curves against request rate or concurrency, sharing the load
+      axis with the latency curves
 - [ ] Side-by-side run and config comparison with a config diff
 - [x] Replicate spread rendered, not averaged away — median with a min/max cross, and
       each point states whether its band measures back-to-back repeatability, run-to-run
