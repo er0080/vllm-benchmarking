@@ -63,9 +63,15 @@ The vertical slice. This is the milestone that proves the architecture.
 **Done when:** a single benchmark run is triggered from the browser and its TTFT, TPOT,
 ITL, and throughput figures land in Postgres and render on a run detail page.
 
-**Status:** complete against the mock agent — queued → starting → benchmarking →
-succeeded, with provenance, topology and per-GPU normalization recorded. The real-vLLM
-half is listed in [docs/hardware-verification.md](docs/hardware-verification.md).
+**Status:** complete, and verified end to end on real hardware — 2× RTX 3090, vLLM
+0.25.1. A production 27B FP8 config at TP=2 ran verbatim: 100 requests, 0 failed, TTFT,
+TPOT, ITL and per-GPU throughput in Postgres. Device attribution confirmed to come from
+NVML rather than the config, VRAM confirmed to return to baseline, and orphan reaping
+confirmed against a real four-process engine.
+
+The GPU found five bugs that presented as healthy software, all of them differences
+between the environment vLLM is installed in and the environment the agent handed it.
+See [docs/hardware-verification.md](docs/hardware-verification.md).
 
 ---
 
