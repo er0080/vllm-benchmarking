@@ -182,3 +182,55 @@ class RunOut(BaseModel):
     log_excerpt: str | None = None
 
     summary: RunSummaryOut | None = None
+
+
+# ---------------------------------------------------------------------------
+# Telemetry
+# ---------------------------------------------------------------------------
+
+
+class EngineSampleOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    sampled_at: dt.datetime
+    num_requests_running: int | None = None
+    num_requests_waiting: int | None = None
+    # 0..1, exactly as vLLM emits it. The client multiplies for display; the API does not
+    # pre-scale, so a consumer reading the raw series is never guessing about units.
+    kv_cache_usage_fraction: float | None = None
+    num_preemptions_total: int | None = None
+    prefix_cache_queries_total: int | None = None
+    prefix_cache_hits_total: int | None = None
+
+
+class GpuSampleOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    sampled_at: dt.datetime
+    gpu_index: int
+    sm_utilization_pct: float | None = None
+    memory_used_bytes: int | None = None
+    power_watts: float | None = None
+    temperature_c: float | None = None
+    sm_clock_mhz: int | None = None
+    memory_clock_mhz: int | None = None
+
+
+class RunTelemetryOut(BaseModel):
+    """Everything sampled during one run.
+
+    Returned as two flat series rather than pre-joined per timestamp: engine and GPU
+    sampling can legitimately disagree about which ticks succeeded (a scrape can fail
+    while NVML answers), and zipping them here would either invent readings or drop
+    good ones.
+    """
+
+    run_id: uuid.UUID
+    engine: list[EngineSampleOut]
+    gpu: list[GpuSampleOut]
+    # The devices that actually produced samples, so a client can build one series per
+    # device without scanning the whole payload first.
+    gpu_indices: list[int]
+    # Present so a chart can say "no telemetry" rather than drawing an empty axis and
+    # leaving the reader to wonder whether the engine was idle.
+    sample_count: int

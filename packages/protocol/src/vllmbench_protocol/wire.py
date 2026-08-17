@@ -197,10 +197,57 @@ class BenchRequest(_Wire):
     # Passed through verbatim, for flags this build predates.
     extra_args: list[str] = Field(default_factory=list)
 
+    # None means "use the agent's configured default". Per-run because the acceptable
+    # sampling cost is a property of the host, but a particular run may want finer
+    # resolution (a short saturation test) or coarser (a long soak).
+    telemetry_interval_seconds: float | None = Field(default=None, gt=0)
+
     timeout_seconds: float = Field(default=3600.0, gt=0)
     # Upstream resets caches between runs; carrying a warm prefix cache across sweep
     # points silently invalidates the comparison.
     reset_caches_first: bool = True
+
+
+class EngineSampleWire(_Wire):
+    """One scrape of vLLM's ``/metrics``.
+
+    Every field is optional because a scrape that partly fails must still record what it
+    did read. The alternative — dropping the whole sample — leaves a gap in the timeline
+    exactly when the engine is under the most stress, which is when the timeline matters.
+    """
+
+    # Seconds since the benchmark started, not a wall clock. The control plane converts
+    # to absolute time using the run's own start, so a clock skewed between the two hosts
+    # cannot slide the telemetry out of alignment with the window it describes.
+    offset_seconds: float
+
+    num_requests_running: int | None = None
+    num_requests_waiting: int | None = None
+    # 0..1, as vLLM emits it. See metrics.py — the upstream name says "perc" and lies.
+    kv_cache_usage_fraction: float | None = None
+
+    # Counters, raw. Rates are derived later so any window can be differenced.
+    num_preemptions_total: int | None = None
+    prefix_cache_queries_total: int | None = None
+    prefix_cache_hits_total: int | None = None
+
+
+class GpuSampleWire(_Wire):
+    """One NVML read of one device.
+
+    Per device, never averaged. A host-level mean is the one summary guaranteed to hide
+    the imbalance that makes a tensor-parallel run diagnosable.
+    """
+
+    offset_seconds: float
+    gpu_index: int
+
+    sm_utilization_pct: float | None = None
+    memory_used_bytes: int | None = None
+    power_watts: float | None = None
+    temperature_c: float | None = None
+    sm_clock_mhz: int | None = None
+    memory_clock_mhz: int | None = None
 
 
 class BenchResponse(_Wire):
@@ -217,3 +264,15 @@ class BenchResponse(_Wire):
     tensor_parallel_size: int | None = None
     pipeline_parallel_size: int | None = None
     device_indices: list[int] | None = None
+
+    # Telemetry sampled across the benchmark window, returned with the result rather
+    # than streamed. One round trip, nothing to reconcile, and no partial series left
+    # behind if the run fails — the samples arrive with the thing they describe or not
+    # at all.
+    engine_samples: list[EngineSampleWire] = Field(default_factory=list)
+    gpu_samples: list[GpuSampleWire] = Field(default_factory=list)
+    # True when sampling was decimated to stay within its cap. The series still spans the
+    # whole window, at lower resolution — but a consumer computing a rate from adjacent
+    # samples needs to know the spacing changed.
+    telemetry_decimated: bool = False
+    telemetry_interval_seconds: float | None = None

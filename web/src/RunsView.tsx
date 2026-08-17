@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { api, configsApi, runsApi, workloadsApi } from "./api";
+import { TelemetryTimeline } from "./TelemetryTimeline";
 import type { Config, Host, Run, RunStatus, Workload } from "./types";
 
 const TERMINAL: RunStatus[] = ["succeeded", "failed", "cancelled"];
@@ -128,6 +129,15 @@ function RunDetail({ run, onClose }: { run: Run; onClose: () => void }) {
               </tbody>
             </table>
           </div>
+        </>
+      )}
+
+      {/* Only for terminal runs: telemetry arrives with the benchmark result, so a
+          run still in flight has nothing to show and would just render an empty axis. */}
+      {(run.status === "succeeded" || run.status === "failed") && (
+        <>
+          <h3>Timeline</h3>
+          <TelemetryTimeline runId={run.id} />
         </>
       )}
 

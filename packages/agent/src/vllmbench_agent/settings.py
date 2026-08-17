@@ -18,6 +18,13 @@ class AgentSettings(BaseSettings):
 
     log_level: str = "INFO"
 
+    # How often to sample /metrics and NVML during a benchmark. The agent runs on the
+    # machine under test, so this is a knob on how much the measurement is disturbed:
+    # 1s costs one loopback GET and one NVML read per device per second, against an
+    # engine generating thousands of tokens in the same window. Raise it on a host where
+    # even that is too much; a request can override it per run.
+    telemetry_interval_seconds: float = 1.0
+
     # Absolute path to the `vllm` executable, for the case where the agent is installed
     # somewhere other than the vLLM environment.
     #

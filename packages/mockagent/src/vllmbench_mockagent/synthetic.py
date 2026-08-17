@@ -124,3 +124,86 @@ def synthesize_bench_result(
         "label": None,
         "date": "synthetic",
     }
+
+
+# Telemetry shape. A benchmark does not start at steady state: requests arrive, the
+# queue builds, the KV cache fills, and everything plateaus. Modelling that ramp is the
+# point — a flat line would let a timeline chart look finished while never having shown
+# a transition, which is the only part of the picture that is hard to render well.
+TELEMETRY_RAMP_FRACTION = 0.25
+
+
+def synthesize_telemetry(
+    *,
+    duration_seconds: float,
+    interval_seconds: float,
+    device_indices: list[int],
+    max_concurrency: int | None,
+    config_hash: str,
+    tensor_parallel_size: int = 1,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Produce engine and per-device samples spanning one benchmark window.
+
+    Per device rather than per host, and deliberately *asymmetric* across devices: on a
+    real tensor-parallel run device 0 carries the sampling and detokenization work and
+    runs a little hotter. A mock that emitted identical series for every GPU would make
+    a per-device chart look correct while it was in fact plotting one line on top of
+    another — which is the one bug per-device sampling exists to expose.
+    """
+    concurrency = float(max_concurrency or 64)
+    seed = f"{config_hash}:{concurrency}"
+    steady_running = min(concurrency, SATURATION_CONCURRENCY * tensor_parallel_size**0.8)
+    steady_waiting = max(0.0, concurrency - steady_running)
+
+    engine: list[dict[str, Any]] = []
+    gpu: list[dict[str, Any]] = []
+
+    ticks = max(1, int(duration_seconds / interval_seconds))
+    ramp_ticks = max(1.0, ticks * TELEMETRY_RAMP_FRACTION)
+    queries = 0
+    hits = 0
+
+    for tick in range(ticks):
+        offset = tick * interval_seconds
+        # tanh ramp to steady state, so the first samples show the engine filling up.
+        progress = math.tanh(tick / ramp_ticks)
+
+        running = steady_running * progress
+        waiting = steady_waiting * progress
+        kv = min(0.97, 0.85 * progress * _jitter(f"{seed}:kv:{tick}", 0.03))
+
+        # Counters only ever increase — differencing them is the whole reason they are
+        # stored raw, and a counter that went backwards would produce negative rates.
+        queries += int(64 * progress)
+        hits += int(18 * progress)
+
+        engine.append(
+            {
+                "offset_seconds": offset,
+                "num_requests_running": int(running),
+                "num_requests_waiting": int(waiting),
+                "kv_cache_usage_fraction": kv,
+                "num_preemptions_total": int(max(0.0, (progress - 0.9) * 20)),
+                "prefix_cache_queries_total": queries,
+                "prefix_cache_hits_total": hits,
+            }
+        )
+
+        for position, index in enumerate(device_indices or [0]):
+            # Device 0 runs hotter; the rest track it a few points lower.
+            lead = 1.0 if position == 0 else 0.93
+            util = min(99.0, 96.0 * progress * lead * _jitter(f"{seed}:sm:{index}:{tick}", 0.02))
+            gpu.append(
+                {
+                    "offset_seconds": offset,
+                    "gpu_index": index,
+                    "sm_utilization_pct": util,
+                    "memory_used_bytes": int((6.0 + 14.0 * progress * lead) * 1024**3),
+                    "power_watts": 90.0 + 230.0 * progress * lead,
+                    "temperature_c": 38.0 + 34.0 * progress * lead,
+                    "sm_clock_mhz": int(1200 + 600 * progress),
+                    "memory_clock_mhz": 9501,
+                }
+            )
+
+    return engine, gpu

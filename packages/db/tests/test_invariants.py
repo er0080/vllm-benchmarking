@@ -69,13 +69,15 @@ class TestTelemetryIsAppendOnly:
     ) -> None:
         run = await run_factory()
         session.add(
-            EngineSample(run_id=run.id, sampled_at=dt.datetime.now(dt.UTC), kv_cache_usage_pct=0.5)
+            EngineSample(
+                run_id=run.id, sampled_at=dt.datetime.now(dt.UTC), kv_cache_usage_fraction=0.5
+            )
         )
         await session.flush()
 
         with pytest.raises(DBAPIError, match="append-only"):
             await session.execute(
-                text("UPDATE engine_sample SET kv_cache_usage_pct = 0.9 WHERE run_id = :id"),
+                text("UPDATE engine_sample SET kv_cache_usage_fraction = 0.9 WHERE run_id = :id"),
                 {"id": run.id},
             )
         await session.rollback()

@@ -8,6 +8,7 @@ perpetually working and blocks whatever comes next.
 
 from __future__ import annotations
 
+import datetime as dt
 import os
 from collections.abc import AsyncIterator
 
@@ -18,7 +19,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from vllmbench_db.enums import InitiatedBy, RunStatus
-from vllmbench_db.models import GpuHost, Run, ServerConfig, Workload
+from vllmbench_db.models import (
+    EngineSample,
+    GpuHost,
+    GpuSample,
+    Run,
+    ServerConfig,
+    Workload,
+)
 from vllmbench_db.session import create_engine, create_session_factory
 from vllmbench_mockagent.main import create_app as create_mock_app
 from vllmbench_orchestrator.runner import claim_next_run, execute_run
@@ -399,3 +407,128 @@ class TestServedModelName:
         config = ServerConfig(config_hash="d" * 64, name="c", yaml="served-model-name: alias\n")
         with pytest.raises(RunFailed, match="model:"):
             _model_names_from_config(config)
+
+
+class TestTelemetryPersistence:
+    """Telemetry lands as rows, per device, aligned to the run.
+
+    The interesting property is the alignment. The agent reports offsets from when
+    sampling started, not wall-clock stamps, because the two hosts' clocks are not
+    synchronised — the GPU host has no reason to run NTP against the control plane. A
+    few seconds of skew would slide an entire timeline out of the window it describes,
+    and nothing downstream could detect it.
+    """
+
+    async def test_samples_are_written_per_device(
+        self, session: AsyncSession, route_to_mock
+    ) -> None:
+        route_to_mock(create_mock_app(token=TOKEN))
+        run = await _seed(session)
+        config = await session.get(ServerConfig, run.server_config_id)
+        assert config is not None
+        config.yaml = "model: facebook/opt-125m\ntensor-parallel-size: 2\n"
+        await session.commit()
+
+        claimed = await claim_next_run(session)
+        assert claimed is not None
+        await execute_run(session, claimed, TOKEN)
+        run_id = claimed.id
+        session.expire_all()
+
+        engine = list(
+            (
+                await session.execute(select(EngineSample).where(EngineSample.run_id == run_id))
+            ).scalars()
+        )
+        gpu = list(
+            (await session.execute(select(GpuSample).where(GpuSample.run_id == run_id))).scalars()
+        )
+
+        assert engine, "no engine telemetry was recorded"
+        # Both devices present, and neither collapsed into a host-level average — the
+        # per-device keying is what makes an imbalanced TP run diagnosable.
+        assert {s.gpu_index for s in gpu} == {0, 1}
+        per_device = [sum(1 for s in gpu if s.gpu_index == i) for i in (0, 1)]
+        assert per_device[0] == per_device[1] > 0
+
+    async def test_kv_cache_is_stored_as_a_fraction(
+        self, session: AsyncSession, route_to_mock
+    ) -> None:
+        # vLLM's metric is named `_perc` but emits 0..1. Storing a percent here would
+        # make every chart and export wrong by 100x in one direction or the other.
+        route_to_mock(create_mock_app(token=TOKEN))
+        await _seed(session)
+        claimed = await claim_next_run(session)
+        assert claimed is not None
+        await execute_run(session, claimed, TOKEN)
+        # Before expire_all: expiring `claimed` makes any later attribute read attempt a
+        # synchronous refresh, which is IO on the wrong side of the greenlet boundary.
+        run_id = claimed.id
+        session.expire_all()
+
+        values = [
+            s.kv_cache_usage_fraction
+            for s in (
+                await session.execute(select(EngineSample).where(EngineSample.run_id == run_id))
+            ).scalars()
+            if s.kv_cache_usage_fraction is not None
+        ]
+        assert values
+        assert all(0.0 <= v <= 1.0 for v in values), f"not a fraction: {max(values)}"
+
+    async def test_counters_never_go_backwards(self, session: AsyncSession, route_to_mock) -> None:
+        """Counters are stored raw so any window can be differenced.
+
+        A counter that decreased would produce a negative rate downstream, which is
+        worse than no rate at all — it looks like a measurement rather than a bug.
+        """
+        route_to_mock(create_mock_app(token=TOKEN))
+        await _seed(session)
+        claimed = await claim_next_run(session)
+        assert claimed is not None
+        await execute_run(session, claimed, TOKEN)
+        run_id = claimed.id
+        session.expire_all()
+
+        samples = list(
+            (
+                await session.execute(
+                    select(EngineSample)
+                    .where(EngineSample.run_id == run_id)
+                    .order_by(EngineSample.sampled_at)
+                )
+            ).scalars()
+        )
+        queries = [s.prefix_cache_queries_total for s in samples if s.prefix_cache_queries_total]
+        assert queries == sorted(queries)
+
+    async def test_the_series_lands_inside_the_run_window(
+        self, session: AsyncSession, route_to_mock
+    ) -> None:
+        # Anchored to the benchmark, not to either host's wall clock. If this drifts,
+        # the timeline describes a window the run never occupied.
+        route_to_mock(create_mock_app(token=TOKEN))
+        await _seed(session)
+        claimed = await claim_next_run(session)
+        assert claimed is not None
+        await execute_run(session, claimed, TOKEN)
+        run_id = claimed.id
+        session.expire_all()
+
+        run = await session.get(Run, run_id)
+        assert run is not None and run.started_at is not None and run.finished_at is not None
+        samples = list(
+            (
+                await session.execute(
+                    select(EngineSample)
+                    .where(EngineSample.run_id == run_id)
+                    .order_by(EngineSample.sampled_at)
+                )
+            ).scalars()
+        )
+        assert samples
+        # The mock stretches its synthetic window past its own (very short) benchmark, so
+        # the assertion is that sampling begins at or after the run did, not that it fits
+        # entirely inside — that is what a real, minutes-long benchmark gives.
+        assert samples[0].sampled_at >= run.started_at - dt.timedelta(seconds=5)
+        assert samples[0].sampled_at < samples[-1].sampled_at
