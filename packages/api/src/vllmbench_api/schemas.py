@@ -12,7 +12,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from vllmbench_db.enums import ReplicateOrder
+from vllmbench_db.enums import InitiatedBy, ReplicateOrder
 
 
 class GpuDeviceOut(BaseModel):
@@ -110,7 +110,27 @@ class WorkloadOut(WorkloadCreate):
 # ---------------------------------------------------------------------------
 
 
-class RunCreate(BaseModel):
+class InitiatedByFields(BaseModel):
+    """Who asked for this work.
+
+    Required provenance under invariant 6, and it only became answerable-and-wrong once a
+    second interface could create work: every sweep and run was recorded as ``ui``,
+    including the ones an MCP client will now create.
+
+    Declared by the caller rather than sniffed from the request, because HTTP cannot tell
+    a browser from a curl invocation and guessing would put a confident wrong answer in a
+    provenance column. This is the same trust model the project already uses for
+    ``synthetic_source``: the producer declares, and nothing downstream infers.
+
+    The default is ``api`` — the honest answer for an unidentified HTTP caller. The web
+    app sends ``ui``; the MCP tools send ``mcp`` and their client's name.
+    """
+
+    initiated_by: InitiatedBy = InitiatedBy.API
+    initiated_by_client: str | None = Field(default=None, max_length=128)
+
+
+class RunCreate(InitiatedByFields):
     gpu_host_id: uuid.UUID
     server_config_id: uuid.UUID
     workload_id: uuid.UUID
@@ -244,7 +264,7 @@ class RunTelemetryOut(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class SweepCreate(BaseModel):
+class SweepCreate(InitiatedByFields):
     """A matrix of server configs by workloads, run `replicates` times each.
 
     ``tensor_parallel_sizes`` turns TP into an axis: each base config is derived into one

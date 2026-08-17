@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import itertools
 import os
+import uuid
 from collections.abc import AsyncIterator
 
 import httpx
@@ -251,8 +252,14 @@ class TestTensorParallelAxis:
             "tensor_parallel_sizes": [1, 2],
             "replicates": 1,
         }
-        assert (await client.post("/api/sweeps", json=payload)).status_code == 201
+        created = await client.post("/api/sweeps", json=payload)
+        assert created.status_code == 201
         first = len(list((await session.execute(select(ServerConfig))).scalars()))
+
+        # Cancelled between the two, because a host may only hold one active sweep — the
+        # rerun this test is about is a rerun, not a second concurrent sweep.
+        cancelled = await client.post(f"/api/sweeps/{created.json()['id']}/cancel")
+        assert cancelled.status_code == 200
 
         assert (await client.post("/api/sweeps", json=payload)).status_code == 201
         second = len(list((await session.execute(select(ServerConfig))).scalars()))
@@ -442,3 +449,142 @@ class TestValidation:
             },
         )
         assert response.status_code == 422
+
+
+class TestGuardrails:
+    """Limits that exist because two callers can now author sweeps without seeing each
+    other — a person in the UI and an agent over MCP."""
+
+    async def test_a_host_holds_one_active_sweep(
+        self, session: AsyncSession, client: httpx.AsyncClient
+    ) -> None:
+        """Physical, not procedural: two sweeps on one host interleave engine restarts.
+
+        Each then pays for the other's config changes and neither measures the sequence
+        it planned.
+        """
+        host, config, workload = await _fixtures(session)
+        payload = {
+            "name": "first",
+            "gpu_host_id": str(host.id),
+            "server_config_ids": [str(config.id)],
+            "workload_ids": [str(workload.id)],
+            "replicates": 1,
+        }
+        assert (await client.post("/api/sweeps", json=payload)).status_code == 201
+
+        second = await client.post("/api/sweeps", json={**payload, "name": "second"})
+        assert second.status_code == 409
+        # Names the sweep in the way, so the caller can act rather than guess.
+        assert "first" in second.json()["detail"]
+
+    async def test_a_finished_sweep_releases_the_host(
+        self, session: AsyncSession, client: httpx.AsyncClient
+    ) -> None:
+        host, config, workload = await _fixtures(session)
+        payload = {
+            "name": "done",
+            "gpu_host_id": str(host.id),
+            "server_config_ids": [str(config.id)],
+            "workload_ids": [str(workload.id)],
+            "replicates": 1,
+        }
+        created = await client.post("/api/sweeps", json=payload)
+        await client.post(f"/api/sweeps/{created.json()['id']}/cancel")
+
+        assert (
+            await client.post("/api/sweeps", json={**payload, "name": "next"})
+        ).status_code == 201
+
+    async def test_a_runaway_matrix_is_refused_at_authoring(
+        self, session: AsyncSession, client: httpx.AsyncClient
+    ) -> None:
+        """A caller that got its product wrong finds out now, not after days of GPU time.
+
+        The failure this prevents is not an error — it is a queue quietly filled with work
+        nobody meant to ask for. Replicates are already bounded on their own; this is the
+        *product* of the axes, which no single field can catch.
+        """
+        host, config, _ = await _fixtures(session)
+        workload_ids = []
+        for concurrency in range(1, 12):
+            created = await client.post(
+                "/api/workloads",
+                json={
+                    "name": f"c{concurrency}",
+                    "dataset_name": "random",
+                    "num_prompts": 32,
+                    "max_concurrency": concurrency,
+                },
+            )
+            assert created.status_code in (200, 201), created.text
+            workload_ids.append(created.json()["id"])
+
+        # 11 workloads x 2 tensor-parallel sizes x 25 replicates = 550.
+        response = await client.post(
+            "/api/sweeps",
+            json={
+                "name": "runaway",
+                "gpu_host_id": str(host.id),
+                "server_config_ids": [str(config.id)],
+                "workload_ids": workload_ids,
+                "tensor_parallel_sizes": [1, 2],
+                "replicates": 25,
+            },
+        )
+        assert response.status_code == 422, response.text
+        assert "550 runs" in response.json()["detail"]
+
+    async def test_who_asked_is_recorded(
+        self, session: AsyncSession, client: httpx.AsyncClient
+    ) -> None:
+        """Invariant 6. Every run and its sweep must be able to say what produced it.
+
+        This only became answerable-and-wrong once a second interface could create work:
+        before MCP, everything claimed the UI, and the claim happened to be true.
+        """
+        host, config, workload = await _fixtures(session)
+        created = await client.post(
+            "/api/sweeps",
+            json={
+                "name": "by an agent",
+                "gpu_host_id": str(host.id),
+                "server_config_ids": [str(config.id)],
+                "workload_ids": [str(workload.id)],
+                "replicates": 1,
+                "initiated_by": "mcp",
+                "initiated_by_client": "claude-code",
+            },
+        )
+        assert created.status_code == 201
+        assert created.json()["initiated_by"] == "mcp"
+
+        sweep_id = created.json()["id"]
+        runs = list(
+            (
+                await session.execute(select(Run).where(Run.sweep_id == uuid.UUID(sweep_id)))
+            ).scalars()
+        )
+        # On every run, not only on the sweep: a run is the thing that gets charted, and
+        # it has to answer for itself.
+        assert runs and all(str(run.initiated_by) == "mcp" for run in runs)
+        assert all(run.initiated_by_client == "claude-code" for run in runs)
+
+    async def test_an_unidentified_caller_is_recorded_as_api_not_ui(
+        self, session: AsyncSession, client: httpx.AsyncClient
+    ) -> None:
+        # HTTP cannot tell a browser from curl, so the honest default is "some API
+        # caller". Claiming the UI would be a confident wrong answer in a provenance
+        # column.
+        host, config, workload = await _fixtures(session)
+        created = await client.post(
+            "/api/sweeps",
+            json={
+                "name": "anonymous",
+                "gpu_host_id": str(host.id),
+                "server_config_ids": [str(config.id)],
+                "workload_ids": [str(workload.id)],
+                "replicates": 1,
+            },
+        )
+        assert created.json()["initiated_by"] == "api"

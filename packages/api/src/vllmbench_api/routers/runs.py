@@ -27,7 +27,7 @@ from vllmbench_api.schemas import (
     WorkloadCreate,
     WorkloadOut,
 )
-from vllmbench_db.enums import InitiatedBy, RunStatus
+from vllmbench_db.enums import RunStatus
 from vllmbench_db.models import EngineSample, GpuHost, GpuSample, Run, ServerConfig, Workload
 
 router = APIRouter(prefix="/api", tags=["runs"])
@@ -149,7 +149,8 @@ async def create_run(payload: RunCreate, session: SessionDep) -> Run:
         # itself, decides whether this run is quarantined. Nothing infers it.
         is_synthetic=host.synthetic_source is not None,
         synthetic_source=host.synthetic_source,
-        initiated_by=InitiatedBy.UI,
+        initiated_by=payload.initiated_by,
+        initiated_by_client=payload.initiated_by_client,
     )
     session.add(run)
     await session.commit()
