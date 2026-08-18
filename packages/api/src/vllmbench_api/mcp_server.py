@@ -47,6 +47,7 @@ from vllmbench_api.routers import runs as run_routes
 from vllmbench_api.routers import sweeps as sweep_routes
 from vllmbench_api.schemas import (
     AnalysisOut,
+    ConfigAnnotate,
     ConfigCreate,
     ConfigValidationRequest,
     DurationEstimateOut,
@@ -442,6 +443,18 @@ def build_mcp_server(sessions: async_sessionmaker[Any], settings: ApiSettings) -
         raise ValueError(f"no config with hash {config_hash!r}")
 
     @tool
+    async def get_config_lineage(config_hash: str) -> dict[str, Any]:
+        """Where a configuration came from, and what came from it.
+
+        The record of a tuning session: which config this was edited from, back to the
+        original, and which configs were edited from it. A configuration on its own says
+        what was set; this says what it was set *instead of*.
+        """
+        async with sessions() as session:
+            result = await run_routes.config_lineage(config_hash, session)
+            return result.model_dump(mode="json")
+
+    @tool
     async def list_workloads(limit: int | None = None) -> list[dict[str, Any]]:
         """Benchmark workloads — the traffic each run was measured under."""
         async with sessions() as session:
@@ -731,19 +744,67 @@ def build_mcp_server(sessions: async_sessionmaker[Any], settings: ApiSettings) -
         return decorate
 
     @write_tool(subject_key="config_hash")
-    async def create_config(name: str, yaml: str, notes: str | None = None) -> dict[str, Any]:
+    async def create_config(
+        name: str, yaml: str, notes: str | None = None, derived_from: str | None = None
+    ) -> dict[str, Any]:
         """Store a vLLM server configuration, exactly as given.
 
         The YAML is what will be written to disk and passed to `vllm serve --config`, byte
         for byte — nothing is reordered, normalized or re-emitted. Configurations are
         content-addressed, so submitting text that already exists returns the existing one
         rather than a duplicate.
+
+        Pass `derived_from` (a config hash) when this is an edit of an earlier config. That
+        is what makes a tuning session readable afterwards: without it, twenty
+        configurations are twenty unrelated files rather than a record of what was tried in
+        what order. It is recorded only when this call actually creates a row — a config
+        that already exists has a history that already happened.
         """
         async with sessions() as session:
+            parent_id = None
+            if derived_from:
+                for candidate in await run_routes.list_configs(session):
+                    if candidate.config_hash == derived_from:
+                        parent_id = candidate.id
+                        break
+                if parent_id is None:
+                    raise ValueError(f"no config with hash {derived_from!r} to derive from")
             config = await run_routes.create_config(
-                ConfigCreate(name=name, yaml=yaml, notes=notes), session
+                ConfigCreate(name=name, yaml=yaml, notes=notes, parent_id=parent_id), session
             )
             return {"config_hash": config.config_hash, "name": config.name}
+
+    @write_tool(subject_key="config_hash")
+    async def annotate_config(
+        config_hash: str,
+        justified_by_run_id: str | None = None,
+        justification_note: str | None = None,
+        notes: str | None = None,
+        name: str | None = None,
+    ) -> dict[str, Any]:
+        """Record why a configuration is worth keeping.
+
+        Changes what is *said about* a config, never the config. The YAML is not editable —
+        editing it is a different content hash and therefore a different configuration, so
+        an edit is a `create_config` with `derived_from` set.
+
+        `justified_by_run_id` must be a run that actually used this configuration. A run of
+        something else is not evidence for it, and is refused rather than stored.
+        """
+        async with sessions() as session:
+            result = await run_routes.annotate_config(
+                config_hash,
+                ConfigAnnotate(
+                    name=name,
+                    notes=notes,
+                    justified_by_run_id=(
+                        uuid.UUID(justified_by_run_id) if justified_by_run_id else None
+                    ),
+                    justification_note=justification_note,
+                ),
+                session,
+            )
+            return result.model_dump(mode="json")
 
     @write_tool(subject_key="workload_hash")
     async def create_workload(

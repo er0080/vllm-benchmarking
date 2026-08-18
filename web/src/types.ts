@@ -41,7 +41,49 @@ export interface Config {
   name: string;
   yaml: string;
   notes: string | null;
+  /** The config this one was edited from, when it was. */
+  parent_id: string | null;
+  /** The run somebody would point at to defend this configuration. */
+  justified_by_run_id: string | null;
+  justification_note: string | null;
   created_at: string;
+}
+
+/** One problem with a candidate config, and where. */
+export interface Finding {
+  /** "error" — vLLM will refuse to start. "warning" — it will start and may not do what
+   *  you meant. Not the same thing, and never rendered as though they were. */
+  severity: "error" | "warning";
+  message: string;
+  key: string | null;
+  line: number | null;
+  /** Offered, never applied: the engine validates, it does not rewrite (invariant 5). */
+  suggestion: string | null;
+}
+
+export interface ConfigValidation {
+  valid: boolean;
+  findings: Finding[];
+  /** The vLLM version whose arguments were used. */
+  checked_against: string;
+  /** False when the target host runs a version with no captured catalogue, so the
+   *  reference was used instead. A clean result means something weaker then. */
+  exact_version_match: boolean;
+}
+
+export interface LineageNode {
+  id: string;
+  config_hash: string;
+  name: string;
+  created_at: string;
+}
+
+export interface Lineage {
+  config_hash: string;
+  /** Nearest parent first, back to the original. */
+  ancestors: LineageNode[];
+  children: LineageNode[];
+  truncated: boolean;
 }
 
 export interface Workload {

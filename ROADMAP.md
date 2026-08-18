@@ -225,12 +225,22 @@ touching the UI.
 
 ## 0.7.0 — Configuration management
 
-- [ ] YAML editor surfacing the validation engine from 0.6.0 — one implementation, two
-      interfaces
-- [ ] Content-addressed config storage and lineage (which config was derived from which)
-- [ ] Export a config for direct use with `vllm serve --config`
-- [ ] Import an existing YAML
-- [ ] Annotate a config with the result that justified it
+- [x] YAML editor surfacing the validation engine from 0.6.0 — one implementation, two
+      interfaces. A plain textarea over the exact bytes, not a form of typed fields: a
+      form would hold opinions about vLLM's option set that rot every release, and would
+      silently drop any setting it did not know about
+- [x] Content-addressed config storage and lineage (which config was derived from which).
+      Lineage records how a config *first* came to exist — content addressing means
+      re-submitting existing text returns the existing row, and letting a later submission
+      reparent it would make the chain depend on who submitted last
+- [x] Export a config for direct use with `vllm serve --config` — byte for byte, with no
+      provenance header added. A header would not change what vLLM does but *would* change
+      the hash, and then the file in production is not the file that was measured
+- [x] Import an existing YAML, checked on arrival and flagged when it is byte-identical to
+      a config that already exists
+- [x] Annotate a config with the result that justified it. The run must be one that
+      actually used the config: a citation that can point at the wrong evidence is worse
+      than no citation
 
 **Done when:** the winning configuration from a sweep can be exported and run in
 production unchanged.

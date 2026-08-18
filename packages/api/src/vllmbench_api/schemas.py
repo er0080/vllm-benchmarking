@@ -70,6 +70,31 @@ class ConfigCreate(BaseModel):
     # Native vLLM YAML, stored and executed verbatim (invariant 5).
     yaml: str = Field(min_length=1)
     notes: str | None = None
+    #: The config this one was edited from, when it was. Recorded only when this call
+    #: creates a new row: submitting text that already exists returns the existing config
+    #: and leaves its lineage alone, because that row's history already happened.
+    parent_id: uuid.UUID | None = None
+
+
+class ConfigAnnotate(BaseModel):
+    """Metadata about a config, never its text.
+
+    Nothing here can change what `vllm serve --config` receives. The YAML is the
+    identity — editing it produces a different config with a different hash, which is a
+    creation rather than an update — so these are the only fields a config can have
+    changed after the fact.
+    """
+
+    name: str | None = Field(default=None, min_length=1, max_length=128)
+    notes: str | None = None
+    #: The run somebody would point at to defend this configuration. It must be a run
+    #: that actually used it — a run of some other config is not evidence for this one.
+    justified_by_run_id: uuid.UUID | None = None
+    #: Why that run settles it, in the author's words.
+    justification_note: str | None = None
+    #: Distinguishes "leave the justification alone" from "withdraw it", which an omitted
+    #: nullable field cannot express on its own.
+    clear_justification: bool = False
 
 
 class ConfigOut(BaseModel):
@@ -80,7 +105,43 @@ class ConfigOut(BaseModel):
     name: str
     yaml: str
     notes: str | None = None
+    parent_id: uuid.UUID | None = None
+    #: Set when a run has been recorded as the evidence for this configuration. Populated
+    #: from `config_justification`, which is a table rather than a column here to keep
+    #: `run` and `server_config` from referencing each other in a cycle.
+    justified_by_run_id: uuid.UUID | None = None
+    justification_note: str | None = None
     created_at: dt.datetime
+
+
+class LineageNode(BaseModel):
+    """One config in a derivation chain, without its YAML.
+
+    The text is omitted deliberately: a lineage view shows how a configuration came to
+    be, and carrying every ancestor's full YAML would make the common case — a chain of
+    five near-identical files — mostly duplication.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    config_hash: str
+    name: str
+    created_at: dt.datetime
+
+
+class LineageOut(BaseModel):
+    """Where a configuration came from and what came from it."""
+
+    config_hash: str
+    #: Nearest parent first, back to the original. Empty for a config nobody derived.
+    ancestors: list[LineageNode] = Field(default_factory=list)
+    #: Configs derived directly from this one, newest first.
+    children: list[LineageNode] = Field(default_factory=list)
+    #: True when the chain was cut short by a cycle. Cannot happen through the API — a
+    #: parent always predates its child — but the column is a plain self-reference and a
+    #: traversal that could hang on bad data is not worth shipping.
+    truncated: bool = False
 
 
 class WorkloadCreate(BaseModel):

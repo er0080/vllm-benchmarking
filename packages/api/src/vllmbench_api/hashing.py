@@ -40,3 +40,17 @@ def workload_hash(fields: dict[str, Any]) -> str:
     """
     canonical = json.dumps(fields, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def _slug(text: str) -> str:
+    """A filename-safe version of a config's name.
+
+    Deliberately lossy and deliberately not reversible: this only has to produce a name a
+    person can recognise in a downloads folder. The config's identity travels in the hash
+    beside it, which is exact.
+    """
+    kept = [c if c.isalnum() or c in "-_" else "-" for c in text.strip().lower()]
+    slug = "".join(kept).strip("-")
+    while "--" in slug:
+        slug = slug.replace("--", "-")
+    return slug[:60] or "config"
