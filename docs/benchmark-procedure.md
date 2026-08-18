@@ -97,21 +97,12 @@ easy to author days of GPU time by accident.
 
 ## 6. Read the frontier, not the maximum
 
-The primary view is per-user output tok/s against per-GPU total tok/s. Points on the
-frontier are the ones nothing else beats on both axes; everything else is dominated and
-there is no reason to run it.
+Points on the Pareto frontier are the ones nothing else beats on both axes; everything else
+is dominated and there is no reason to run it again. The highest aggregate throughput in a
+sweep is frequently a dominated point.
 
-Two traps this framework exists to surface:
-
-- **Aggregate throughput flatters wide topologies.** Going TP=1 → TP=2 at concurrency 4
-  measured **+44.8% aggregate and −27.6% per GPU**. On aggregate alone it looks like a
-  clear win; per device it is a trade — you bought latency with a card.
-- **Scaling efficiency is not monotonic.** The same sweep measured 72.4% at concurrency 4,
-  55.5% at 16, and 86.4% at 64 — because TP=1 peaks at 16 and *degrades* at 64 once KV
-  cache runs out. The second card earns its place exactly where the first runs out.
-
-Check the device-balance view before believing a tensor-parallel result. A 1–3% gap
-between devices is healthy; a large one means the run was not doing what it looked like.
+Reading the views, and what each reading implies about the next configuration to try, is
+[tuning-playbook.md](tuning-playbook.md).
 
 ## 7. Record why, then export
 
