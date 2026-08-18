@@ -56,8 +56,21 @@ check: lint types versions test ## Everything CI tier 1 runs
 # Quality — tier 2, requires services
 # ---------------------------------------------------------------------------
 
+.PHONY: test-db
+test-db: ## Create and migrate vllmbench_test, which the integration suite empties
+	docker compose exec -T postgres sh -c \
+		'psql -U "$$POSTGRES_USER" -d postgres -tc "SELECT 1 FROM pg_database WHERE datname = '"'"'vllmbench_test'"'"'" \
+		| grep -q 1 || createdb -U "$$POSTGRES_USER" vllmbench_test'
+	docker compose run --rm migrate sh -c \
+		'DATABASE_URL="$${DATABASE_URL%/*}/vllmbench_test" alembic upgrade head'
+
+# DATABASE_URL is built here rather than left to the code default, which cannot know the
+# password in .env. Pointed at vllmbench_test deliberately: this suite empties every table
+# in whatever it is given.
 .PHONY: test-integration
-test-integration: ## Run integration tests (needs postgres)
+test-integration: test-db ## Run integration tests (empties vllmbench_test, never vllmbench)
+	set -a; [ -f .env ] && . ./.env; set +a; \
+	DATABASE_URL="postgresql+psycopg://$${POSTGRES_USER:-vllmbench}:$${POSTGRES_PASSWORD:-vllmbench}@localhost:$${POSTGRES_PORT:-5432}/vllmbench_test" \
 	uv run pytest -m integration
 
 .PHONY: test-vllm-cpu

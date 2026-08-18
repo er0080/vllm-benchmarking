@@ -387,6 +387,11 @@ is visible. Two things were found that way — an install check whose success wa
 and an upgrade instruction that was a no-op because `uv` sees an unchanged version string
 and does nothing.
 
+Reading the documentation as a set found a third, and it was not a documentation bug: the
+integration suite defaulted to the database the compose stack keeps results in, and it
+empties every table it is pointed at. `make test-integration` on a developer's laptop
+destroyed their recorded runs. Fixed at the default.
+
 ---
 
 ## 1.0.0 — Release
