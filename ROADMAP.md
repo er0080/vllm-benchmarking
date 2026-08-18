@@ -392,6 +392,22 @@ integration suite defaulted to the database the compose stack keeps results in, 
 empties every table it is pointed at. `make test-integration` on a developer's laptop
 destroyed their recorded runs. Fixed at the default.
 
+### Release candidates
+
+Tags cut against this milestone, and what each one found. A release candidate that finds
+nothing was not tested.
+
+- **v1.0.0rc1** — first tag. Everything through 0.10.0.
+- **v1.0.0rc2** — the install, followed literally on a clean machine rather than from
+  memory. The one that mattered: nginx resolved the api container's address once and
+  cached it forever, so recreating that container left the UI returning 502 from a page
+  that still rendered — and the documented upgrade does exactly that recreate. A first
+  `up` works, which is why it reached a release candidate at all. Also: a required
+  environment variable that nothing read, a stack that started clean holding `change-me`,
+  an "unreachable" message that ended in a bare colon, and a quick start whose agent
+  command blocked the terminal it then told you to use. CI now runs the documented install
+  and moves the api container underneath it.
+
 ---
 
 ## 1.0.0 — Release
