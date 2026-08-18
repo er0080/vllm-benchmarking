@@ -426,3 +426,55 @@ jobs:
           push: false
           cache-from: type=gha,scope=web
           cache-to: type=gha,mode=max,scope=web
+
+  compose-stack:
+    name: Tier 2 — the documented install
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      # The README's step 1, run literally. Anything that only works because a developer
+      # already had images built, a volume with a schema in it, or a service left running
+      # is a step this job does not have.
+      - name: Bring the stack up the way the README says to
+        run: |
+          cp .env.example .env
+          docker compose up -d --wait
+
+      - name: The UI is served, and its API calls reach the API
+        run: |
+          curl -fsS localhost:8080/ > /dev/null
+          curl -fsS localhost:8080/api/health | tee /dev/stderr | grep -q '"status":"ok"'
+
+      # The regression this job exists for. nginx resolves a literal upstream hostname
+      # once and caches it forever, so recreating the api container used to leave the UI
+      # returning 502 from a page that still loaded. `docker compose up -d --build` after
+      # a code change does exactly this recreate, so the documented upgrade broke the UI.
+      - name: The UI survives the api container moving
+        run: |
+          before=$(docker inspect vllmbench-api-1 \
+            --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}')
+          docker compose stop api
+
+          # Hold the address api just released so it is forced onto a different one.
+          # Without this, a recreate usually hands the same address straight back and the
+          # check passes while proving nothing — which is how the bug survived this long.
+          docker run -d --name ip-squatter --network vllmbench_default --ip "${before}" \
+            alpine sleep 120
+
+          docker compose up -d --wait api
+          after=$(docker inspect vllmbench-api-1 \
+            --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}')
+          docker rm -f ip-squatter
+
+          if [ "${before}" = "${after}" ]; then
+            echo "api kept ${before}; this check would prove nothing, so failing instead"
+            exit 1
+          fi
+          echo "api moved ${before} -> ${after}"
+          curl -fsS localhost:8080/api/health | grep -q '"status":"ok"'
+
+      - name: Logs on failure
+        if: failure()
+        run: docker compose logs --tail 50
