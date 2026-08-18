@@ -153,24 +153,32 @@ cd vllm-benchmarking
 cp .env.example .env
 ```
 
-Edit `.env` and set two values:
+Edit `.env` and set one value:
 
-- `VLLMBENCH_TOKEN` — the shared secret with the agent.
+- `VLLMBENCH_TOKEN` — the shared secret the control plane presents to the agent.
   Generate one with `python3 -c 'import secrets; print(secrets.token_urlsafe(32))'`.
-- `VLLMBENCH_AGENT_URL` — the LAN address of the GPU host, e.g. `http://192.168.1.50:9110`.
-  Not `localhost`: the control plane runs on a different machine by design.
+
+Everything else has a working default. The GPU host's address is not set here — it belongs
+to the host and is entered when you register it in step 3.
 
 ```bash
 docker compose up -d
 ```
 
-This builds the images, applies the schema and starts five services. Check it:
+That builds the images, applies the schema, and starts Postgres, the API, the orchestrator
+and the web UI. Budget about a minute, plus however long your connection takes to pull the
+base images the first time.
 
 ```bash
-curl -s localhost:8000/api/health   # {"status":"ok", ... "schema":{"ok":true, ...}}
+curl -s localhost:8080/api/health   # {"status":"ok", ... "schema":{"ok":true, ...}}
 ```
 
 Then open <http://localhost:8080>.
+
+If it reports `degraded`, the message names which half is unhappy — the database or the
+schema. Leaving `VLLMBENCH_TOKEN` at its example value is not an error, but both services
+say so in their logs at startup, because a shared secret that ships in a public repository
+is not a secret.
 
 ### 2. Agent, on the GPU host
 
@@ -189,14 +197,23 @@ umask 077 && echo "VLLMBENCH_TOKEN=the-token-from-step-1" > ~/.vllmbench-agent.e
 set -a; . ~/.vllmbench-agent.env; set +a; vllmbench-agent
 ```
 
+**That runs in the foreground and stops when you close the terminal** — including when an
+SSH session ends. Fine for a first measurement; leave it running and use a second terminal
+for the check below. For anything beyond that, install it as a service:
+[docs/agent-installation.md](docs/agent-installation.md) has a systemd unit.
+
+From a second terminal on the GPU host:
+
 ```bash
 curl -s localhost:9110/health
 ```
 
-That is enough to take a measurement. Running it as a service, upgrading it, and the
-environment facts that cost the most time — chiefly that a service does not inherit the
-`HF_HOME` you set in `~/.bashrc`, so vLLM re-downloads weights the host already has — are
-in [docs/agent-installation.md](docs/agent-installation.md).
+The port is 9110 and the control host has to be able to reach it — that is the one piece
+of network configuration this system needs.
+
+That guide also covers upgrading, and the environment facts that cost the most time —
+chiefly that a service does not inherit the `HF_HOME` you set in `~/.bashrc`, so vLLM
+re-downloads weights the host already has.
 
 ### 3. Your first measurement
 
@@ -220,7 +237,9 @@ In the UI:
    and per-GPU throughput are in Postgres, with the raw benchmark payload kept verbatim
    beside them and a per-second telemetry timeline underneath.
 
-On a small model this takes about ninety seconds end to end.
+Once the model is cached on the GPU host this takes about ninety seconds end to end. The
+very first time, add however long the weights take to download — the agent is running
+`vllm serve`, and vLLM fetches from HuggingFace like it always does.
 
 The config you just wrote is now content-addressed and reusable. The **Configs** tab is
 where configs get validated before they cost GPU time, annotated with the run that
@@ -233,10 +252,24 @@ analysis tabs chart the results. What each chart means and what to change next i
 
 ### Without a GPU
 
-The stack is fully developable on a laptop. `docker compose --profile dev up` adds a mock
-agent that implements the agent's HTTP contract and returns synthetic but realistic results
-and telemetry, with configurable failure injection. Everything it produces is marked
-synthetic at the moment of creation and can never be charted beside a real measurement.
+The stack is fully developable on a laptop. `make dev` — or
+`docker compose --profile dev up -d` — adds a mock agent that implements the agent's HTTP
+contract and returns synthetic but realistic results and telemetry, with configurable
+failure injection. Everything it produces is marked synthetic at the moment of creation and
+can never be charted beside a real measurement.
+
+### Stopping, starting, and what deletes results
+
+```bash
+docker compose stop      # stop, keep everything
+docker compose up -d     # start again
+docker compose down      # remove the containers; the database volume survives
+docker compose down -v   # remove the volume too — this destroys every recorded run
+```
+
+Only the last one loses data, and it loses all of it. Results live in a Docker volume, so
+they outlive the containers but not that flag. `make help` lists the rest of the targets,
+including `make check` for everything CI runs.
 
 ---
 
