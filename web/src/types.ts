@@ -592,3 +592,9 @@ export const FAILURE_LABELS: Record<string, string> = {
 export function failureLabel(kind: string): string {
   return FAILURE_LABELS[kind] ?? kind;
 }
+
+/** `/api/version` — what the control plane is actually running. */
+export interface ApiVersion {
+  version: string;
+  protocol_version: number;
+}

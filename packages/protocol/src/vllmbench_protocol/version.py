@@ -24,7 +24,7 @@ from __future__ import annotations
 
 __all__ = ["PROTOCOL_VERSION", "__version__"]
 
-__version__ = "0.1.0"
+__version__ = "1.0.0rc1"
 
 # 3: BenchRequest carries `served_model_name` separately from `model`. An agent still on
 #    2 receives only `model` and passes it as `--model`, which is what vLLM loads the
