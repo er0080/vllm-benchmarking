@@ -191,7 +191,15 @@ jobs:
       # schema that is already deployed, and it needs no tags to exist. When milestone
       # tags are cut this step reads the same way against them; only the ref changes.
       - name: Check out the deployed schema
-        run: git worktree add --detach ../baseline origin/${{ github.event.pull_request.base.ref || 'main' }}
+        # actions/checkout fetches only the ref under test, so the base branch is not in
+        # this clone at all. Fetched shallowly on purpose: this needs one commit's tree,
+        # not the history, and fetch-depth: 0 on the checkout would pay for the whole log
+        # on every run of every PR.
+        env:
+          BASE: ${{ github.event.pull_request.base.ref || 'main' }}
+        run: |
+          git fetch --depth=1 origin "$BASE"
+          git worktree add --detach ../baseline FETCH_HEAD
 
       - name: Create a database at the deployed schema
         run: |
