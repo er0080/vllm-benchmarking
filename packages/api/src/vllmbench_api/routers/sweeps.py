@@ -24,8 +24,15 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vllmbench_api.deps import SessionDep
+from vllmbench_api.duration import (
+    DurationEstimate,
+    PlannedRun,
+    RunTiming,
+    estimate_remaining,
+    plan_engine_loads,
+)
 from vllmbench_api.hashing import config_hash, normalize_yaml
-from vllmbench_api.schemas import SweepCreate, SweepOut, SweepProgress
+from vllmbench_api.schemas import DurationEstimateOut, SweepCreate, SweepOut, SweepProgress
 from vllmbench_api.sweep_plan import (
     SweepPlanError,
     expand,
@@ -138,10 +145,58 @@ async def _engine_starts(session: AsyncSession, sweep_id: uuid.UUID) -> int:
     return starts
 
 
+#: Sweep states with work still ahead of them. Anything else has nothing to estimate, so
+#: the query below is skipped rather than run to produce a zero.
+UNFINISHED_SWEEP_STATES = (SweepStatus.QUEUED, SweepStatus.RUNNING)
+
+
+async def _estimate(session: AsyncSession, sweep_id: uuid.UUID) -> DurationEstimate:
+    """Time remaining, extrapolated from this sweep's own completed runs.
+
+    One query for the whole plan, in execution order, because the estimate needs both
+    halves at once: which runs are done and how long they took, and which are left and
+    whether each will restart the engine. Splitting it would risk the two halves
+    disagreeing about the order, which is exactly what the engine-load accounting depends
+    on.
+    """
+    rows = (
+        await session.execute(
+            select(Run.status, Run.config_hash, Run.workload_hash, Run.started_at, Run.finished_at)
+            .where(Run.sweep_id == sweep_id)
+            .order_by(Run.sweep_seq)
+        )
+    ).all()
+
+    loads = plan_engine_loads([row.config_hash for row in rows])
+    observed: list[RunTiming] = []
+    remaining: list[PlannedRun] = []
+    for row, needs_load in zip(rows, loads, strict=True):
+        if row.status is RunStatus.SUCCEEDED and row.started_at and row.finished_at:
+            observed.append(
+                RunTiming(
+                    workload_hash=row.workload_hash,
+                    seconds=(row.finished_at - row.started_at).total_seconds(),
+                    included_engine_load=needs_load,
+                )
+            )
+        elif row.status not in (RunStatus.FAILED, RunStatus.CANCELLED):
+            # A run already starting or benchmarking is counted whole. Overshooting by
+            # part of one run is a better error than a countdown that runs out early.
+            remaining.append(
+                PlannedRun(workload_hash=row.workload_hash, needs_engine_load=needs_load)
+            )
+
+    return estimate_remaining(observed, remaining)
+
+
 async def _to_out(session: AsyncSession, sweep: Sweep) -> SweepOut:
     out = SweepOut.model_validate(sweep)
     out.progress = await _progress(session, sweep.id)
     out.engine_starts = await _engine_starts(session, sweep.id)
+    if sweep.status in UNFINISHED_SWEEP_STATES:
+        out.estimated_remaining = DurationEstimateOut.model_validate(
+            await _estimate(session, sweep.id), from_attributes=True
+        )
     return out
 
 

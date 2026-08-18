@@ -252,11 +252,19 @@ class RunTelemetryOut(BaseModel):
     engine: list[EngineSampleOut]
     gpu: list[GpuSampleOut]
     # The devices that actually produced samples, so a client can build one series per
-    # device without scanning the whole payload first.
+    # device without scanning the whole payload first. Counted over the whole series,
+    # never over what a downsampled response happens to carry: a device that exists is
+    # listed even if the thinning were ever to drop its last sample.
     gpu_indices: list[int]
     # Present so a chart can say "no telemetry" rather than drawing an empty axis and
-    # leaving the reader to wonder whether the engine was idle.
+    # leaving the reader to wonder whether the engine was idle. This is what was
+    # *recorded*, not what was returned — compare it against the array lengths to know
+    # whether you are looking at all of it.
     sample_count: int
+    # 1 means the response is the complete series. Anything higher means every nth
+    # sample, per device, and is stated rather than inferred because a thinned series
+    # and a sparsely-sampled one look identical once they arrive.
+    stride: int = 1
 
 
 # ---------------------------------------------------------------------------
@@ -306,6 +314,47 @@ class SweepProgress(BaseModel):
         return self.succeeded + self.failed + self.cancelled
 
 
+class McpWriteAuditOut(BaseModel):
+    """One recorded write call from the MCP surface."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    called_at: dt.datetime
+    tool: str
+    client: str | None = None
+    arguments: dict[str, Any] = Field(default_factory=dict)
+    #: "succeeded", "refused" or "failed". Refused is a policy decision the surface made
+    #: and understood; failed is a bug. Reading the log back, conflating them hides both.
+    outcome: str
+    error: str | None = None
+    subject: str | None = None
+
+
+class DurationEstimateOut(BaseModel):
+    """How much longer a sweep has, and how much to trust that.
+
+    Structured rather than a single number of seconds because the two components behave
+    completely differently: benchmark time scales with the runs left, engine-load time
+    scales with the *config changes* left, and a plan with three configs remaining costs
+    minutes more than one with three runs of the same config. A caller shown only a total
+    cannot tell those apart, and neither can it tell a well-founded estimate from one
+    extrapolated off a single completed run.
+    """
+
+    runs_remaining: int = 0
+    engine_loads_remaining: int = 0
+    # Null means "not known", which is different from zero. Nothing here guesses: a
+    # fabricated countdown looks measured, and this project's whole posture is that a
+    # number nobody derived is worse than a number nobody has.
+    seconds_remaining: float | None = None
+    median_run_seconds: float | None = None
+    median_engine_load_seconds: float | None = None
+    basis: str = "none"
+    sample_size: int = 0
+    caveats: list[str] = Field(default_factory=list)
+
+
 class SweepOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -328,6 +377,10 @@ class SweepOut(BaseModel):
     # loading, so this is the number that predicts how long it will take — and the one
     # that makes the cost of interleaving replicates visible before committing to it.
     engine_starts: int = 0
+
+    # Present on sweeps that still have work to do. A terminal sweep reports zero
+    # remaining, which is a fact rather than an extrapolation.
+    estimated_remaining: DurationEstimateOut | None = None
 
 
 # ---------------------------------------------------------------------------

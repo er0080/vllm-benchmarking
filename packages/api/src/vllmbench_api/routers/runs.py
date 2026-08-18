@@ -9,10 +9,11 @@ work in flight (ROADMAP 0.4.0).
 from __future__ import annotations
 
 import uuid
+from typing import Annotated, Any
 
-from fastapi import APIRouter, HTTPException, status
-from sqlalchemy import select
-from sqlalchemy.orm import selectinload
+from fastapi import APIRouter, HTTPException, Query, status
+from sqlalchemy import Select, func, or_, select
+from sqlalchemy.orm import InstrumentedAttribute, aliased, selectinload
 
 from vllmbench_api.deps import SessionDep
 from vllmbench_api.hashing import config_hash, normalize_yaml, workload_hash
@@ -181,8 +182,66 @@ async def get_run(run_id: uuid.UUID, session: SessionDep) -> Run:
     return run
 
 
+def _stride(total: int, budget: int | None) -> int:
+    """How many samples to skip so that at most ``budget`` survive.
+
+    1 means "return everything", which is both the unasked-for case and the case where
+    the series is already shorter than the budget.
+    """
+    if budget is None or budget <= 0 or total <= budget:
+        return 1
+    return -(-total // budget)  # ceiling division
+
+
+def _thinned(
+    model: type[EngineSample] | type[GpuSample],
+    run_id: uuid.UUID,
+    stride: int,
+    partition: InstrumentedAttribute[int] | None,
+) -> Select[Any]:
+    """Select a series, keeping every ``stride``-th sample **within each partition**.
+
+    The partition is the load-bearing part. `gpu_sample` is keyed per device and stored
+    interleaved, so thinning the flat series takes every nth *row*, not every nth
+    *reading*: at stride 2 on a two-GPU host that is every sample from device 0 and none
+    at all from device 1. The result looks like a healthy single-device series, arrives
+    labelled with both devices, and is exactly the imbalance-destroying summary the
+    `gpu_sample` keying rule in CLAUDE.md exists to prevent.
+
+    The last sample of each partition is always kept. A run's final reading is the one
+    that says what state it ended in, and dropping it because the series length did not
+    divide evenly would silently move the end of the chart.
+    """
+    order = [model.sampled_at, *([partition] if partition is not None else [])]
+    if stride == 1:
+        return select(model).where(model.run_id == run_id).order_by(*order)
+
+    numbered = (
+        select(
+            model,
+            func.row_number().over(partition_by=partition, order_by=model.sampled_at).label("rn"),
+            func.count().over(partition_by=partition).label("total"),
+        )
+        .where(model.run_id == run_id)
+        .subquery()
+    )
+    entity = aliased(model, numbered)
+    keep = or_((numbered.c.rn - 1) % stride == 0, numbered.c.rn == numbered.c.total)
+    # Ordered off the subquery's columns rather than the alias's attributes, so this
+    # stays one code path for both models instead of needing to know which one it has.
+    entity_order = [
+        numbered.c.sampled_at,
+        *([numbered.c[partition.key]] if partition is not None else []),
+    ]
+    return select(entity).where(keep).order_by(*entity_order)
+
+
 @router.get("/runs/{run_id}/telemetry", response_model=RunTelemetryOut)
-async def get_run_telemetry(run_id: uuid.UUID, session: SessionDep) -> RunTelemetryOut:
+async def get_run_telemetry(
+    run_id: uuid.UUID,
+    session: SessionDep,
+    max_samples: Annotated[int | None, Query(ge=1)] = None,
+) -> RunTelemetryOut:
     """The engine and per-device series for one run.
 
     A separate endpoint rather than an expansion of the run payload: a long run can carry
@@ -193,26 +252,55 @@ async def get_run_telemetry(run_id: uuid.UUID, session: SessionDep) -> RunTeleme
     Per device, never aggregated here. One device at 60% while its peer sits at 95% is
     the finding; the mean of the two is not (invariant 8, and the `gpu_sample` keying
     rule in CLAUDE.md).
+
+    `max_samples` thins the response **in the database**, so a caller that wants two
+    hundred points out of fourteen thousand does not pay to load fourteen thousand. It
+    bounds each series: the engine series, and the GPU series as a whole — the per-device
+    budget is the total divided by the device count, so asking for less does not quietly
+    cost a device. Unset returns everything, which is what the timeline chart wants.
     """
     if await session.get(Run, run_id) is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="run not found")
 
+    engine_total = (
+        await session.scalar(
+            select(func.count()).select_from(EngineSample).where(EngineSample.run_id == run_id)
+        )
+    ) or 0
+
+    # Built by hand rather than with dict(rows.all()): a two-column Row resolves to
+    # dict's bytes overload, which type-checks and then fails at runtime.
+    per_device: dict[int, int] = {}
+    for index, count in (
+        await session.execute(
+            select(GpuSample.gpu_index, func.count())
+            .where(GpuSample.run_id == run_id)
+            .group_by(GpuSample.gpu_index)
+        )
+    ).all():
+        per_device[index] = count
+
+    # One stride across every device, taken from the busiest, rather than a stride each.
+    # Devices should produce the same number of samples but need not — a failed NVML
+    # read on one device is a real thing — and thinning them by different factors would
+    # put the two series on different time grids, which is the one thing that makes an
+    # imbalance unreadable.
+    #
+    # The device floor beats the budget: with a budget smaller than the device count,
+    # every device still returns a sample. Overshooting a context limit is recoverable;
+    # a device that silently is not there is not.
+    device_budget = (
+        max(1, max_samples // len(per_device)) if max_samples and per_device else max_samples
+    )
+    engine_stride = _stride(engine_total, max_samples)
+    gpu_stride = _stride(max(per_device.values(), default=0), device_budget)
+
     engine = list(
-        (
-            await session.execute(
-                select(EngineSample)
-                .where(EngineSample.run_id == run_id)
-                .order_by(EngineSample.sampled_at)
-            )
-        ).scalars()
+        (await session.execute(_thinned(EngineSample, run_id, engine_stride, None))).scalars()
     )
     gpu = list(
         (
-            await session.execute(
-                select(GpuSample)
-                .where(GpuSample.run_id == run_id)
-                .order_by(GpuSample.sampled_at, GpuSample.gpu_index)
-            )
+            await session.execute(_thinned(GpuSample, run_id, gpu_stride, GpuSample.gpu_index))
         ).scalars()
     )
 
@@ -220,6 +308,9 @@ async def get_run_telemetry(run_id: uuid.UUID, session: SessionDep) -> RunTeleme
         run_id=run_id,
         engine=[EngineSampleOut.model_validate(s) for s in engine],
         gpu=[GpuSampleOut.model_validate(s) for s in gpu],
-        gpu_indices=sorted({s.gpu_index for s in gpu}),
-        sample_count=len(engine) + len(gpu),
+        # From the counts, not from what came back. These are the devices that sampled,
+        # which is a fact about the run rather than about this response.
+        gpu_indices=sorted(per_device),
+        sample_count=engine_total + sum(per_device.values()),
+        stride=max(engine_stride, gpu_stride),
     )
