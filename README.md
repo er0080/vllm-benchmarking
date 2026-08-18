@@ -196,6 +196,7 @@ Open http://localhost:8080, register the GPU host, and author your first sweep.
 
 - [ROADMAP.md](ROADMAP.md) — milestones, scope, and definition of done for 1.0.0
 - [CLAUDE.md](CLAUDE.md) — architecture invariants and development conventions
+- [docs/agent-installation.md](docs/agent-installation.md) — installing, running and upgrading the agent on a GPU host
 - [docs/adr/](docs/adr/) — accepted architecture decisions and the alternatives they rejected
 - [docs/hardware-verification.md](docs/hardware-verification.md) — code paths built without a GPU and awaiting verification on real hardware
 - [vLLM Benchmark CLI](https://docs.vllm.ai/en/v0.25.1/benchmarking/cli/) — upstream reference
