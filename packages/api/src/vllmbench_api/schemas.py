@@ -314,6 +314,42 @@ class SweepProgress(BaseModel):
         return self.succeeded + self.failed + self.cancelled
 
 
+class ConfigValidationRequest(BaseModel):
+    """A candidate configuration, and optionally the machine it is meant for."""
+
+    yaml: str
+    #: When given, the checks that need to know the hardware are enabled and the host's
+    #: own vLLM version selects the argument catalogue. Without it the config is checked
+    #: in the abstract against the reference version, which is still worth doing and is
+    #: reported as such.
+    gpu_host_id: uuid.UUID | None = None
+    #: Whether a sweep will be rewriting `tensor-parallel-size` on this config, which
+    #: turns whatever is written there into something the engine never sees.
+    tensor_parallel_is_swept: bool = False
+
+
+class FindingOut(BaseModel):
+    #: "error" means vLLM will refuse to start. "warning" means it will start and may not
+    #: do what was meant — a distinction worth keeping, since the second kind is the one
+    #: that quietly produces a valid-looking result.
+    severity: str
+    message: str
+    key: str | None = None
+    line: int | None = None
+    #: Offered, never applied. Invariant 5 says validate, do not transform.
+    suggestion: str | None = None
+
+
+class ConfigValidationOut(BaseModel):
+    valid: bool
+    findings: list[FindingOut] = Field(default_factory=list)
+    #: The vLLM version whose arguments were used. Stated because validating against a
+    #: different version than the target runs is normal here, and changes what a clean
+    #: result means.
+    checked_against: str
+    exact_version_match: bool = True
+
+
 class McpWriteAuditOut(BaseModel):
     """One recorded write call from the MCP surface."""
 

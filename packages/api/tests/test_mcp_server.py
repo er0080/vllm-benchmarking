@@ -711,3 +711,34 @@ async def test_the_log_is_readable_and_filterable() -> None:
     # the only view of an agent that has been asking for something it cannot have.
     assert [row["tool"] for row in refused] == ["create_sweep"]
     assert refused[0]["outcome"] == "refused"
+
+
+async def test_validate_config_is_available_and_reads_only() -> None:
+    """The tool an agent should reach for before spending an hour of GPU time.
+
+    Registered as a read tool, not a write one: it stores nothing, so it stays available
+    on a control plane with writes switched off — which is exactly the configuration
+    where an agent most needs to check a config it cannot create.
+    """
+    await _empty_database()
+
+    async with _app(mcp_write_enabled=False) as app:
+        async with _client(app) as session:
+            assert "validate_config" in {t.name for t in (await session.list_tools()).tools}
+
+            good = await session.call_tool(
+                "validate_config", {"yaml": "model: Qwen/Qwen3.5-9B\ntensor-parallel-size: 1\n"}
+            )
+            bad = await session.call_tool("validate_config", {"yaml": "model: m\ndtype: fp16\n"})
+
+    assert good.structured_content is not None and good.structured_content["valid"] is True
+    assert bad.structured_content is not None and bad.structured_content["valid"] is False
+    (finding,) = bad.structured_content["findings"]
+    assert finding["key"] == "dtype"
+    assert finding["severity"] == "error"
+    # The accepted values come from a captured parser, so the advice cannot drift from
+    # what the engine actually takes.
+    assert "`float16`" in finding["message"]
+
+    # And it left nothing behind — including no audit row, since it is not a write.
+    assert await _audit_rows() == []

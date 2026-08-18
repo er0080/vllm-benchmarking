@@ -1,0 +1,1996 @@
+{
+  "arguments": {
+    "additional-config": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "union_dict_and_str"
+    },
+    "aggregate-engine-logging": {
+      "aliases": [],
+      "choices": null,
+      "nargs": 0,
+      "type": "bool"
+    },
+    "all2all-backend": {
+      "aliases": [],
+      "choices": [
+        "allgather_reducescatter",
+        "deepep_high_throughput",
+        "deepep_low_latency",
+        "deepep_v2",
+        "flashinfer_all2allv",
+        "flashinfer_nvlink_one_sided",
+        "flashinfer_nvlink_two_sided",
+        "mori_high_throughput",
+        "mori_low_latency",
+        "naive",
+        "nixl_ep",
+        "pplx"
+      ],
+      "nargs": null,
+      "type": "str"
+    },
+    "allow-credentials": {
+      "aliases": [
+        "no-allow-credentials"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "allow-deprecated-quantization": {
+      "aliases": [
+        "no-allow-deprecated-quantization"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "allowed-headers": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "loads"
+    },
+    "allowed-local-media-path": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "str"
+    },
+    "allowed-media-domains": {
+      "aliases": [],
+      "choices": null,
+      "nargs": "+",
+      "type": "str"
+    },
+    "allowed-methods": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "loads"
+    },
+    "allowed-origins": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "loads"
+    },
+    "api-key": {
+      "aliases": [],
+      "choices": null,
+      "nargs": "+",
+      "type": "str"
+    },
+    "api-server-count": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "int"
+    },
+    "async-scheduling": {
+      "aliases": [
+        "no-async-scheduling"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "attention-backend": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "str"
+    },
+    "attention-config": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "parse_dataclass"
+    },
+    "block-size": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "int"
+    },
+    "calculate-kv-scales": {
+      "aliases": [
+        "no-calculate-kv-scales"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "chat-template": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "str"
+    },
+    "chat-template-content-format": {
+      "aliases": [],
+      "choices": [
+        "auto",
+        "openai",
+        "string"
+      ],
+      "nargs": null,
+      "type": "str"
+    },
+    "code-revision": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "str"
+    },
+    "collect-detailed-traces": {
+      "aliases": [],
+      "choices": [
+        "None",
+        "all",
+        "all,model",
+        "all,worker",
+        "model",
+        "model,all",
+        "model,worker",
+        "worker",
+        "worker,all",
+        "worker,model"
+      ],
+      "nargs": "+",
+      "type": "str"
+    },
+    "compilation-config": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "parse_dataclass"
+    },
+    "config": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "str"
+    },
+    "config-format": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "str"
+    },
+    "convert": {
+      "aliases": [],
+      "choices": [
+        "auto",
+        "classify",
+        "embed",
+        "none"
+      ],
+      "nargs": null,
+      "type": "str"
+    },
+    "cp-kv-cache-interleave-size": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "int"
+    },
+    "cpu-distributed-timeout-seconds": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "int"
+    },
+    "cpu-offload-gb": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "float"
+    },
+    "cpu-offload-params": {
+      "aliases": [],
+      "choices": null,
+      "nargs": "+",
+      "type": "str"
+    },
+    "cudagraph-capture-sizes": {
+      "aliases": [],
+      "choices": null,
+      "nargs": "+",
+      "type": "int"
+    },
+    "cudagraph-metrics": {
+      "aliases": [
+        "no-cudagraph-metrics"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "data-parallel-address": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "str"
+    },
+    "data-parallel-backend": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "str"
+    },
+    "data-parallel-external-lb": {
+      "aliases": [
+        "no-data-parallel-external-lb"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "data-parallel-hybrid-lb": {
+      "aliases": [
+        "no-data-parallel-hybrid-lb"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "data-parallel-multi-port-external-lb": {
+      "aliases": [],
+      "choices": null,
+      "nargs": 0,
+      "type": "bool"
+    },
+    "data-parallel-rank": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "int"
+    },
+    "data-parallel-rpc-port": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "int"
+    },
+    "data-parallel-size": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "int"
+    },
+    "data-parallel-size-local": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "int"
+    },
+    "data-parallel-start-rank": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "int"
+    },
+    "data-parallel-supervisor-port": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "int"
+    },
+    "dbo-decode-token-threshold": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "int"
+    },
+    "dbo-prefill-token-threshold": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "int"
+    },
+    "dcp-comm-backend": {
+      "aliases": [],
+      "choices": [
+        "a2a",
+        "ag_rs"
+      ],
+      "nargs": null,
+      "type": "str"
+    },
+    "dcp-kv-cache-interleave-size": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "int"
+    },
+    "decode-context-parallel-size": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "int"
+    },
+    "default-chat-template-kwargs": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "loads"
+    },
+    "default-mm-loras": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "_parse_type"
+    },
+    "device-ids": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "<lambda>"
+    },
+    "diffusion-config": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "loads"
+    },
+    "disable-access-log-for-endpoints": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "str"
+    },
+    "disable-cascade-attn": {
+      "aliases": [
+        "no-disable-cascade-attn"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "disable-chunked-mm-input": {
+      "aliases": [
+        "no-disable-chunked-mm-input"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "disable-custom-all-reduce": {
+      "aliases": [
+        "no-disable-custom-all-reduce"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "disable-fastapi-docs": {
+      "aliases": [
+        "no-disable-fastapi-docs"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "disable-hybrid-kv-cache-manager": {
+      "aliases": [
+        "no-disable-hybrid-kv-cache-manager"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "disable-log-stats": {
+      "aliases": [],
+      "choices": null,
+      "nargs": 0,
+      "type": "bool"
+    },
+    "disable-nccl-for-dp-synchronization": {
+      "aliases": [
+        "no-disable-nccl-for-dp-synchronization"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "disable-sliding-window": {
+      "aliases": [
+        "no-disable-sliding-window"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "disable-uvicorn-access-log": {
+      "aliases": [
+        "no-disable-uvicorn-access-log"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "distributed-executor-backend": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "str"
+    },
+    "distributed-timeout-seconds": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "int"
+    },
+    "download-dir": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "str"
+    },
+    "dp-supervisor-probe-failure-threshold": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "int"
+    },
+    "dp-supervisor-probe-interval-s": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "float"
+    },
+    "dp-supervisor-probe-timeout-s": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "float"
+    },
+    "dtype": {
+      "aliases": [],
+      "choices": [
+        "auto",
+        "bfloat16",
+        "float",
+        "float16",
+        "float32",
+        "half"
+      ],
+      "nargs": null,
+      "type": "str"
+    },
+    "ec-transfer-config": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "parse_dataclass"
+    },
+    "enable-auto-tool-choice": {
+      "aliases": [
+        "no-enable-auto-tool-choice"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "enable-chunked-prefill": {
+      "aliases": [
+        "no-enable-chunked-prefill"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "enable-cumem-allocator": {
+      "aliases": [
+        "no-enable-cumem-allocator"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "enable-dbo": {
+      "aliases": [
+        "no-enable-dbo"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "enable-elastic-ep": {
+      "aliases": [
+        "no-enable-elastic-ep"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "enable-ep-weight-filter": {
+      "aliases": [
+        "no-enable-ep-weight-filter"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "enable-eplb": {
+      "aliases": [
+        "no-enable-eplb"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "enable-expert-parallel": {
+      "aliases": [
+        "no-enable-expert-parallel"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "enable-flash-late-interaction": {
+      "aliases": [
+        "no-enable-flash-late-interaction"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "enable-flashinfer-autotune": {
+      "aliases": [
+        "no-enable-flashinfer-autotune"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "enable-force-include-usage": {
+      "aliases": [
+        "no-enable-force-include-usage"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "enable-layerwise-nvtx-tracing": {
+      "aliases": [
+        "no-enable-layerwise-nvtx-tracing"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "enable-log-deltas": {
+      "aliases": [
+        "no-enable-log-deltas"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "enable-log-outputs": {
+      "aliases": [
+        "no-enable-log-outputs"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "enable-log-requests": {
+      "aliases": [
+        "no-enable-log-requests"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "enable-logging-iteration-details": {
+      "aliases": [
+        "no-enable-logging-iteration-details"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "enable-lora": {
+      "aliases": [
+        "no-enable-lora"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "enable-mamba-cache-stochastic-rounding": {
+      "aliases": [
+        "no-enable-mamba-cache-stochastic-rounding"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "enable-mfu-metrics": {
+      "aliases": [
+        "no-enable-mfu-metrics"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "enable-mixed-moe-lora-format": {
+      "aliases": [
+        "no-enable-mixed-moe-lora-format"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "enable-mm-embeds": {
+      "aliases": [
+        "no-enable-mm-embeds"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "enable-offline-docs": {
+      "aliases": [
+        "no-enable-offline-docs"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "enable-per-request-metrics": {
+      "aliases": [
+        "no-enable-per-request-metrics"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "enable-prefix-caching": {
+      "aliases": [
+        "no-enable-prefix-caching"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "enable-prompt-embeds": {
+      "aliases": [
+        "no-enable-prompt-embeds"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "enable-prompt-tokens-details": {
+      "aliases": [
+        "no-enable-prompt-tokens-details"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "enable-request-id-headers": {
+      "aliases": [
+        "no-enable-request-id-headers"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "enable-return-routed-experts": {
+      "aliases": [
+        "no-enable-return-routed-experts"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "enable-server-load-tracking": {
+      "aliases": [
+        "no-enable-server-load-tracking"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "enable-sleep-mode": {
+      "aliases": [
+        "no-enable-sleep-mode"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "enable-ssl-refresh": {
+      "aliases": [
+        "no-enable-ssl-refresh"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "enable-tokenizer-info-endpoint": {
+      "aliases": [
+        "no-enable-tokenizer-info-endpoint"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "enable-tower-connector-lora": {
+      "aliases": [
+        "no-enable-tower-connector-lora"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "enforce-eager": {
+      "aliases": [
+        "no-enforce-eager"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "eplb-config": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "parse_dataclass"
+    },
+    "exclude-tools-when-tool-choice-none": {
+      "aliases": [
+        "no-exclude-tools-when-tool-choice-none"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "expert-placement-strategy": {
+      "aliases": [],
+      "choices": [
+        "linear",
+        "round_robin"
+      ],
+      "nargs": null,
+      "type": "str"
+    },
+    "fail-on-environ-validation": {
+      "aliases": [
+        "no-fail-on-environ-validation"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "fingerprint-mode": {
+      "aliases": [],
+      "choices": [
+        "custom",
+        "full",
+        "hash",
+        "none"
+      ],
+      "nargs": null,
+      "type": "str"
+    },
+    "fingerprint-value": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "str"
+    },
+    "fully-sharded-loras": {
+      "aliases": [
+        "no-fully-sharded-loras"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "gdn-prefill-backend": {
+      "aliases": [],
+      "choices": [
+        "cutedsl",
+        "flashinfer",
+        "triton"
+      ],
+      "nargs": null,
+      "type": "str"
+    },
+    "generation-config": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "str"
+    },
+    "gpu-memory-utilization": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "float"
+    },
+    "grpc": {
+      "aliases": [],
+      "choices": null,
+      "nargs": 0,
+      "type": "bool"
+    },
+    "h11-max-header-count": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "int"
+    },
+    "h11-max-incomplete-event-size": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "int"
+    },
+    "headless": {
+      "aliases": [],
+      "choices": null,
+      "nargs": 0,
+      "type": "bool"
+    },
+    "hf-config-path": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "str"
+    },
+    "hf-overrides": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "union_dict_and_str"
+    },
+    "hf-token": {
+      "aliases": [],
+      "choices": null,
+      "nargs": "?",
+      "type": "str"
+    },
+    "host": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "str"
+    },
+    "ignore-patterns": {
+      "aliases": [],
+      "choices": null,
+      "nargs": "+",
+      "type": "str"
+    },
+    "interleave-mm-strings": {
+      "aliases": [
+        "no-interleave-mm-strings"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "io-processor-plugin": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "str"
+    },
+    "ir-op-priority": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "parse_dataclass"
+    },
+    "jit-monitor-mode": {
+      "aliases": [],
+      "choices": [
+        "error",
+        "warn"
+      ],
+      "nargs": null,
+      "type": "str"
+    },
+    "jit-monitor-verbose": {
+      "aliases": [
+        "no-jit-monitor-verbose"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "kernel-config": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "parse_dataclass"
+    },
+    "kv-cache-dtype": {
+      "aliases": [],
+      "choices": [
+        "auto",
+        "bfloat16",
+        "float16",
+        "fp8",
+        "fp8_ds_mla",
+        "fp8_e4m3",
+        "fp8_e5m2",
+        "fp8_inc",
+        "fp8_per_token_head",
+        "int4_per_token_head",
+        "int8_per_token_head",
+        "nvfp4",
+        "turboquant_3bit_nc",
+        "turboquant_4bit_nc",
+        "turboquant_k3v4_nc",
+        "turboquant_k8v4"
+      ],
+      "nargs": null,
+      "type": "str"
+    },
+    "kv-cache-dtype-skip-layers": {
+      "aliases": [],
+      "choices": null,
+      "nargs": "+",
+      "type": "str"
+    },
+    "kv-cache-memory-bytes": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "human_readable_int"
+    },
+    "kv-cache-metrics": {
+      "aliases": [
+        "no-kv-cache-metrics"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "kv-cache-metrics-sample": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "float"
+    },
+    "kv-events-config": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "parse_dataclass"
+    },
+    "kv-offloading-backend": {
+      "aliases": [],
+      "choices": [
+        "lmcache",
+        "native"
+      ],
+      "nargs": null,
+      "type": "str"
+    },
+    "kv-offloading-size": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "float"
+    },
+    "kv-sharing-fast-prefill": {
+      "aliases": [
+        "no-kv-sharing-fast-prefill"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "kv-transfer-config": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "parse_dataclass"
+    },
+    "language-model-only": {
+      "aliases": [
+        "no-language-model-only"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "limit-mm-per-prompt": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "_parse_type"
+    },
+    "linear-backend": {
+      "aliases": [],
+      "choices": [
+        "aiter",
+        "auto",
+        "conch",
+        "cutlass",
+        "deep_gemm",
+        "emulation",
+        "exllama",
+        "fbgemm",
+        "flashinfer_b12x",
+        "flashinfer_cudnn",
+        "flashinfer_cutedsl",
+        "flashinfer_cutlass",
+        "flashinfer_trtllm",
+        "humming",
+        "machete",
+        "marlin",
+        "torch",
+        "triton",
+        "xpu",
+        "xpu_woq"
+      ],
+      "nargs": null,
+      "type": "<lambda>"
+    },
+    "load-format": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "str"
+    },
+    "log-config-file": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "str"
+    },
+    "log-error-stack": {
+      "aliases": [
+        "no-log-error-stack"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "logits-processors": {
+      "aliases": [],
+      "choices": null,
+      "nargs": "+",
+      "type": "str"
+    },
+    "logprobs-mode": {
+      "aliases": [],
+      "choices": [
+        "processed_logits",
+        "processed_logprobs",
+        "raw_logits",
+        "raw_logprobs"
+      ],
+      "nargs": null,
+      "type": "str"
+    },
+    "long-prefill-token-threshold": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "int"
+    },
+    "lora-dtype": {
+      "aliases": [],
+      "choices": [
+        "auto",
+        "bfloat16",
+        "float16"
+      ],
+      "nargs": null,
+      "type": "str"
+    },
+    "lora-modules": {
+      "aliases": [],
+      "choices": null,
+      "nargs": "+",
+      "type": "str"
+    },
+    "lora-target-modules": {
+      "aliases": [],
+      "choices": null,
+      "nargs": "+",
+      "type": "str"
+    },
+    "mamba-backend": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "str"
+    },
+    "mamba-block-size": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "int"
+    },
+    "mamba-cache-dtype": {
+      "aliases": [],
+      "choices": [
+        "auto",
+        "bfloat16",
+        "float16",
+        "float32"
+      ],
+      "nargs": null,
+      "type": "str"
+    },
+    "mamba-cache-mode": {
+      "aliases": [],
+      "choices": [
+        "align",
+        "all",
+        "none"
+      ],
+      "nargs": null,
+      "type": "str"
+    },
+    "mamba-cache-philox-rounds": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "int"
+    },
+    "mamba-ssm-cache-dtype": {
+      "aliases": [],
+      "choices": [
+        "auto",
+        "bfloat16",
+        "float16",
+        "float32"
+      ],
+      "nargs": null,
+      "type": "str"
+    },
+    "master-addr": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "str"
+    },
+    "master-port": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "int"
+    },
+    "max-cpu-loras": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "int"
+    },
+    "max-cudagraph-capture-size": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "int"
+    },
+    "max-log-len": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "int"
+    },
+    "max-logprobs": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "int"
+    },
+    "max-long-partial-prefills": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "int"
+    },
+    "max-lora-rank": {
+      "aliases": [],
+      "choices": [
+        "1",
+        "128",
+        "16",
+        "256",
+        "32",
+        "320",
+        "512",
+        "64",
+        "8"
+      ],
+      "nargs": null,
+      "type": "int"
+    },
+    "max-loras": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "int"
+    },
+    "max-model-len": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "human_readable_int_or_auto"
+    },
+    "max-num-batched-tokens": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "human_readable_int"
+    },
+    "max-num-partial-prefills": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "int"
+    },
+    "max-num-seqs": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "int"
+    },
+    "max-parallel-loading-workers": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "int"
+    },
+    "media-io-kwargs": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "_parse_type"
+    },
+    "middleware": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "str"
+    },
+    "mm-encoder-attn-backend": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "str"
+    },
+    "mm-encoder-attn-dtype": {
+      "aliases": [],
+      "choices": [
+        "None",
+        "fp8"
+      ],
+      "nargs": null,
+      "type": "str"
+    },
+    "mm-encoder-fp8-scale-path": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "str"
+    },
+    "mm-encoder-fp8-scale-save-margin": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "float"
+    },
+    "mm-encoder-fp8-scale-save-path": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "str"
+    },
+    "mm-encoder-only": {
+      "aliases": [
+        "no-mm-encoder-only"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "mm-encoder-tp-mode": {
+      "aliases": [],
+      "choices": [
+        "data",
+        "weights"
+      ],
+      "nargs": null,
+      "type": "str"
+    },
+    "mm-ipc-gpu-memory-gb": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "float"
+    },
+    "mm-processor-cache-gb": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "float"
+    },
+    "mm-processor-cache-type": {
+      "aliases": [],
+      "choices": [
+        "lru",
+        "shm"
+      ],
+      "nargs": null,
+      "type": "str"
+    },
+    "mm-processor-kwargs": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "_parse_type"
+    },
+    "mm-shm-cache-max-object-size-mb": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "int"
+    },
+    "mm-tensor-ipc": {
+      "aliases": [],
+      "choices": [
+        "direct_rpc",
+        "torch_shm"
+      ],
+      "nargs": null,
+      "type": "str"
+    },
+    "model": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "str"
+    },
+    "model-class-overrides": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "_parse_type"
+    },
+    "model-impl": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "str"
+    },
+    "model-loader-extra-config": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "union_dict_and_str"
+    },
+    "moe-backend": {
+      "aliases": [],
+      "choices": [
+        "aiter",
+        "auto",
+        "cutlass",
+        "deep_gemm",
+        "deep_gemm_mega_moe",
+        "emulation",
+        "flashinfer_b12x",
+        "flashinfer_cutedsl",
+        "flashinfer_cutlass",
+        "flashinfer_trtllm",
+        "flydsl",
+        "hpc",
+        "humming",
+        "marlin",
+        "triton",
+        "triton_unfused"
+      ],
+      "nargs": null,
+      "type": "<lambda>"
+    },
+    "nnodes": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "int"
+    },
+    "node-rank": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "int"
+    },
+    "num-gpu-blocks-override": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "int"
+    },
+    "numa-bind": {
+      "aliases": [
+        "no-numa-bind"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "numa-bind-cpus": {
+      "aliases": [],
+      "choices": null,
+      "nargs": "+",
+      "type": "str"
+    },
+    "numa-bind-nodes": {
+      "aliases": [],
+      "choices": null,
+      "nargs": "+",
+      "type": "int"
+    },
+    "offload-backend": {
+      "aliases": [],
+      "choices": [
+        "auto",
+        "prefetch",
+        "uva"
+      ],
+      "nargs": null,
+      "type": "str"
+    },
+    "offload-group-size": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "int"
+    },
+    "offload-num-in-group": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "int"
+    },
+    "offload-params": {
+      "aliases": [],
+      "choices": null,
+      "nargs": "+",
+      "type": "str"
+    },
+    "offload-prefetch-step": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "int"
+    },
+    "optimization-level": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "str"
+    },
+    "otlp-traces-endpoint": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "str"
+    },
+    "override-attention-dtype": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "str"
+    },
+    "override-generation-config": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "_parse_type"
+    },
+    "performance-mode": {
+      "aliases": [],
+      "choices": [
+        "balanced",
+        "interactivity",
+        "throughput"
+      ],
+      "nargs": null,
+      "type": "str"
+    },
+    "pipeline-parallel-size": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "int"
+    },
+    "pooler-config": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "parse_dataclass"
+    },
+    "port": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "int"
+    },
+    "prefill-context-parallel-size": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "int"
+    },
+    "prefill-schedule-interval": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "int"
+    },
+    "prefix-caching-hash-algo": {
+      "aliases": [],
+      "choices": [
+        "sha256",
+        "sha256_cbor",
+        "xxhash",
+        "xxhash_cbor"
+      ],
+      "nargs": null,
+      "type": "str"
+    },
+    "profiler-config": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "parse_dataclass"
+    },
+    "pt-load-map-location": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "union_dict_and_str"
+    },
+    "quantization": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "str"
+    },
+    "quantization-config": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "parse_dataclass"
+    },
+    "ray-workers-use-nsight": {
+      "aliases": [
+        "no-ray-workers-use-nsight"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "reasoning-config": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "parse_dataclass"
+    },
+    "reasoning-parser": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "str"
+    },
+    "reasoning-parser-plugin": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "str"
+    },
+    "renderer-num-workers": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "int"
+    },
+    "response-role": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "str"
+    },
+    "return-tokens-as-token-ids": {
+      "aliases": [
+        "no-return-tokens-as-token-ids"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "revision": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "str"
+    },
+    "root-path": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "str"
+    },
+    "runner": {
+      "aliases": [],
+      "choices": [
+        "auto",
+        "draft",
+        "generate",
+        "pooling"
+      ],
+      "nargs": null,
+      "type": "str"
+    },
+    "safetensors-load-strategy": {
+      "aliases": [],
+      "choices": [
+        "None",
+        "eager",
+        "lazy",
+        "prefetch",
+        "torchao"
+      ],
+      "nargs": null,
+      "type": "str"
+    },
+    "safetensors-prefetch-block-size": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "human_readable_int"
+    },
+    "safetensors-prefetch-num-threads": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "int"
+    },
+    "scheduler-cls": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "str"
+    },
+    "scheduler-reserve-full-isl": {
+      "aliases": [
+        "no-scheduler-reserve-full-isl"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "scheduling-policy": {
+      "aliases": [],
+      "choices": [
+        "fcfs",
+        "priority"
+      ],
+      "nargs": null,
+      "type": "str"
+    },
+    "seed": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "int"
+    },
+    "served-model-name": {
+      "aliases": [],
+      "choices": null,
+      "nargs": "+",
+      "type": "str"
+    },
+    "show-hidden-metrics-for-version": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "str"
+    },
+    "shutdown-timeout": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "int"
+    },
+    "skip-mm-profiling": {
+      "aliases": [
+        "no-skip-mm-profiling"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "skip-tokenizer-init": {
+      "aliases": [
+        "no-skip-tokenizer-init"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "spec-method": {
+      "aliases": [],
+      "choices": [
+        "None",
+        "bailing_hybrid_mtp",
+        "custom_class",
+        "deepseek_mtp",
+        "dflash",
+        "draft_model",
+        "dspark",
+        "eagle",
+        "eagle3",
+        "ernie_mtp",
+        "exaone4_5_mtp",
+        "exaone_moe_mtp",
+        "extract_hidden_states",
+        "gemma4_mtp",
+        "glm4_moe_lite_mtp",
+        "glm4_moe_mtp",
+        "glm_ocr_mtp",
+        "hy_v3_mtp",
+        "longcat_flash_mtp",
+        "medusa",
+        "mimo_mtp",
+        "mimo_v2_mtp",
+        "minimax_m3_mtp",
+        "mlp_speculator",
+        "mtp",
+        "nemotron_h_mtp",
+        "ngram",
+        "ngram_gpu",
+        "pangu_ultra_moe_mtp",
+        "qwen3_5_mtp",
+        "qwen3_next_mtp",
+        "step3p5_mtp",
+        "suffix"
+      ],
+      "nargs": null,
+      "type": "str"
+    },
+    "spec-model": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "str"
+    },
+    "spec-tokens": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "int"
+    },
+    "specialize-active-lora": {
+      "aliases": [
+        "no-specialize-active-lora"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "speculative-config": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "loads"
+    },
+    "ssl-ca-certs": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "str"
+    },
+    "ssl-cert-reqs": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "int"
+    },
+    "ssl-certfile": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "str"
+    },
+    "ssl-ciphers": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "str"
+    },
+    "ssl-keyfile": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "str"
+    },
+    "stream-interval": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "int"
+    },
+    "structured-outputs-config": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "parse_dataclass"
+    },
+    "tensor-parallel-size": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "int"
+    },
+    "tokenizer": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "str"
+    },
+    "tokenizer-mode": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "str"
+    },
+    "tokenizer-revision": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "str"
+    },
+    "tokens-only": {
+      "aliases": [
+        "no-tokens-only"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "tool-call-parser": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "str"
+    },
+    "tool-parser-plugin": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "str"
+    },
+    "tool-server": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "str"
+    },
+    "trust-remote-code": {
+      "aliases": [
+        "no-trust-remote-code"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "trust-request-chat-template": {
+      "aliases": [
+        "no-trust-request-chat-template"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "ubatch-size": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "int"
+    },
+    "uds": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "str"
+    },
+    "use-fp64-gumbel": {
+      "aliases": [
+        "no-use-fp64-gumbel"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "use-tqdm-on-load": {
+      "aliases": [
+        "no-use-tqdm-on-load"
+      ],
+      "choices": null,
+      "nargs": 0,
+      "type": "str"
+    },
+    "uvicorn-log-level": {
+      "aliases": [],
+      "choices": [
+        "critical",
+        "debug",
+        "error",
+        "info",
+        "trace",
+        "warning"
+      ],
+      "nargs": null,
+      "type": "str"
+    },
+    "video-pruning-rate": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "float"
+    },
+    "watermark": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "float"
+    },
+    "weight-transfer-config": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "parse_dataclass"
+    },
+    "worker-cls": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "str"
+    },
+    "worker-extension-cls": {
+      "aliases": [],
+      "choices": null,
+      "nargs": null,
+      "type": "str"
+    }
+  },
+  "vllm_version": "0.25.1"
+}

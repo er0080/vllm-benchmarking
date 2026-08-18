@@ -48,6 +48,7 @@ from vllmbench_api.routers import sweeps as sweep_routes
 from vllmbench_api.schemas import (
     AnalysisOut,
     ConfigCreate,
+    ConfigValidationRequest,
     DurationEstimateOut,
     PointOut,
     RunOut,
@@ -574,6 +575,38 @@ def build_mcp_server(sessions: async_sessionmaker[Any], settings: ApiSettings) -
         async with sessions() as session:
             result = await analysis_routes.analysis_compare(
                 session, left=left, right=right, source=_source(source)
+            )
+            return result.model_dump(mode="json")
+
+    @tool
+    async def validate_config(
+        yaml: str,
+        gpu_host_id: str | None = None,
+        tensor_parallel_is_swept: bool = False,
+    ) -> dict[str, Any]:
+        """Check a configuration before committing GPU time to it.
+
+        Reads only — nothing is stored and nothing is rewritten. Every finding names the
+        setting at fault and says what is wrong with it; the fix stays with you.
+
+        Pass `gpu_host_id` to check against that host's own vLLM version and device
+        count. Without it the config is checked in the abstract against the reference
+        version, and the topology checks are skipped rather than guessed at.
+
+        `severity` matters: "error" means `vllm serve` will refuse to start, "warning"
+        means it will start and may not do what you meant. `checked_against` names the
+        vLLM version whose arguments were used, and `exact_version_match` is false when
+        the target host runs something this control plane has no capture for — the result
+        is still useful, but an unknown setting may be one that version added.
+        """
+        async with sessions() as session:
+            result = await run_routes.validate_config_endpoint(
+                ConfigValidationRequest(
+                    yaml=yaml,
+                    gpu_host_id=uuid.UUID(gpu_host_id) if gpu_host_id else None,
+                    tensor_parallel_is_swept=tensor_parallel_is_swept,
+                ),
+                session,
             )
             return result.model_dump(mode="json")
 
