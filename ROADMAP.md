@@ -269,11 +269,12 @@ produced inside it can be handed to someone who does not run it.
 
 ## 0.9.0 — Hardening
 
-Process rigor steps up here too: from this milestone every PR traces to a labeled,
-milestoned issue. Through 0.8.0 issues are optional, favoring iteration speed while the
-architecture is still moving.
+Still inside the relaxed-process window, deliberately: this milestone defines the
+behavior of every failure mode and settles the schema, which is design work done by
+discovering what breaks. Making each discovery cost an issue first is what that phase is
+least able to afford. Rationale still lands in PR bodies and `docs/adr/` as it has all
+along — see CLAUDE.md.
 
-- [ ] Issue-driven change management in effect — see CLAUDE.md
 - [ ] Schema stabilized; forward-only migrations from here
 - [ ] Failure handling: agent unreachable, vLLM OOM, model load failure, benchmark timeout
 - [ ] Disk and retention management for raw results and logs
@@ -289,6 +290,12 @@ test.
 
 ## 0.10.0 — Release candidate
 
+Process rigor steps up here: from this milestone every PR traces to a labeled, milestoned
+issue, cross-linked with closing keywords. The schema is stable, the failure modes have
+defined behavior, and what remains is verification against a fixed target — so a change is
+now a candidate for release rather than a step toward one. See CLAUDE.md.
+
+- [ ] Issue-driven change management in effect — see CLAUDE.md
 - [ ] Quick start verified from a clean control host and a clean GPU host
 - [ ] Agent installation guide
 - [ ] Tuning playbook: how to read the charts and what to change next
