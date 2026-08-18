@@ -18,7 +18,7 @@ from dataclasses import dataclass, replace
 from functools import lru_cache
 from typing import Annotated, Any, TypeVar
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, Response, status
 from sqlalchemy import Select, func, select
 
 from vllmbench_api.analysis import (
@@ -44,6 +44,7 @@ from vllmbench_api.analysis import (
     spread_note,
 )
 from vllmbench_api.deps import SessionDep
+from vllmbench_api.export import analysis_columns, analysis_rows, filename, to_csv
 from vllmbench_api.hashing import config_hash
 from vllmbench_api.schemas import (
     AnalysisOut,
@@ -780,4 +781,61 @@ async def analysis_compare(
             # A metric neither side measured is left out rather than shown as two dashes.
             if left_value is not None or right_value is not None
         ],
+    )
+
+
+@router.get("/export")
+async def analysis_export(
+    session: SessionDep,
+    fmt: Annotated[str, Query(alias="format", pattern="^(csv|json)$")] = "csv",
+    source: RunSource = RunSource.REAL,
+    host_id: uuid.UUID | None = None,
+    sweep_id: Annotated[list[uuid.UUID] | None, Query()] = None,
+    config_hash: Annotated[list[str] | None, Query()] = None,
+    workload_hash: Annotated[list[str] | None, Query()] = None,
+    tensor_parallel_size: Annotated[list[int] | None, Query()] = None,
+    vllm_version: Annotated[list[str] | None, Query()] = None,
+    since: dt.datetime | None = None,
+    limit: int = DEFAULT_RUN_LIMIT,
+) -> Response:
+    """The current result set as a file.
+
+    Takes the same filters as `/points` and exports exactly what they select, so what
+    lands in the file is what was on screen. A separate query shape would eventually
+    disagree with the charts, and an export that disagrees with the chart it was taken
+    from is worse than none.
+
+    Every row carries its full provenance and its population, because a file is where a
+    result goes to be read by someone who cannot see the filters that produced it
+    (invariants 6 and 7). CSV additionally carries each metric's observed range beside its
+    median: a difference smaller than a point's own spread is not a result, and a lone
+    median gives a reader no way to know that.
+    """
+    analysis = await analysis_points(
+        session,
+        source=source,
+        host_id=host_id,
+        sweep_id=sweep_id,
+        config_hash=config_hash,
+        workload_hash=workload_hash,
+        tensor_parallel_size=tensor_parallel_size,
+        vllm_version=vllm_version,
+        since=since,
+        limit=limit,
+    )
+
+    if fmt == "json":
+        # The analysis payload verbatim, groups intact. JSON can represent the grouping
+        # that CSV has to flatten, so it keeps it rather than pre-flattening for parity.
+        body = analysis.model_dump_json(indent=2)
+        media_type = "application/json"
+    else:
+        body = to_csv(analysis_columns(), analysis_rows(analysis))
+        media_type = "text/csv"
+
+    name = filename("analysis", source.value, "json" if fmt == "json" else "csv")
+    return Response(
+        content=body,
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{name}"'},
     )

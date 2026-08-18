@@ -250,8 +250,11 @@ production unchanged.
 ## 0.8.0 — Interop
 
 - [ ] Importer for upstream `vllm bench sweep serve` output directories
-- [ ] CSV and JSON export of any result set
-- [ ] Shareable run and sweep reports
+- [x] CSV and JSON export of any result set — same filters as the charts, so the file
+      matches the screen, and every row carries its own provenance and population because
+      a file is read by people who cannot see the filters that produced it
+- [x] Shareable run and sweep reports — the same markdown the MCP resource serves, so
+      the two cannot come to disagree about what a sweep measured
 - [ ] Standard work documentation: repeatable benchmark procedure in `docs/`
 
 **Done when:** results produced outside this framework can be loaded into it, and results
