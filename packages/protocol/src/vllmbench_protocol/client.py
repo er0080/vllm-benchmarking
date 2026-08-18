@@ -83,18 +83,24 @@ class AgentClient:
         if self._owns_client:
             await self._client.aclose()
 
+    def _unreachable(self, exc: httpx.HTTPError) -> AgentUnreachable:
+        # httpx raises several of these with no message — a connect timeout carries the
+        # empty string — so fall back to the class name, which at least distinguishes a
+        # timeout from a refused connection from a DNS failure.
+        return AgentUnreachable(self.base_url, str(exc).strip() or type(exc).__name__)
+
     async def _get(self, path: str) -> httpx.Response:
         try:
             response = await self._client.get(path)
         except httpx.HTTPError as exc:
-            raise AgentUnreachable(self.base_url, str(exc)) from exc
+            raise self._unreachable(exc) from exc
         return self._checked(response)
 
     async def _post(self, path: str, json: object | None = None) -> httpx.Response:
         try:
             response = await self._client.post(path, json=json)
         except httpx.HTTPError as exc:
-            raise AgentUnreachable(self.base_url, str(exc)) from exc
+            raise self._unreachable(exc) from exc
         return self._checked(response)
 
     def _checked(self, response: httpx.Response) -> httpx.Response:

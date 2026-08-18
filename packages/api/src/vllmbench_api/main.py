@@ -28,7 +28,7 @@ from vllmbench_api.routers import (
 from vllmbench_api.settings import ApiSettings
 from vllmbench_db.schema_version import check_schema_version
 from vllmbench_db.session import create_engine, create_session_factory, database_password
-from vllmbench_protocol import PROTOCOL_VERSION, __version__
+from vllmbench_protocol import PROTOCOL_VERSION, __version__, warn_about_placeholders
 from vllmbench_protocol.logging import bound, configure_logging
 
 log = logging.getLogger(__name__)
@@ -60,6 +60,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.schema = None
 
     log.info("api %s (protocol %d) started", __version__, PROTOCOL_VERSION)
+
+    # After configure_logging, so anything these values appear in is already redacted.
+    if not settings.token:
+        log.warning("VLLMBENCH_TOKEN is not set; every agent will reject this control plane")
+    warn_about_placeholders(
+        log,
+        VLLMBENCH_TOKEN=settings.token,
+        POSTGRES_PASSWORD=database_password(),
+    )
 
     if not settings.mcp_enabled:
         # Off unless asked for. ADR 0001 puts the MCP surface on this service rather than

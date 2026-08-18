@@ -20,6 +20,7 @@ from vllmbench_protocol.failures import (
     classify_agent_error,
     classify_engine_output,
 )
+from vllmbench_protocol.placeholders import is_placeholder, warn_about_placeholders
 from vllmbench_protocol.version import PROTOCOL_VERSION, __version__
 from vllmbench_protocol.wire import AUTH_HEADER, AUTH_SCHEME, GpuInfo, HealthResponse, HostInfo
 
@@ -40,4 +41,6 @@ __all__ = [
     "__version__",
     "classify_agent_error",
     "classify_engine_output",
+    "is_placeholder",
+    "warn_about_placeholders",
 ]

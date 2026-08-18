@@ -70,7 +70,6 @@ services:
         PACKAGE: vllmbench-api
     environment:
       <<: *db-env
-      VLLMBENCH_AGENT_URL: ${VLLMBENCH_AGENT_URL:-}
       VLLMBENCH_TOKEN: ${VLLMBENCH_TOKEN:-}
       VLLMBENCH_MCP_ENABLED: ${VLLMBENCH_MCP_ENABLED:-false}
       VLLMBENCH_MCP_WRITE_ENABLED: ${VLLMBENCH_MCP_WRITE_ENABLED:-true}
@@ -101,7 +100,6 @@ services:
         PACKAGE: vllmbench-orchestrator
     environment:
       <<: *db-env
-      VLLMBENCH_AGENT_URL: ${VLLMBENCH_AGENT_URL:-}
       VLLMBENCH_TOKEN: ${VLLMBENCH_TOKEN:-}
     command: ["python", "-m", "vllmbench_orchestrator"]
     depends_on:

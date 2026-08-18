@@ -25,7 +25,12 @@ from vllmbench_db.retention import prune_telemetry
 from vllmbench_db.session import create_engine, create_session_factory, database_password
 from vllmbench_orchestrator.runner import claim_next_run, execute_run
 from vllmbench_orchestrator.settings import OrchestratorSettings
-from vllmbench_protocol import PROTOCOL_VERSION, TRANSIENT_KINDS, __version__
+from vllmbench_protocol import (
+    PROTOCOL_VERSION,
+    TRANSIENT_KINDS,
+    __version__,
+    warn_about_placeholders,
+)
 from vllmbench_protocol.logging import bound, configure_logging
 
 log = logging.getLogger("vllmbench.orchestrator")
@@ -210,6 +215,11 @@ async def main() -> None:
             log.warning(
                 "VLLMBENCH_TOKEN is not set; runs will fail to authenticate against the agent"
             )
+        warn_about_placeholders(
+            log,
+            VLLMBENCH_TOKEN=settings.token,
+            POSTGRES_PASSWORD=database_password(),
+        )
 
         if settings.telemetry_retention_days:
             log.info(
