@@ -11,6 +11,10 @@ dependencies = [
     "mcp>=2.0",
     "httpx>=0.28",
     "pydantic-settings>=2.6",
+    # Parsing a candidate config to validate it. Invariant 5 forbids *transforming* a
+    # config, not reading one — what is stored stays the exact bytes that reach
+    # `vllm serve --config`, and nothing here writes YAML back out.
+    "pyyaml>=6.0",
 ]
 
 [dependency-groups]

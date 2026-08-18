@@ -13,14 +13,19 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import Select, func, or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute, aliased, selectinload
 
+from vllmbench_api.config_validation import validate_config
 from vllmbench_api.deps import SessionDep
 from vllmbench_api.hashing import config_hash, normalize_yaml, workload_hash
 from vllmbench_api.schemas import (
     ConfigCreate,
     ConfigOut,
+    ConfigValidationOut,
+    ConfigValidationRequest,
     EngineSampleOut,
+    FindingOut,
     GpuSampleOut,
     RunCreate,
     RunOut,
@@ -30,6 +35,11 @@ from vllmbench_api.schemas import (
 )
 from vllmbench_db.enums import RunStatus
 from vllmbench_db.models import EngineSample, GpuHost, GpuSample, Run, ServerConfig, Workload
+from vllmbench_protocol.serve_args import (
+    ServeArguments,
+    load_serve_arguments,
+    reference_serve_arguments,
+)
 
 router = APIRouter(prefix="/api", tags=["runs"])
 
@@ -313,4 +323,64 @@ async def get_run_telemetry(
         gpu_indices=sorted(per_device),
         sample_count=engine_total + sum(per_device.values()),
         stride=max(engine_stride, gpu_stride),
+    )
+
+
+async def resolve_arguments(
+    session: AsyncSession, gpu_host_id: uuid.UUID | None
+) -> tuple[ServeArguments, bool, int | None]:
+    """Pick the argument catalogue to check against, and say how well it fits.
+
+    A host running a version we have no capture for is not an error — the version policy
+    in CLAUDE.md makes benchmarking one vLLM against another a first-class use, so this
+    falls back to the reference and reports that it did. Silently checking a 0.26 config
+    against 0.25's arguments and calling it valid would be the wrong kind of helpful.
+    """
+    if gpu_host_id is None:
+        return reference_serve_arguments(), True, None
+
+    host = await session.get(GpuHost, gpu_host_id)
+    if host is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="host not found")
+
+    if host.vllm_version:
+        captured = load_serve_arguments(host.vllm_version)
+        if captured is not None:
+            return captured, True, host.gpu_count
+    return reference_serve_arguments(), False, host.gpu_count
+
+
+@router.post("/configs/validate", response_model=ConfigValidationOut)
+async def validate_config_endpoint(
+    payload: ConfigValidationRequest, session: SessionDep
+) -> ConfigValidationOut:
+    """Check a configuration before it costs a model load.
+
+    Reads only. Nothing is stored, nothing is rewritten, and a config that fails here can
+    still be created — the engine describes a file, it does not police one. That matters
+    because the catalogue is a capture of one vLLM version, and a host running something
+    newer may legitimately accept an argument this service has never heard of.
+    """
+    arguments, exact, gpu_count = await resolve_arguments(session, payload.gpu_host_id)
+    result = validate_config(
+        payload.yaml,
+        arguments,
+        gpu_count=gpu_count,
+        exact_version_match=exact,
+        tensor_parallel_is_swept=payload.tensor_parallel_is_swept,
+    )
+    return ConfigValidationOut(
+        valid=result.valid,
+        findings=[
+            FindingOut(
+                severity=str(f.severity),
+                message=f.message,
+                key=f.key,
+                line=f.line,
+                suggestion=f.suggestion,
+            )
+            for f in result.findings
+        ],
+        checked_against=result.checked_against,
+        exact_version_match=result.exact_version_match,
     )

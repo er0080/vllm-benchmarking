@@ -285,6 +285,22 @@ jobs:
             --save-result --result-filename /tmp/bench.json
           docker cp vllm-cpu:/tmp/bench.json "${RUNNER_TEMP}/bench.json"
 
+      - name: Re-derive the serve-argument catalogue
+        # The config validation engine checks candidate YAML against this catalogue, so a
+        # stale one is worse than none: it would reject a setting the pinned vLLM accepts,
+        # or pass one it has dropped, at the moment somebody is trusting it not to.
+        #
+        # Re-derived from the running container rather than trusted. If upstream renames,
+        # adds or removes an argument, this fails here — which is the whole point of tier
+        # 2 (CLAUDE.md: have tier 2 re-derive the contract from a live server).
+        run: |
+          VERSION=${{ steps.vllm.outputs.version }}
+          docker exec -i vllm-cpu python - < scripts/capture_serve_args.py \
+            > "${RUNNER_TEMP}/serve-args.json"
+          uv run python scripts/check_serve_args_catalogue.py \
+            "${RUNNER_TEMP}/serve-args.json" \
+            "packages/protocol/src/vllmbench_protocol/data/vllm_serve_args_v${VERSION}.json"
+
       - name: Contract tests
         env:
           VLLM_CPU_BASE_URL: http://localhost:8100

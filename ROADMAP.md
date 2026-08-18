@@ -180,15 +180,21 @@ analysis tools depend on 0.5.0 and the control tools on 0.4.0.
 - [x] Streamable HTTP MCP server mounted at `/mcp` on `api`, behind `VLLMBENCH_MCP_ENABLED`
 - [x] Bearer token auth — an unset token refuses every caller rather than accepting all,
       so enabling MCP without configuring one yields an inert surface, not an open one
-- [ ] Config **validation engine** — checks a candidate YAML against the target vLLM
+- [x] Config **validation engine** — checks a candidate YAML against the target vLLM
       version's accepted arguments and returns structured, actionable errors. Pulled
       forward from 0.7.0: `validate_config` needs it, and 0.7.0's YAML editor is a UI over
-      this engine rather than a separate implementation.
+      this engine rather than a separate implementation. The argument catalogue is
+      *captured from a real parser*, never authored, and tier 2 re-derives it from the
+      live container so an upstream rename fails a test instead of a sweep. No agent
+      endpoint was needed: the host already reports its vLLM version, and a version with
+      no capture falls back to the reference and says so.
 - [x] Read tools — `list_hosts`, `list_configs` / `get_config`, `list_workloads`,
       `list_sweeps` / `get_sweep`, `query_runs`, `get_run`, `get_run_telemetry`,
       `compare_runs`, `get_pareto`, `server_info`. Each calls the same function the HTTP
       route calls, so the two surfaces cannot drift
-- [ ] `validate_config` — waiting on the validation engine below
+- [x] `validate_config` — a read tool, so it stays available on a control plane with
+      writes switched off, which is where an agent most needs to check a config it
+      cannot create
 - [x] Write tools, enabled by default and separately switchable — `create_config`,
       `create_workload`, `create_sweep`, `cancel_sweep`. No tool mutates or deletes a run,
       and a test asserts none is ever added
