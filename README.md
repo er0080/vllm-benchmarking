@@ -198,6 +198,8 @@ Open http://localhost:8080, register the GPU host, and author your first sweep.
 - [CLAUDE.md](CLAUDE.md) — architecture invariants and development conventions
 - [docs/agent-installation.md](docs/agent-installation.md) — installing, running and upgrading the agent on a GPU host
 - [docs/tuning-playbook.md](docs/tuning-playbook.md) — how to read each chart and what to change next
+- [docs/upgrading.md](docs/upgrading.md) — moving a running deployment forward, and what cannot be rolled back
+- [docs/limitations.md](docs/limitations.md) — what this release does not do
 - [docs/adr/](docs/adr/) — accepted architecture decisions and the alternatives they rejected
 - [docs/hardware-verification.md](docs/hardware-verification.md) — code paths built without a GPU and awaiting verification on real hardware
 - [vLLM Benchmark CLI](https://docs.vllm.ai/en/v0.25.1/benchmarking/cli/) — upstream reference
