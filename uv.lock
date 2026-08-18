@@ -1242,7 +1242,7 @@ wheels = [
 
 [[package]]
 name = "vllm-benchmarking"
-version = "0.1.0"
+version = "1.0.0rc1"
 source = { virtual = "." }
 
 [package.dev-dependencies]
@@ -1269,7 +1269,7 @@ dev = [
 
 [[package]]
 name = "vllmbench-agent"
-version = "0.1.0"
+version = "1.0.0rc1"
 source = { editable = "packages/agent" }
 dependencies = [
     { name = "fastapi" },
@@ -1294,7 +1294,7 @@ requires-dist = [
 
 [[package]]
 name = "vllmbench-api"
-version = "0.1.0"
+version = "1.0.0rc1"
 source = { editable = "packages/api" }
 dependencies = [
     { name = "fastapi" },
@@ -1329,7 +1329,7 @@ dev = [{ name = "vllmbench-mockagent", editable = "packages/mockagent" }]
 
 [[package]]
 name = "vllmbench-db"
-version = "0.1.0"
+version = "1.0.0rc1"
 source = { editable = "packages/db" }
 dependencies = [
     { name = "alembic" },
@@ -1348,7 +1348,7 @@ requires-dist = [
 
 [[package]]
 name = "vllmbench-mockagent"
-version = "0.1.0"
+version = "1.0.0rc1"
 source = { editable = "packages/mockagent" }
 dependencies = [
     { name = "fastapi" },
@@ -1367,7 +1367,7 @@ requires-dist = [
 
 [[package]]
 name = "vllmbench-orchestrator"
-version = "0.1.0"
+version = "1.0.0rc1"
 source = { editable = "packages/orchestrator" }
 dependencies = [
     { name = "httpx" },
@@ -1394,7 +1394,7 @@ dev = [{ name = "vllmbench-mockagent", editable = "packages/mockagent" }]
 
 [[package]]
 name = "vllmbench-protocol"
-version = "0.1.0"
+version = "1.0.0rc1"
 source = { editable = "packages/protocol" }
 dependencies = [
     { name = "httpx" },

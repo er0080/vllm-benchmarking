@@ -1,6 +1,7 @@
 import type {
   Analysis,
   AnalysisQuery,
+  ApiVersion,
   Comparison,
   Config,
   ConfigValidation,
@@ -55,6 +56,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  version: () => request<ApiVersion>("/version"),
+
   listHosts: () => request<Host[]>("/hosts"),
 
   registerHost: (name: string, agentUrl: string) =>

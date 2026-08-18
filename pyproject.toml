@@ -1,6 +1,6 @@
 [project]
 name = "vllm-benchmarking"
-version = "0.1.0"
+version = "1.0.0rc1"
 description = "Benchmarking and tuning framework for locally-hosted LLMs served by vLLM"
 requires-python = ">=3.11,<3.14"
 dependencies = []

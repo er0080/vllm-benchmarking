@@ -11,7 +11,7 @@ import { ParetoView } from "./ParetoView";
 import { RunsView } from "./RunsView";
 import { ScalingView } from "./ScalingView";
 import { SweepsView } from "./SweepsView";
-import type { Host } from "./types";
+import type { ApiVersion, Host } from "./types";
 
 function formatBytes(bytes: number | null): string {
   if (bytes === null) return "—";
@@ -186,6 +186,9 @@ type Tab =
 
 export function App() {
   const [hosts, setHosts] = useState<Host[]>([]);
+  // Read from the API rather than written into the page. A hand-maintained banner is a
+  // string nobody updates: this one said "Milestone 0.7.0" three milestones later.
+  const [version, setVersion] = useState<ApiVersion | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [tab, setTab] = useState<Tab>("hosts");
@@ -208,11 +211,24 @@ export function App() {
     void load();
   }, [load]);
 
+  useEffect(() => {
+    // Once, and separately from the host list: the banner is cosmetic and must not be
+    // able to take the page down with it.
+    void api
+      .version()
+      .then(setVersion)
+      .catch(() => setVersion(null));
+  }, []);
+
   return (
     <div className="page">
       <header>
         <h1>vLLM Benchmarking</h1>
-        <p>Milestone 0.7.0 — configuration management.</p>
+        <p className="muted">
+          {version
+            ? `${version.version} · agent protocol ${version.protocol_version}`
+            : "\u00a0"}
+        </p>
       </header>
 
       <nav className="tabs">
