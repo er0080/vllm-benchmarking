@@ -27,6 +27,12 @@ class HostCreate(BaseModel):
     name: str = Field(min_length=1, max_length=128)
     agent_url: str = Field(min_length=1)
 
+    # Operational limits, not measurement parameters. The defaults match what the agent
+    # has always enforced; they are settable so that a host loading a 70B, or a workload
+    # sending fifty thousand prompts, does not require a code change to finish.
+    model_load_timeout_seconds: int = Field(default=900, ge=30, le=86_400)
+    benchmark_timeout_seconds: int = Field(default=3600, ge=30, le=86_400)
+
 
 class HostOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -42,6 +48,8 @@ class HostOut(BaseModel):
     cuda_version: str | None = None
     gpu_count: int = 0
     synthetic_source: str | None = None
+    model_load_timeout_seconds: int = 900
+    benchmark_timeout_seconds: int = 3600
     last_seen_at: dt.datetime | None = None
     created_at: dt.datetime
 
@@ -263,6 +271,10 @@ class RunOut(BaseModel):
     initiated_by: str
 
     error: str | None = None
+    # Which class of failure this was. Never a substitute for `error`, which holds the
+    # full text — this is what makes "why did nine of these eleven points fail" a
+    # question with an answer.
+    failure_kind: str | None = None
     log_excerpt: str | None = None
 
     summary: RunSummaryOut | None = None
@@ -358,6 +370,11 @@ class SweepCreate(InitiatedByFields):
     replicates: int = Field(default=3, ge=1, le=25)
     replicate_order: ReplicateOrder = ReplicateOrder.GROUPED
 
+    # None means "use the host's defaults" — and keeps meaning that, so raising a host's
+    # limit also raises every sweep that never had an opinion about it.
+    model_load_timeout_seconds: int | None = Field(default=None, ge=30, le=86_400)
+    benchmark_timeout_seconds: int | None = Field(default=None, ge=30, le=86_400)
+
 
 class SweepProgress(BaseModel):
     """Counts by run status, so a caller does not have to fetch every run to draw a bar."""
@@ -369,6 +386,13 @@ class SweepProgress(BaseModel):
     succeeded: int = 0
     failed: int = 0
     cancelled: int = 0
+
+    # Failed runs by kind, highest count first. The whole reason `failure_kind` exists:
+    # a sweep reporting "11 failed" tells a reader to open eleven runs, and one reporting
+    # "9 engine_out_of_memory, 2 benchmark_timeout" tells them what to change.
+    #
+    # Empty for a sweep with no failures, and for one whose failures predate the column.
+    failures: dict[str, int] = Field(default_factory=dict)
 
     @property
     def terminal(self) -> int:
@@ -462,6 +486,8 @@ class SweepOut(BaseModel):
     gpu_host_id: uuid.UUID
     replicates: int
     replicate_order: str
+    model_load_timeout_seconds: int | None = None
+    benchmark_timeout_seconds: int | None = None
     initiated_by: str
     is_synthetic: bool
     created_at: dt.datetime

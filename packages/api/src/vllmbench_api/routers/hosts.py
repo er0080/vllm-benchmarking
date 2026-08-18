@@ -115,7 +115,12 @@ async def register_host(
 ) -> HostFacts:
     info = await _handshake(payload.agent_url, settings.token)
 
-    host = GpuHost(name=payload.name, agent_url=payload.agent_url)
+    host = GpuHost(
+        name=payload.name,
+        agent_url=payload.agent_url,
+        model_load_timeout_seconds=payload.model_load_timeout_seconds,
+        benchmark_timeout_seconds=payload.benchmark_timeout_seconds,
+    )
     session.add(host)
     await _apply_facts(session, host, info)
     try:

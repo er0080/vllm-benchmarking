@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from vllmbench_agent.bench import BenchError, build_argv, run_benchmark
+from vllmbench_protocol.failures import FailureKind
 from vllmbench_protocol.wire import BenchRequest
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -177,8 +178,13 @@ class TestExecution:
         # it would stall with no indication of why.
         monkeypatch.setenv("FAKE_VLLM_BENCH_MODE", "hang")
         monkeypatch.setenv("FAKE_VLLM_MODE", "hang")
-        with pytest.raises(BenchError, match="timeout"):
+        with pytest.raises(BenchError, match="timeout") as exc:
             await run_benchmark(BenchRequest(model="m", timeout_seconds=2.0), base_url="http://x")
+        # Named as a timeout rather than a generic failure. From the control plane the
+        # two are the same 422; only this side knows whether the client exited on its own
+        # or was killed by our deadline, and they call for different responses — raise
+        # the budget, or investigate why the benchmark failed.
+        assert exc.value.kind is FailureKind.BENCHMARK_TIMEOUT
 
     async def test_result_flattens_with_the_shared_mapping(self, fake_vllm: Path) -> None:
         from vllmbench_protocol.bench_result import flatten_bench_result

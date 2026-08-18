@@ -1,0 +1,4 @@
+INFO 08-18 02:58:03 [importing.py:88] Triton not installed or not compatible; certain GPU-related functions will not be available.
+usage: vllm [-h] [-v]
+            {chat,complete,serve,launch,bench,collect-env,run-batch} ...
+vllm: error: unrecognized arguments: --no-such-flag 3

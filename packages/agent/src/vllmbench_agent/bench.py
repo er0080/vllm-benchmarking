@@ -29,6 +29,7 @@ from vllmbench_agent.hardware import (
     resolve_vllm_binary,
     vllm_binary_search_detail,
 )
+from vllmbench_protocol.failures import FailureKind
 from vllmbench_protocol.wire import BenchRequest, BenchResponse
 
 log = logging.getLogger(__name__)
@@ -37,7 +38,15 @@ OUTPUT_TAIL_LINES = 100
 
 
 class BenchError(RuntimeError):
-    """The benchmark did not produce a usable result."""
+    """The benchmark did not produce a usable result.
+
+    Names its own kind for the same reason :class:`ServerError` does: only this side
+    knows whether the client was killed by our deadline or exited on its own.
+    """
+
+    def __init__(self, message: str, kind: FailureKind = FailureKind.BENCHMARK_FAILED) -> None:
+        super().__init__(message)
+        self.kind = kind
 
 
 class BenchCancelled(RuntimeError):
@@ -220,7 +229,10 @@ async def _run_benchmark(
         process.kill()
         await process.wait()
         shutil.rmtree(workdir, ignore_errors=True)
-        raise BenchError(f"benchmark exceeded its {request.timeout_seconds:.0f}s timeout") from None
+        raise BenchError(
+            f"benchmark exceeded its {request.timeout_seconds:.0f}s timeout",
+            FailureKind.BENCHMARK_TIMEOUT,
+        ) from None
 
     out_tail = _tail(stdout.decode(errors="replace"))
     err_tail = _tail(stderr.decode(errors="replace"))

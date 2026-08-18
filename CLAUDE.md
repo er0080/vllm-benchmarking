@@ -208,6 +208,13 @@ that the control plane and frontend are fully developable on a laptop:
 - **Mock agent** — implements the agent's HTTP contract and returns synthetic but
   realistic benchmark JSON and telemetry, with configurable latency and failure injection.
   Started with `docker compose --profile dev up`. It is also the integration-test fixture.
+
+  Failure injection is `VLLMBENCH_MOCK_START_FAILURE` / `VLLMBENCH_MOCK_BENCH_FAILURE`,
+  set to a `FailureKind` value. The mock then refuses with the same status code, message
+  and `X-Vllmbench-Failure-Kind` header the real agent sends — the messages themselves
+  lifted from captured vLLM output. This is the only way most failure paths are reachable
+  without hardware: an engine cannot run out of memory on a laptop, and that is the
+  failure a tuning sweep hits most.
 - **Fake `vllm` shim** — a stand-in binary accepting `serve --config` and
   `bench serve --save-result`, exposing `/health` and `/metrics`. Used for agent tests.
 

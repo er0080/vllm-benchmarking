@@ -127,6 +127,18 @@ async def _progress(session: AsyncSession, sweep_id: uuid.UUID) -> SweepProgress
     for run_status, count in rows:
         setattr(progress, str(run_status), count)
         progress.total += count
+
+    if progress.failed:
+        # A second query rather than one grouped by both columns: this one runs only when
+        # something failed, and keeping it separate leaves the common path unchanged.
+        by_kind = await session.execute(
+            select(Run.failure_kind, func.count())
+            .where(Run.sweep_id == sweep_id, Run.status == RunStatus.FAILED)
+            .group_by(Run.failure_kind)
+            .order_by(func.count().desc())
+        )
+        progress.failures = {kind: count for kind, count in by_kind if kind is not None}
+
     return progress
 
 
@@ -283,6 +295,9 @@ async def create_sweep(request: SweepCreate, session: SessionDep) -> SweepOut:
         gpu_host_id=host.id,
         replicates=request.replicates,
         replicate_order=request.replicate_order,
+        # Null unless the caller said otherwise, so the host's default keeps applying.
+        model_load_timeout_seconds=request.model_load_timeout_seconds,
+        benchmark_timeout_seconds=request.benchmark_timeout_seconds,
         initiated_by=request.initiated_by,
         initiated_by_client=request.initiated_by_client,
         # Invariant 7's chain of custody: the host's own declaration decides, and every

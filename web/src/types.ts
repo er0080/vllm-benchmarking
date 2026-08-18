@@ -164,6 +164,12 @@ export interface Run {
   synthetic_source: string | null;
   initiated_by: string;
   error: string | null;
+  /**
+   * Which class of failure this was, for a run that has one. Never a substitute for
+   * `error`, which holds the full text — this is what makes a sweep's failures
+   * countable rather than eleven walls of traceback to read one at a time.
+   */
+  failure_kind: string | null;
   log_excerpt: string | null;
   summary: RunSummary | null;
 }
@@ -209,6 +215,11 @@ export interface SweepProgress {
   succeeded: number;
   failed: number;
   cancelled: number;
+  /**
+   * Failed runs by kind, highest count first. Empty when nothing failed, and for
+   * sweeps whose failures predate the column.
+   */
+  failures: Record<string, number>;
 }
 
 export interface Sweep {
@@ -548,4 +559,29 @@ export interface SavedViewCreate {
   source: RunSource;
   filters: Record<string, unknown>;
   options?: Record<string, unknown>;
+}
+
+/**
+ * Human wording for a failure kind, with the raw value as the fallback.
+ *
+ * The fallback matters: a newer agent or a later build can record a kind this UI has
+ * never heard of, and showing the raw string is a small ugliness where showing nothing
+ * would hide the failure's only heading.
+ */
+export const FAILURE_LABELS: Record<string, string> = {
+  agent_unreachable: "Host unreachable",
+  agent_auth: "Agent refused the token",
+  protocol_mismatch: "Agent protocol mismatch",
+  engine_out_of_memory: "Engine ran out of memory",
+  engine_config_rejected: "vLLM rejected the configuration",
+  engine_load_failed: "Engine failed to start",
+  engine_not_ready: "Engine never became ready",
+  benchmark_timeout: "Benchmark exceeded its time budget",
+  benchmark_failed: "Benchmark failed",
+  result_schema_mismatch: "Result did not match the expected schema",
+  internal: "Internal error",
+};
+
+export function failureLabel(kind: string): string {
+  return FAILURE_LABELS[kind] ?? kind;
 }

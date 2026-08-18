@@ -329,6 +329,10 @@ def build_mcp_server(sessions: async_sessionmaker[Any], settings: ApiSettings) -
                         run.summary.total_token_throughput_per_gpu if run.summary else None
                     ),
                     "ttft_ms_p99": run.summary.ttft_ms_p99 if run.summary else None,
+                    # Both, for the same reason a person gets both: the kind is what
+                    # makes a page of failed runs answerable at a glance, and the text is
+                    # the only part that says which card wanted how much memory.
+                    "failure_kind": run.failure_kind,
                     "error": run.error,
                 }
                 for run in found

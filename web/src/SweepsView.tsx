@@ -13,6 +13,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { api, configsApi, sweepsApi, workloadsApi } from "./api";
+import { failureLabel } from "./types";
 import type {
   Config,
   DurationEstimate,
@@ -65,6 +66,17 @@ function ProgressBar({ sweep }: { sweep: Sweep }) {
         {" · "}
         {sweep.progress.total} total
       </p>
+      {Object.keys(sweep.progress.failures).length > 0 && (
+        // What "failed" actually was. Eleven runs of one cause and eleven runs of
+        // eleven causes are different situations, and the count alone cannot tell them
+        // apart — which is the whole reason the kind is recorded.
+        <p className="muted" style={{ margin: "0.15rem 0 0" }}>
+          Failures:{" "}
+          {Object.entries(sweep.progress.failures)
+            .map(([kind, count]) => `${count} × ${failureLabel(kind)}`)
+            .join(" · ")}
+        </p>
+      )}
     </>
   );
 }

@@ -13,7 +13,7 @@ from collections.abc import AsyncIterator
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from vllmbench_db.enums import InitiatedBy, RunStatus
+from vllmbench_db.enums import FailureKind, InitiatedBy, RunStatus
 from vllmbench_db.models import GpuHost, Run, ServerConfig, Workload
 from vllmbench_db.session import create_engine, create_session_factory
 from vllmbench_db.testing import test_database_url
@@ -78,6 +78,12 @@ async def run_factory(
             "started_at": dt.datetime.now(dt.UTC),
         }
         fields.update(overrides)
+        # A failed run names its failure — the check constraint requires it, so a factory
+        # that omitted it would build rows the schema rejects and every test asking for a
+        # failed run would fail on the wrong thing. Overridable, and the tests that are
+        # *about* the constraint pass their own value.
+        if fields.get("status") is RunStatus.FAILED and "failure_kind" not in overrides:
+            fields["failure_kind"] = FailureKind.INTERNAL
         run = Run(**fields)
         session.add(run)
         await session.flush()

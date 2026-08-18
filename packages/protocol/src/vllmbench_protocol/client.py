@@ -17,6 +17,7 @@ from vllmbench_protocol.errors import (
     AgentUnreachable,
     ProtocolMismatch,
 )
+from vllmbench_protocol.failures import FAILURE_KIND_HEADER
 from vllmbench_protocol.version import PROTOCOL_VERSION
 from vllmbench_protocol.wire import (
     AUTH_SCHEME,
@@ -108,7 +109,15 @@ class AgentClient:
                 detail = response.json().get("detail", detail)
             except ValueError:
                 pass
-            raise AgentError(f"agent at {self.base_url} returned {response.status_code}: {detail}")
+            error = AgentError(
+                f"agent at {self.base_url} returned {response.status_code}: {detail}"
+            )
+            # The agent's own name for what went wrong, when it sent one. It saw the
+            # whole vLLM log rather than the tail that fits in a response, and it knows
+            # which of its own deadlines expired — neither of which survives the trip.
+            # Absent from an older agent, which is why nothing downstream requires it.
+            error.reported_kind = response.headers.get(FAILURE_KIND_HEADER)
+            raise error
         return response
 
     async def health(self) -> HealthResponse:

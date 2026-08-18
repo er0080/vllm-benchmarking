@@ -25,6 +25,7 @@ from fastapi import Depends, FastAPI, HTTPException, status
 from vllmbench_agent.auth import token_dependency
 from vllmbench_mockagent.synthetic import synthesize_bench_result, synthesize_telemetry
 from vllmbench_protocol import PROTOCOL_VERSION, __version__
+from vllmbench_protocol.failures import FAILURE_KIND_HEADER, FailureKind
 from vllmbench_protocol.wire import (
     BenchRequest,
     BenchResponse,
@@ -72,7 +73,63 @@ MOCK_DRIVER_VERSION = "550.54.15"
 MOCK_CUDA_VERSION = "12.4"
 
 
-def create_app(token: str | None = None, protocol_version: int = PROTOCOL_VERSION) -> FastAPI:
+# Failure injection. Set to a FailureKind value to make the next server start, or the
+# next benchmark, fail that way — the same status code and the same
+# X-Vllmbench-Failure-Kind header the real agent would send.
+#
+# CLAUDE.md names failure injection as part of what the mock is for, and this is the part
+# of the contract that is otherwise untestable without a GPU: an out-of-memory engine
+# start is trivial to provoke on real hardware and impossible to provoke on a laptop.
+# Environment variables rather than an endpoint so that a compose-based dev stack can be
+# put into a failing state without a client that knows how to ask.
+# Read when the app is built rather than at import, and overridable as arguments to
+# `create_app`. A module-level snapshot would make the setting sticky for the life of the
+# process, which is fine for a container and wrong for a test suite: one test putting the
+# mock into a failing state would leave every later test in it.
+def _default_start_failure() -> str:
+    return os.environ.get("VLLMBENCH_MOCK_START_FAILURE", "")
+
+
+def _default_bench_failure() -> str:
+    return os.environ.get("VLLMBENCH_MOCK_BENCH_FAILURE", "")
+
+
+# What the real agent's message looks like for each injectable kind. Taken from the same
+# captured vLLM output the classifier's patterns were read off, so a control plane that
+# ignores the header and reads the text reaches the same conclusion — which is exactly
+# the older-agent path, and would otherwise never be exercised.
+_FAILURE_DETAIL: dict[str, str] = {
+    FailureKind.ENGINE_OUT_OF_MEMORY: (
+        "vLLM exited with code 1 during startup.\n\nLikely cause:\n"
+        "  ValueError: No available memory for the cache blocks. Try increasing "
+        "`gpu_memory_utilization` when initializing the engine."
+    ),
+    FailureKind.ENGINE_CONFIG_REJECTED: (
+        "vLLM exited with code 2 during startup.\n\nLikely cause:\n"
+        "  vllm: error: unrecognized arguments: --no-such-flag"
+    ),
+    FailureKind.ENGINE_NOT_READY: "vLLM did not become ready within 900s",
+    FailureKind.BENCHMARK_TIMEOUT: "benchmark exceeded its 3600s timeout",
+    FailureKind.BENCHMARK_FAILED: "`vllm bench serve` exited with code 1",
+}
+
+
+def _injected(kind: str, status_code: int) -> HTTPException:
+    """Build the failure the real agent would have raised."""
+    return HTTPException(
+        status_code=status_code,
+        detail=_FAILURE_DETAIL.get(kind, f"injected failure: {kind}"),
+        headers={FAILURE_KIND_HEADER: kind},
+    )
+
+
+def create_app(
+    token: str | None = None,
+    protocol_version: int = PROTOCOL_VERSION,
+    *,
+    start_failure: str | None = None,
+    bench_failure: str | None = None,
+) -> FastAPI:
     """Build the mock agent.
 
     ``protocol_version`` is overridable so tests can stand up a genuinely stale agent
@@ -82,6 +139,8 @@ def create_app(token: str | None = None, protocol_version: int = PROTOCOL_VERSIO
     token = token or os.environ.get("VLLMBENCH_TOKEN", "dev-token")
     started_at = time.monotonic()
     require_token = token_dependency(token)
+    injected_start_failure = _default_start_failure() if start_failure is None else start_failure
+    injected_bench_failure = _default_bench_failure() if bench_failure is None else bench_failure
 
     app = FastAPI(title="vLLM Benchmarking Mock Agent", version=__version__, docs_url="/docs")
 
@@ -169,6 +228,10 @@ def create_app(token: str | None = None, protocol_version: int = PROTOCOL_VERSIO
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f"a server is already {state['state']}; stop it before starting another",
             )
+        if injected_start_failure:
+            state.update(state=ServerState.STOPPED, ready_at=None)
+            raise _injected(injected_start_failure, status.HTTP_409_CONFLICT)
+
         state.update(
             state=ServerState.STARTING,
             config_hash=request.config_hash,
@@ -193,6 +256,9 @@ def create_app(token: str | None = None, protocol_version: int = PROTOCOL_VERSIO
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f"no ready server to benchmark (state={state['state']})",
             )
+        if injected_bench_failure:
+            raise _injected(injected_bench_failure, status.HTTP_422_UNPROCESSABLE_ENTITY)
+
         cancel.clear()
         # Race the synthetic duration against a cancellation, mirroring the real agent
         # where the wait is on a subprocess that can be signalled.
