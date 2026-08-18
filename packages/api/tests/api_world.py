@@ -48,7 +48,7 @@ class World:
         await self.session.flush()
         return config
 
-    async def a_workload(self, *, max_concurrency: int = 16) -> Workload:
+    async def a_workload(self, *, max_concurrency: int | None = 16) -> Workload:
         workload = Workload(
             workload_hash=os.urandom(32).hex(),
             name=f"c{max_concurrency}",

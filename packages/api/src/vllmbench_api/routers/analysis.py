@@ -180,6 +180,7 @@ def _to_record(
         bench_client_location=str(run.bench_client_location),
         driver_version=run.driver_version,
         cuda_version=run.cuda_version,
+        imported_from=run.imported_from,
         config_hash=run.config_hash,
         config_name=config_name,
         config_family=_family_hash(config_yaml),
