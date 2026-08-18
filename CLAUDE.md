@@ -102,8 +102,18 @@ explicit discussion, not a refactor.
   configuration.
 - **Runs are immutable once terminal.** A run in `succeeded` or `failed` state is never
   mutated. Re-running produces a new run, linked by `sweep_id` and `replicate_idx`.
-- **Migrations are forward-only.** No destructive migrations against tables holding
-  results. Renames are add-column, backfill, drop-later.
+- **Migrations are forward-only, and the schema is stable from 0.9.0** (ADR 0007). No
+  destructive migrations against tables holding results. Renames are add-column, backfill,
+  drop-later. Additions stay additive — nullable, or NOT NULL with a *server-side*
+  default; a constraint tightened on an existing table arrives `NOT VALID` so history
+  keeps its honest values. Semantics never change under a stable name: that is the one
+  that corrupts results, because nothing errors and the chart quietly draws two different
+  quantities as one series.
+- **CI migrates a seeded database, not just an empty one.** An empty database cannot
+  detect a NOT NULL column with no default, a type change that fails on real values, or a
+  constraint no historical row satisfies. `scripts/seed_previous_schema.sql` is where
+  "which columns must survive" is argued about; `scripts/verify_seeded_data.sql` is where
+  "with what values" is.
 
 ---
 

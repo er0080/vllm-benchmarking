@@ -275,7 +275,11 @@ discovering what breaks. Making each discovery cost an issue first is what that 
 least able to afford. Rationale still lands in PR bodies and `docs/adr/` as it has all
 along — see CLAUDE.md.
 
-- [ ] Schema stabilized; forward-only migrations from here
+- [x] Schema stabilized; forward-only migrations from here (ADR 0007). Not "never
+      changes" — no measurement column is renamed, retyped or removed; additions stay
+      additive; constraints tightened on existing tables arrive `NOT VALID` so history
+      keeps its honest values; and semantics never change under a stable name, which is
+      the one that actually corrupts results because nothing errors
 - [x] Failure handling: agent unreachable, vLLM OOM, model load failure, benchmark timeout.
       Each is recorded under a `failure_kind` rather than only as free text, so a sweep's
       failures are countable instead of eleven walls of traceback to read one at a time.
@@ -309,11 +313,46 @@ along — see CLAUDE.md.
       driver. Scrubbing runs in the formatter so it covers lazy `%s` arguments and
       tracebacks, and uvicorn is unhooked onto the same handler so its access log cannot
       route around it
-- [ ] Test coverage on the JSON-to-column flattening layer
-- [ ] Migration CI: applied against an empty database and one seeded at the previous tag
+- [x] Test coverage on the JSON-to-column flattening layer — and it found something. A
+      benchmark where every request fails exits 0, writes a result file, and reports 0.00
+      for every metric; on a latency axis 0 ms is the *best* value, so a run that measured
+      nothing would have rendered as the fastest configuration ever tested and sat on the
+      Pareto frontier. Captured from a real vLLM and now refused: zero completions is the
+      absence of a measurement, not a measurement of zero. Partial failures are kept and
+      warned about instead, since throughput divided by the whole duration understates
+      them rather than inventing them. Also pinned: the flattener's output and
+      `run_summary`'s columns correspond in both directions — the direction that fails
+      silently is a column nothing ever fills, NULL on every row forever with no error
+      anywhere
+- [x] Migration CI: applied against an empty database and against one seeded with a run,
+      its result and its per-device telemetry, then checked value by value. Row counts
+      would miss a migration that rewrote a throughput figure or dropped one device's
+      telemetry while keeping its peer. The baseline is `main` rather than a tag, since
+      for a pull request main is the schema already deployed and no tags exist yet
 
 **Done when:** every failure mode identified during 0.2–0.8 has a defined behavior and a
 test.
+
+**Status:** complete. The milestone did what it was placed inside the relaxed-process
+window to do — it found things by breaking them.
+
+The largest was in the flattening layer, and it was live: `vllm bench serve` exits 0 when
+every request fails, writes a result file, and reports 0.00 for every metric. Nothing
+upstream noticed, because nothing was wrong — the process succeeded, the file existed,
+every required field was present. The zeros were the problem: on a latency axis 0 ms is
+the best value there is, so a run that measured nothing would have appeared as the fastest
+configuration ever tested. It is now refused, against a payload captured from a real vLLM
+rather than an imagined one.
+
+The rest of the milestone is the same shape. Failures were free text and are now countable
+without becoming guesses (ADR 0004). Logs were per-service formats with redaction left to
+care at each call site, and are now one queryable stream with redaction by registered value
+(ADR 0005) — because the leaks that happen are in text nobody wrote, like a Postgres
+failure quoting the DSN back from inside the driver. Growth was unbounded and unmeasured;
+it is now measured, and the only thing retention may delete is telemetry (ADR 0006).
+Migrations were tested against an empty database, which cannot detect the class of bug
+forward-only exists to prevent, and now run against seeded data checked value by value
+(ADR 0007).
 
 ---
 

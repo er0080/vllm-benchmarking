@@ -670,3 +670,36 @@ class TestMetricDelta:
 
     def test_a_zero_baseline_does_not_divide(self) -> None:
         assert metric_delta(0.0, 100.0, METRICS_BY_KEY[PARETO_X]) == (None, None)
+
+
+class TestPartialFailuresAreStated:
+    """A run where some requests failed is a real measurement — of fewer requests.
+
+    `vllm bench serve` divides throughput by the whole benchmark duration, so failures
+    deflate the figure rather than invalidating it. The point on the chart cannot say
+    that about itself, and a reader comparing it against a clean run would conclude the
+    configuration is slower than it is.
+
+    A run where *every* request failed never reaches analysis at all: it is refused at
+    the flattening layer, because its zeros would read as the fastest result on the chart
+    rather than as the absence of one.
+    """
+
+    def test_failed_requests_produce_a_warning(self) -> None:
+        records = [
+            record(failed_requests=0),
+            record(failed_requests=3),
+        ]
+
+        warnings = group_warnings(records)
+
+        assert any("failed requests" in w for w in warnings)
+        assert any("up to 3" in w for w in warnings)
+
+    def test_a_clean_group_says_nothing(self) -> None:
+        """The warning is worthless if it appears on every chart."""
+        assert not [
+            w
+            for w in group_warnings([record(failed_requests=0), record(failed_requests=None)])
+            if "failed requests" in w
+        ]

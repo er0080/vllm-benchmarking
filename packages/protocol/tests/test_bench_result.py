@@ -18,6 +18,7 @@ from vllmbench_protocol.bench_result import (
     REQUIRED_FIELDS,
     SUMMARY_FIELD_MAP,
     BenchResultError,
+    EmptyBenchResult,
     flatten_bench_result,
 )
 
@@ -160,3 +161,80 @@ class TestFailsLoudly:
         }
         with pytest.raises(BenchResultError):
             flatten_bench_result(documented)
+
+
+class TestBenchmarksThatMeasuredNothing:
+    """The silent-corruption case, captured from a real vLLM rather than imagined.
+
+    `bench_serve_all_requests_failed_v0.25.1.json` was produced by pointing
+    `vllm bench serve` at a model name the server does not serve. Every request 404s —
+    and the client **exits 0**, writes a result file, and reports zeros.
+
+    Nothing upstream of the flattening layer notices: the process succeeded, the file
+    exists, every required field is present. And the zeros are not neutral. On a latency
+    axis 0 ms is the best value there is, so a run that measured nothing would render as
+    the fastest configuration ever tested and sit on the Pareto frontier.
+    """
+
+    @pytest.fixture
+    def all_failed(self) -> dict[str, Any]:
+        return json.loads(
+            (
+                Path(__file__).parent / "fixtures" / "bench_serve_all_requests_failed_v0.25.1.json"
+            ).read_text()
+        )
+
+    def test_the_captured_payload_really_does_look_successful(
+        self, all_failed: dict[str, Any]
+    ) -> None:
+        """Pinning what makes this dangerous, so the reason the check exists stays visible.
+
+        If a future vLLM starts emitting nulls or a non-zero exit here, this test fails
+        and whoever sees it can decide the guard is no longer needed — rather than
+        deleting it because it looks like paranoia.
+        """
+        assert all_failed["completed"] == 0
+        assert all_failed["failed"] == 8
+        assert all_failed["mean_ttft_ms"] == 0.0
+        assert all_failed["output_throughput"] == 0.0
+        # Every field the contract requires is present. That is the whole problem.
+        assert not (REQUIRED_FIELDS - all_failed.keys())
+
+    def test_it_is_refused_rather_than_flattened(self, all_failed: dict[str, Any]) -> None:
+        with pytest.raises(EmptyBenchResult) as exc:
+            flatten_bench_result(all_failed)
+
+        # The message has to name the likely cause. "0 completed" alone sends the reader
+        # looking at the engine, and the usual answer is a served-model-name mismatch.
+        assert "0 requests" in str(exc.value)
+        assert "8 request(s) failed" in str(exc.value)
+
+    def test_it_is_a_kind_of_BenchResultError(self, all_failed: dict[str, Any]) -> None:
+        """Subclassed so existing handlers still catch it, and new ones can tell it apart.
+
+        The two failures need different responses: a schema mismatch is work in this
+        repository, an empty benchmark is work on the host.
+        """
+        with pytest.raises(BenchResultError):
+            flatten_bench_result(all_failed)
+
+    def test_a_partially_failed_benchmark_is_kept(self, payload: dict[str, Any]) -> None:
+        """Those requests really did complete, and the figures describe them.
+
+        Throughput is divided by the whole duration, so a partial failure *understates* a
+        run rather than inventing one. `failed_requests` is flattened alongside so the
+        caveat travels with the numbers.
+        """
+        partial = {**payload, "completed": 6, "failed": 2}
+
+        flat = flatten_bench_result(partial)
+
+        assert flat["successful_requests"] == 6
+        assert flat["failed_requests"] == 2
+
+    def test_a_missing_completed_count_is_still_a_schema_error(self) -> None:
+        """Absent and zero are different failures, and only one of them is this one."""
+        with pytest.raises(BenchResultError, match="missing required fields"):
+            flatten_bench_result(
+                {"duration": 1.0, "total_input_tokens": 1, "total_output_tokens": 1}
+            )

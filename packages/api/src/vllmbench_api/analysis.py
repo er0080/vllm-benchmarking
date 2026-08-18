@@ -194,6 +194,10 @@ class RunRecord:
     #: Set when this run was imported rather than measured here, so its hardware and
     #: vLLM version were *declared by a person* rather than observed by an agent.
     imported_from: str | None = None
+    #: Requests that failed during the benchmark. A run with some completions is a real
+    #: measurement of those completions, but throughput is divided by the whole duration
+    #: — so failures deflate it, and the chart cannot show that on its own.
+    failed_requests: int | None = None
 
     # Point identity
     config_hash: str = ""
@@ -311,6 +315,24 @@ def group_warnings(records: Sequence[RunRecord]) -> list[str]:
                 f"imported from {sources}; hardware and vLLM version were declared by a "
                 "person, not observed"
             )
+
+    # Runs where some requests failed. `vllm bench serve` divides throughput by the whole
+    # benchmark duration, so a partially failed run is understated rather than invalid —
+    # a real measurement of fewer requests than were asked for. Nothing about the point
+    # on the chart says so, which is why it is said here.
+    #
+    # A run where *every* request failed never reaches this: it is refused at the
+    # flattening layer, because its zeros would read as the fastest result on the chart
+    # rather than as the absence of one.
+    partial = [r for r in records if r.failed_requests]
+    if partial:
+        worst = max(r.failed_requests or 0 for r in partial)
+        warnings.append(
+            f"{len(partial)} run(s) had failed requests (up to {worst} in one run); "
+            "throughput is divided by the whole benchmark duration, so those points "
+            "understate the configuration rather than describe it"
+        )
+
     return warnings
 
 
