@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from urllib.parse import urlsplit
 
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -26,6 +27,21 @@ def database_url(*, sync: bool = False) -> str:
     if sync:
         return url.replace("+psycopg_async", "+psycopg")
     return url
+
+
+def database_password(url: str | None = None) -> str | None:
+    """The password out of the database URL, for registering with the log redactor.
+
+    This one is worth singling out because it is the secret nobody chooses to log. Every
+    other credential in this system reaches a log line only if someone writes one; a
+    Postgres connection failure quotes the whole DSN back, password included, from inside
+    the driver — in `_wait_for_database`, in the health check, in any `log.exception` that
+    happens to wrap a connection error.
+
+    Returns ``None`` for a URL with no password, which is normal for a local socket.
+    """
+    parsed = urlsplit(url or database_url())
+    return parsed.password or None
 
 
 def create_engine(url: str | None = None, *, echo: bool = False) -> AsyncEngine:
