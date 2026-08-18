@@ -1,6 +1,6 @@
 [project]
 name = "vllmbench-db"
-version = "1.0.0rc1"
+version = "1.0.0rc2"
 description = "SQLAlchemy models and Alembic migrations for the results store"
 requires-python = ">=3.11,<3.14"
 dependencies = [
