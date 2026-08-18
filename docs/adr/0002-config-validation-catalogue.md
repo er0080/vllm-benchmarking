@@ -1,7 +1,7 @@
 # ADR 0002 — The vLLM argument catalogue is a captured artifact
 
 - **Status:** accepted
-- **Issue:** none — see CLAUDE.md, issues are optional through 0.8.0
+- **Issue:** none — issues were optional at this milestone; see CLAUDE.md
 - **Milestone:** 0.6.0
 - **Supersedes:** nothing
 

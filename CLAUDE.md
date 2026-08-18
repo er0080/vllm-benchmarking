@@ -144,13 +144,13 @@ The agent runs on the machine under test. Its resource footprint is part of its 
 
 ## Development workflow
 
-### Issues: optional now, required from 0.9.0
+### Issues: optional now, required from 0.10.0
 
-Process rigor is staged deliberately. Core development (**0.1.0 through 0.8.0**) favors
-rapid iteration; hardening and release posture (**0.9.0 onward**) favors an auditable
-trail. The rules change at that boundary, and only there.
+Process rigor is staged deliberately. Development (**0.1.0 through 0.9.0**) favors rapid
+iteration; release candidacy (**0.10.0 onward**) favors an auditable trail. The rules
+change at that boundary, and only there.
 
-**Through 0.8.0 — issues are optional.** Open one when it earns its keep:
+**Through 0.9.0 — issues are optional.** Open one when it earns its keep:
 
 - Design work with real alternatives to weigh
 - External feedback or a bug report
@@ -159,10 +159,19 @@ trail. The rules change at that boundary, and only there.
 Otherwise go straight to a branch and a PR. A one-line issue that exists only to be
 referenced by a PR is bureaucracy, not change management.
 
-**From 0.9.0 — every PR traces to an issue**, labeled with a type (`enhancement`, `bug`,
+Hardening (0.9.0) is deliberately inside the relaxed window rather than the first
+milestone outside it. That milestone defines the behavior of every failure mode in the
+system and settles the schema — the work is still design, done by discovering what breaks,
+and it is the phase most damaged by making each discovery cost an issue first. What
+happens there is captured the same way everything else has been: in the PR body, and in
+`docs/adr/` when a decision outlives the work.
+
+**From 0.10.0 — every PR traces to an issue**, labeled with a type (`enhancement`, `bug`,
 `documentation`) and a milestone, cross-linked with closing keywords (`Closes #12`). By
-then the schema is stable, migrations are forward-only, and knowing why a change landed
-matters more than the speed of landing it.
+then the schema is stable, the failure modes have defined behavior, and the remaining work
+is verification and documentation against a fixed target. From that point a change is a
+candidate for release rather than a step toward one, and knowing why it landed matters more
+than the speed of landing it.
 
 ### Where the "why" lives when there is no issue
 
