@@ -225,8 +225,11 @@ form {
   flex-wrap: wrap;
 }
 
+/* Sized like `select` and `textarea`, and for the same reason: every one of these sits
+   inside a `label`, which is a *column* flex container. `flex-basis` in a column
+   container is the **height**, so a shorthand like `flex: 1 1 14rem` written for a row
+   silently becomes a 14rem-tall text box. Width belongs to `width`, not to `flex`. */
 input {
-  flex: 1 1 14rem;
   padding: 0.45rem 0.6rem;
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -234,6 +237,23 @@ input {
   color: var(--text);
   font-size: 0.9rem;
   font-family: inherit;
+  width: 100%;
+}
+
+/* The one place inputs really are laid out in a row: the host registration form, whose
+   two fields share a line with the button. Scoped to direct children so it cannot leak
+   back into a label. */
+form > input {
+  flex: 1 1 14rem;
+  width: auto;
+}
+
+/* Never stretched. A checkbox has an intrinsic size and no useful larger one, and it is
+   the control most likely to end up in a flex container written for text fields. */
+input[type="checkbox"],
+input[type="radio"] {
+  flex: none;
+  width: auto;
 }
 
 button {
@@ -489,6 +509,43 @@ select[multiple] {
   color: var(--danger);
 }
 
+/* One row of controls above the thing they act on, so the relationship is positional
+   rather than something the reader has to infer. Used across every view and — until now —
+   defined in none of them, which left each control a full-width block on its own line.
+
+   `align-items: flex-end` so a labelled control and a bare button share a baseline at the
+   bottom: the label text sits above its input, and without this the button floats to the
+   middle of the taller neighbour. */
+.toolbar {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+/* Controls size to their content rather than splitting the row evenly; a name field and
+   a two-digit count should not be the same width. */
+.toolbar > label {
+  flex: 0 1 auto;
+}
+
+/* In a row, a control sizes to its own content. `width: 100%` is right in a stacked form,
+   where the label spans the column — but here the label is shrink-to-fit, so a percentage
+   resolves against a box narrower than the text it has to hold and the value spills past
+   its own border. Bounded at both ends so a long option cannot push the row off-screen.
+   Checkboxes are excluded: they have an intrinsic size and no useful larger one. */
+.toolbar select,
+.toolbar input:not([type="checkbox"]):not([type="radio"]) {
+  width: auto;
+  min-width: 8rem;
+  max-width: 22rem;
+}
+
+.toolbar:last-child {
+  margin-bottom: 0;
+}
+
 /* The shared filter bar. Sits above the charts rather than inside any one of them,
    because the selection applies to all of them. */
 .filters {
@@ -513,6 +570,9 @@ select[multiple] {
 
 .chip {
   display: flex;
+  /* A chip is a checkbox beside its label, not above it. `label` defaults to a column
+     here, so the direction has to be stated rather than inherited. */
+  flex-direction: row;
   align-items: center;
   gap: 0.25rem;
   font-size: 0.85rem;
