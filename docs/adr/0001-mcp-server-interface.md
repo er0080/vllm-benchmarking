@@ -1,10 +1,11 @@
 # ADR 0001 — MCP server for agent-driven benchmarking
 
 - **Status:** accepted
+- **Date:** 2026-08-16
+- **Milestone:** 0.6.0 — Agent interface (MCP)
 - **Issue:** #2
 - **Accepted in:** #4
 - **Graduated from proposal in:** #5
-- **Milestone:** 0.6.0
 - **Supersedes:** nothing
 
 > Accepted. The decisions below are binding; changing one requires a superseding ADR, not

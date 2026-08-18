@@ -34,6 +34,8 @@ more replicates, not a different config.
 
 ## Pareto frontier — which configurations are worth keeping
 
+*Analysis tab.*
+
 **Axes:** per-GPU total throughput (tok/s/GPU) against per-user output rate
 (1000 / mean TPOT — the generation speed one request actually experiences).
 
@@ -71,6 +73,8 @@ the frontier itself has to move — that is a configuration change (KV cache hea
 
 ## Response to load — where this configuration saturates
 
+*Load tab.*
+
 **Axes:** throughput and latency against offered load (concurrency or request rate).
 
 Every serving configuration has a knee. Below it, added load buys throughput. Above it,
@@ -97,6 +101,8 @@ knee yet — extend the sweep rather than concluding.
 ---
 
 ## The telemetry timeline — why it saturated
+
+*Run detail page.*
 
 A run detail page carries KV cache utilization, running and waiting queue depth, and
 preemption counts, sampled every second alongside the benchmark. This is the view that
@@ -141,6 +147,8 @@ thrown away and redone, so the throughput cost is larger than the count suggests
 
 ## Tensor-parallel scaling — should this model get more cards
 
+*Scaling tab.*
+
 **Curve:** per-GPU throughput against tensor-parallel width, with efficiency relative to
 the narrowest width measured.
 
@@ -176,6 +184,8 @@ better than one TP=2 server, and that is a supported comparison rather than a he
 
 ## Per-device balance — is this run what it looks like
 
+*Balance tab.*
+
 **Chart:** SM utilization, memory, power and clocks for every device in the run,
 attributed per device rather than averaged.
 
@@ -199,6 +209,8 @@ clocks reveal a thermally limited card, which is a host problem rather than a co
 ---
 
 ## Compare two points — what actually differed
+
+*Compare tab.*
 
 Pick two points and read the config diff beside the metric diff. Use it when a result is
 surprising: the usual explanation is that the two configurations differ in something other

@@ -4,8 +4,8 @@ Milestones are ordered so that each one ends with something demonstrably working
 a layer that only pays off later. The first real proof point is 0.2.0 — one config, one
 workload, one number, in the database, on screen.
 
-Versions are pre-1.0 and make no compatibility promises. The database schema may change
-destructively before 0.9.0.
+Versions are pre-1.0 and make no compatibility promises. The database schema settled at
+0.9.0 and is forward-only from there (ADR 0007).
 
 ---
 
@@ -23,11 +23,13 @@ Scaffolding only. Nothing measures anything yet.
 - [x] Control plane can register a GPU host and display its facts
 - [x] **Mock agent** behind `--profile dev` — synthetic results and telemetry, so the
       control plane and UI are developable with no GPU host present
-- [ ] ~~**Fake `vllm` shim** for agent lifecycle tests~~ — superseded. The real vLLM CPU
-      backend runs in CI in ~40s and validates the *actual* upstream contract, which a
-      shim can only ever validate our assumptions about. Revisit only if a failure mode
-      is needed that real vLLM cannot be made to produce on cue (crash during model
-      load, for instance).
+- [x] **Fake `vllm` shim** for agent lifecycle tests — deferred at first, then built,
+      because the revisit condition this item named was met. The real CPU backend runs in
+      CI in ~40s and validates the *actual* upstream contract, so it owns that job; the
+      shim exists for the opposite one, producing on cue the failures a working server
+      cannot be asked for — dying mid-load, hanging without ever becoming ready, ignoring
+      SIGTERM, exiting zero without writing a result. It lives at
+      `packages/agent/tests/fixtures/fake_vllm`.
 - [x] `pre-commit` with ruff, pyright, tsc
 - [x] CI tier 1 (lint, types, unit) and tier 2 (postgres, mock agent, real vLLM on the CPU
       backend, image builds)
@@ -363,12 +365,27 @@ issue, cross-linked with closing keywords. The schema is stable, the failure mod
 defined behavior, and what remains is verification against a fixed target — so a change is
 now a candidate for release rather than a step toward one. See CLAUDE.md.
 
-- [ ] Issue-driven change management in effect — see CLAUDE.md
-- [ ] Quick start verified from a clean control host and a clean GPU host
-- [ ] Agent installation guide
-- [ ] Tuning playbook: how to read the charts and what to change next
-- [ ] Upgrade path documented
-- [ ] Known limitations stated plainly
+- [x] Issue-driven change management in effect — every PR in this milestone traces to a
+      labeled, milestoned issue, cross-linked with closing keywords
+- [x] Quick start verified from a clean control host and a clean GPU host — run from a
+      fresh clone into an empty Docker state, and from a GPU host the agent had been
+      uninstalled from, ending in a real benchmark
+- [x] Agent installation guide — [docs/agent-installation.md](docs/agent-installation.md)
+- [x] Tuning playbook: how to read the charts and what to change next —
+      [docs/tuning-playbook.md](docs/tuning-playbook.md), written off the sweep already
+      recorded rather than from general advice
+- [x] Upgrade path documented — [docs/upgrading.md](docs/upgrading.md), verified by
+      upgrading a deployment two revisions behind that held 83 real runs
+- [x] Known limitations stated plainly — [docs/limitations.md](docs/limitations.md)
+
+**Done when:** somebody who has never seen this repository can stand the stack up, take a
+measurement, and know what it does not do.
+
+**Status:** complete. Running the quick start against nothing is what made it a
+verification rather than a proofread: it is the only condition under which a missing step
+is visible. Two things were found that way — an install check whose success was silence,
+and an upgrade instruction that was a no-op because `uv` sees an unchanged version string
+and does nothing.
 
 ---
 

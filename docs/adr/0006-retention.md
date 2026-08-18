@@ -4,6 +4,13 @@
 - **Date:** 2026-08-18
 - **Milestone:** 0.9.0 — Hardening
 - **Issue:** none — issues were optional at this milestone; see CLAUDE.md
+- **Supersedes:** nothing
+
+> Accepted. The decisions below are binding; changing one requires a superseding ADR, not
+> an edit to this file. Rejected alternatives are retained deliberately — they are the
+> record of why the project is not doing the obvious other thing.
+
+---
 
 ## Context
 

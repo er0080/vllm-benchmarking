@@ -170,20 +170,21 @@ The agent runs on the machine under test. Its resource footprint is part of its 
 
 ## Development workflow
 
-### Issues: optional now, required from 0.10.0
+### Issues: required from 0.10.0, which is now
 
 Process rigor is staged deliberately. Development (**0.1.0 through 0.9.0**) favors rapid
 iteration; release candidacy (**0.10.0 onward**) favors an auditable trail. The rules
 change at that boundary, and only there.
 
-**Through 0.9.0 — issues are optional.** Open one when it earns its keep:
+**Through 0.9.0 — issues were optional**, opened only when one earned its keep:
 
 - Design work with real alternatives to weigh
 - External feedback or a bug report
 - Work spanning several PRs that needs a place to be tracked
 
-Otherwise go straight to a branch and a PR. A one-line issue that exists only to be
-referenced by a PR is bureaucracy, not change management.
+Everything else went straight to a branch and a PR. A one-line issue that exists only to
+be referenced by a PR is bureaucracy, not change management, and that judgement is what
+the earlier window was for.
 
 Hardening (0.9.0) is deliberately inside the relaxed window rather than the first
 milestone outside it. That milestone defines the behavior of every failure mode in the
@@ -193,9 +194,9 @@ happens there is captured the same way everything else has been: in the PR body,
 `docs/adr/` when a decision outlives the work.
 
 **From 0.10.0 — every PR traces to an issue**, labeled with a type (`enhancement`, `bug`,
-`documentation`) and a milestone, cross-linked with closing keywords (`Closes #12`). By
-then the schema is stable, the failure modes have defined behavior, and the remaining work
-is verification and documentation against a fixed target. From that point a change is a
+`documentation`) and a milestone, cross-linked with closing keywords (`Closes #12`). This
+is in effect now. The schema is stable, the failure modes have defined behavior, and the
+remaining work is verification and documentation against a fixed target. A change is now a
 candidate for release rather than a step toward one, and knowing why it landed matters more
 than the speed of landing it.
 
@@ -251,6 +252,9 @@ agent's contract changes, the mock changes in the same PR.
 
 `pre-commit` runs `ruff` (lint and format), `pyright`, and `tsc --noEmit`. Do not bypass
 with `--no-verify`; if a hook is wrong, fix the hook.
+
+`make check` runs everything CI tier 1 runs — lint, types, version lockstep, unit tests —
+which is the cheapest way to find out before pushing.
 
 ### Versioning
 

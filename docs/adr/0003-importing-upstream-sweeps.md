@@ -1,8 +1,9 @@
 # ADR 0003 — Imported results declare the provenance their files cannot carry
 
 - **Status:** accepted
+- **Date:** 2026-08-17
+- **Milestone:** 0.8.0 — Interop
 - **Issue:** none — issues were optional at this milestone; see CLAUDE.md
-- **Milestone:** 0.8.0
 - **Supersedes:** nothing
 
 > Accepted. The decisions below are binding; changing one requires a superseding ADR, not
