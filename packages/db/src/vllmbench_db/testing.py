@@ -58,3 +58,10 @@ def test_database_url() -> str:
     return os.environ.get(
         "DATABASE_URL", "postgresql+psycopg://vllmbench:vllmbench@localhost:5432/vllmbench"
     )
+
+
+# pytest collects by name, so this helper is otherwise gathered as a test in every module
+# that imports it — a passing item that asserts nothing, and a warning on every run.
+# `__test__` is pytest's documented opt-out; it is not part of the function type, hence
+# the ignore.
+test_database_url.__test__ = False  # type: ignore[attr-defined]

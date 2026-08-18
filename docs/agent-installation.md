@@ -17,12 +17,12 @@ Install into the **vLLM environment**, from git:
 
 ```bash
 source /path/to/vllm-env/.venv/bin/activate
-uv pip install "git+https://github.com/er0080/vllm-benchmarking@main#subdirectory=packages/agent"
+uv pip install "git+https://github.com/er0080/vllm-benchmarking@v1.0.0rc1#subdirectory=packages/agent"
 ```
 
-Replace `@main` with a release tag — `@v1.0.0rc1` — to pin the host to a known commit.
-`pip show` and `direct_url.json` record which one, which is better provenance than a
-directory path.
+Pinned to a tag, so the host is on a known commit — `pip show` and `direct_url.json`
+record which one, which is better provenance than a directory path. `@main` tracks the
+tip instead, which is what a development host wants and a measurement host does not.
 
 Two things about that command are deliberate.
 
@@ -172,7 +172,7 @@ rather than producing subtly wrong data mid-sweep.
 systemctl --user stop vllmbench-agent
 source /path/to/vllm-env/.venv/bin/activate
 uv pip install --reinstall \
-  "git+https://github.com/er0080/vllm-benchmarking@main#subdirectory=packages/agent"
+  "git+https://github.com/er0080/vllm-benchmarking@v1.0.0rc1#subdirectory=packages/agent"
 systemctl --user start vllmbench-agent
 ```
 

@@ -7,7 +7,7 @@ This project wraps the [vLLM Benchmark CLI](https://docs.vllm.ai/en/v0.25.1/benc
 with the things it does not provide: durable result storage, run history, cross-sweep
 comparison, configuration lineage, and a visual interface for parameter tuning.
 
-> **Status:** pre-release. See [ROADMAP.md](ROADMAP.md) for the path to 1.0.0.
+> **Status:** 1.0.0rc1 — release candidate. See [ROADMAP.md](ROADMAP.md) for what remains.
 
 ---
 
@@ -26,7 +26,7 @@ This framework:
 - **Displays** them as Pareto frontiers, saturation curves, and per-run timelines.
 - **Stores** server configurations as native vLLM YAML, directly usable with `vllm serve --config`.
 - **Exposes** all of the above over MCP, so Claude Code and similar agent harnesses can
-  drive a tuning loop directly. Planned for 0.6.0; see [ADR 0001](docs/adr/0001-mcp-server-interface.md).
+  drive a tuning loop directly. See [ADR 0001](docs/adr/0001-mcp-server-interface.md).
 
 ---
 
@@ -178,7 +178,7 @@ Install it **into the vLLM environment**, from git:
 
 ```bash
 source /path/to/vllm-env/.venv/bin/activate
-uv pip install "git+https://github.com/er0080/vllm-benchmarking@main#subdirectory=packages/agent"
+uv pip install "git+https://github.com/er0080/vllm-benchmarking@v1.0.0rc1#subdirectory=packages/agent"
 ```
 
 Give it the same token, in a file rather than on a command line where `ps` can read it,
@@ -249,6 +249,6 @@ synthetic at the moment of creation and can never be charted beside a real measu
 - [docs/upgrading.md](docs/upgrading.md) — moving a running deployment forward, and what cannot be rolled back
 - [docs/limitations.md](docs/limitations.md) — what this release does not do
 - [docs/adr/](docs/adr/) — accepted architecture decisions and the alternatives they rejected
-- [docs/hardware-verification.md](docs/hardware-verification.md) — code paths built without a GPU and awaiting verification on real hardware
+- [docs/hardware-verification.md](docs/hardware-verification.md) — what real hardware found, and what it confirmed
 - [vLLM Benchmark CLI](https://docs.vllm.ai/en/v0.25.1/benchmarking/cli/) — upstream reference
 - [vLLM Parameter Sweeps](https://docs.vllm.ai/en/v0.25.1/benchmarking/sweeps/) — upstream sweep tooling
