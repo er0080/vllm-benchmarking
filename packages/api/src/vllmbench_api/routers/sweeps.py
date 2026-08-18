@@ -19,10 +19,11 @@ from __future__ import annotations
 import logging
 import uuid
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Response, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from vllmbench_api.analysis import RunSource
 from vllmbench_api.deps import SessionDep
 from vllmbench_api.duration import (
     DurationEstimate,
@@ -32,6 +33,8 @@ from vllmbench_api.duration import (
     plan_engine_loads,
 )
 from vllmbench_api.hashing import config_hash, normalize_yaml
+from vllmbench_api.reports import render_sweep_report
+from vllmbench_api.routers.analysis import analysis_points
 from vllmbench_api.schemas import DurationEstimateOut, SweepCreate, SweepOut, SweepProgress
 from vllmbench_api.sweep_plan import (
     SweepPlanError,
@@ -380,3 +383,38 @@ async def cancel_sweep(sweep_id: uuid.UUID, session: SessionDep) -> SweepOut:
     await session.commit()
     log.info("sweep %s cancelled; %d queued runs cancelled with it", sweep_id, len(queued))
     return await _to_out(session, sweep)
+
+
+@router.get("/{sweep_id}/report")
+async def sweep_report(
+    sweep_id: uuid.UUID,
+    session: SessionDep,
+    download: bool = False,
+) -> Response:
+    """One sweep written out as markdown, for handing to someone who does not run this.
+
+    The same report the MCP resource serves — one implementation, so the two cannot come
+    to disagree about what a sweep measured.
+
+    Shareable means self-contained: the caveats are inline rather than appended, the
+    synthetic banner precedes any number, and each comparability group is its own section
+    with its own heading. A recipient reading only the tables still cannot put two GPU
+    models in one comparison, because they were never in one table.
+    """
+    sweep = await get_sweep(sweep_id, session)
+    analysis = await analysis_points(
+        session,
+        source=RunSource.SYNTHETIC if sweep.is_synthetic else RunSource.REAL,
+        sweep_id=[sweep_id],
+    )
+    body = render_sweep_report(sweep, analysis)
+
+    headers = {}
+    if download:
+        stem = "".join(c if c.isalnum() or c in "-_" else "-" for c in sweep.name.lower())
+        headers["Content-Disposition"] = (
+            f'attachment; filename="{stem.strip("-") or "sweep"}-{str(sweep_id)[:8]}.md"'
+        )
+    # text/markdown so a browser shows it and a client can render it; the bytes are the
+    # same either way.
+    return Response(content=body, media_type="text/markdown; charset=utf-8", headers=headers)

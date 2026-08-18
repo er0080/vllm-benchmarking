@@ -319,6 +319,17 @@ class Run(Base):
     # this fake" into "the run errors". Failing closed here means recording it.
     synthetic_source: Mapped[str | None] = mapped_column(String(32))
 
+    #: Where this run came from, when it was not measured by this framework. Null for a
+    #: run this control plane orchestrated; otherwise a description of the source, e.g.
+    #: "vllm bench sweep serve · <experiment>".
+    #:
+    #: Never null for an imported run, because the provenance on such a run was *declared
+    #: by an operator rather than observed* — the upstream output carries no vLLM version,
+    #: GPU model or device count at all (ADR 0003). A GPU model NVML reported and one a
+    #: person typed are different kinds of fact, and a chart that cannot tell them apart
+    #: will eventually be asked to explain a discrepancy nobody can resolve.
+    imported_from: Mapped[str | None] = mapped_column(String(200), index=True)
+
     initiated_by: Mapped[InitiatedBy] = mapped_column(_enum(InitiatedBy, "initiated_by"))
     initiated_by_client: Mapped[str | None] = mapped_column(String(128))
 

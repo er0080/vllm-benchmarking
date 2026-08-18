@@ -191,6 +191,9 @@ class RunRecord:
     bench_client_location: str
     driver_version: str | None = None
     cuda_version: str | None = None
+    #: Set when this run was imported rather than measured here, so its hardware and
+    #: vLLM version were *declared by a person* rather than observed by an agent.
+    imported_from: str | None = None
 
     # Point identity
     config_hash: str = ""
@@ -289,6 +292,25 @@ def group_warnings(records: Sequence[RunRecord]) -> list[str]:
     ):
         if len(values) > 1:
             warnings.append(f"mixed {label}: {', '.join(sorted(values))}")
+
+    # Imported runs sit in a group because their *declared* provenance matched, not
+    # because anything observed it. That is a weaker claim than the rest of the group
+    # rests on, and ADR 0003 says it is stated rather than assumed — this is the "group
+    # or warn, never silently overlay" rule applied to a difference we cannot see.
+    imported = {r.imported_from for r in records if r.imported_from}
+    if imported:
+        measured = sum(1 for r in records if not r.imported_from)
+        sources = ", ".join(sorted(imported))
+        if measured:
+            warnings.append(
+                f"mixes {measured} measured run(s) with imported ones ({sources}); the "
+                "imported hardware and vLLM version were declared by a person, not observed"
+            )
+        else:
+            warnings.append(
+                f"imported from {sources}; hardware and vLLM version were declared by a "
+                "person, not observed"
+            )
     return warnings
 
 

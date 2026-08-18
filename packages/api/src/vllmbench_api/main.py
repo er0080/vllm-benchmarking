@@ -15,7 +15,7 @@ from fastapi import FastAPI
 from sqlalchemy import text
 
 from vllmbench_api.mcp_server import build_mcp_server, mount_mcp
-from vllmbench_api.routers import analysis, audit, hosts, runs, sweeps, views
+from vllmbench_api.routers import analysis, audit, hosts, imports, runs, sweeps, views
 from vllmbench_api.settings import ApiSettings
 from vllmbench_db.schema_version import check_schema_version
 from vllmbench_db.session import create_engine, create_session_factory
@@ -82,6 +82,7 @@ app = FastAPI(
 app.include_router(analysis.router)
 app.include_router(audit.router)
 app.include_router(hosts.router)
+app.include_router(imports.router)
 app.include_router(runs.router)
 app.include_router(sweeps.router)
 app.include_router(views.router)
