@@ -30,8 +30,9 @@ from vllmbench_agent.hardware import (
 from vllmbench_agent.settings import AgentSettings
 from vllmbench_agent.telemetry import TelemetrySampler
 from vllmbench_agent.vllm_server import ServerError, VllmServer
+from vllmbench_agent.workspace import DiskFull, disk_space, require_headroom, sweep_stale_workdirs
 from vllmbench_protocol import PROTOCOL_VERSION, __version__
-from vllmbench_protocol.failures import FAILURE_KIND_HEADER
+from vllmbench_protocol.failures import FAILURE_KIND_HEADER, FailureKind
 from vllmbench_protocol.logging import configure_logging
 from vllmbench_protocol.wire import (
     BenchRequest,
@@ -59,6 +60,16 @@ def create_app(settings: AgentSettings | None = None) -> FastAPI:
         # Before serving. If a previous agent lifetime left a vLLM server holding VRAM,
         # the next start fails to allocate and nothing on the box explains why.
         server.reap_orphans()
+        # Same principle, one level down: a SIGKILL skips the `finally` that removes a
+        # working directory, and nothing else on the box knows those were ours.
+        sweep_stale_workdirs()
+        space = disk_space()
+        log.info(
+            "%.1f GB free on %s (%.0f%%)",
+            space.free_bytes / 1e9,
+            space.path,
+            space.free_fraction * 100,
+        )
         try:
             yield
         finally:
@@ -119,12 +130,22 @@ def create_app(settings: AgentSettings | None = None) -> FastAPI:
     @app.post("/server/start", response_model=ServerStatus, dependencies=[Depends(require_token)])
     async def server_start(request: StartServerRequest) -> ServerStatus:
         try:
+            # Before the model load, not after. vLLM writes a compile cache and may pull
+            # weights; discovering there is no room for either an hour in is the failure
+            # this converts into an immediate refusal.
+            require_headroom(settings.min_free_disk_bytes)
             return await server.start(
                 config_yaml=request.config_yaml,
                 config_hash=request.config_hash,
                 port=request.port,
                 readiness_timeout_seconds=request.readiness_timeout_seconds,
             )
+        except DiskFull as exc:
+            raise HTTPException(
+                status_code=status.HTTP_507_INSUFFICIENT_STORAGE,
+                detail=str(exc),
+                headers={FAILURE_KIND_HEADER: FailureKind.HOST_DISK_FULL.value},
+            ) from exc
         except ServerError as exc:
             # 409 rather than 500: the request was well-formed, the host was not in a
             # state to satisfy it. The detail carries the server's own log tail, which
@@ -152,6 +173,15 @@ def create_app(settings: AgentSettings | None = None) -> FastAPI:
                     "Benchmarking a server that is still loading measures the loader."
                 ),
             )
+
+        try:
+            require_headroom(settings.min_free_disk_bytes)
+        except DiskFull as exc:
+            raise HTTPException(
+                status_code=status.HTTP_507_INSUFFICIENT_STORAGE,
+                detail=str(exc),
+                headers={FAILURE_KIND_HEADER: FailureKind.HOST_DISK_FULL.value},
+            ) from exc
 
         if request.reset_caches_first:
             await server.reset_caches()

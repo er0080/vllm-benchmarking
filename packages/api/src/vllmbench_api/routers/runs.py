@@ -44,6 +44,7 @@ from vllmbench_db.models import (
     GpuHost,
     GpuSample,
     Run,
+    RunTelemetryPruned,
     ServerConfig,
     Workload,
 )
@@ -526,10 +527,16 @@ async def get_run_telemetry(
         ).scalars()
     )
 
+    # An empty series needs its explanation attached, not inferred. "The policy removed
+    # this" and "sampling failed" look identical on a chart and mean opposite things.
+    pruned = await session.get(RunTelemetryPruned, run_id)
+
     return RunTelemetryOut(
         run_id=run_id,
         engine=[EngineSampleOut.model_validate(s) for s in engine],
         gpu=[GpuSampleOut.model_validate(s) for s in gpu],
+        pruned_at=pruned.pruned_at if pruned else None,
+        pruned_horizon_days=pruned.horizon_days if pruned else None,
         # From the counts, not from what came back. These are the devices that sampled,
         # which is a fact about the run rather than about this response.
         gpu_indices=sorted(per_device),

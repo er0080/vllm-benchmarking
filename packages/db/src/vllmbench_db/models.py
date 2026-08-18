@@ -445,6 +445,30 @@ class RunSummary(Base):
     run: Mapped[Run] = relationship(back_populates="summary", lazy="raise_on_sql")
 
 
+class RunTelemetryPruned(Base):
+    """That a run's telemetry was deleted under a retention policy, rather than missing.
+
+    Its own table, not a column on ``run``, for two independent reasons. A terminal run is
+    immutable and a database trigger enforces it; and this is data *about* a run rather
+    than a correction to what the run measured.
+
+    Without this row, a run detail page with an empty timeline is indistinguishable from a
+    run whose telemetry failed to record — and those call for opposite responses. One is
+    the retention policy working; the other is a sampling bug that has been silently
+    losing diagnostic data.
+    """
+
+    __tablename__ = "run_telemetry_pruned"
+
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("run.id", ondelete="CASCADE"), primary_key=True
+    )
+    pruned_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True))
+    #: The horizon in force when this ran, so a later reader can tell whether the absence
+    #: is explained by the policy they are looking at or by an older, stricter one.
+    horizon_days: Mapped[int] = mapped_column(Integer)
+
+
 # ---------------------------------------------------------------------------
 # Telemetry — append-only
 # ---------------------------------------------------------------------------

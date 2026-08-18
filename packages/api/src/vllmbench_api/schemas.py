@@ -324,6 +324,14 @@ class RunTelemetryOut(BaseModel):
     run_id: uuid.UUID
     engine: list[EngineSampleOut]
     gpu: list[GpuSampleOut]
+
+    #: When this run's telemetry was deleted by the retention policy, if it was.
+    #:
+    #: Without it an empty timeline has two readings — the policy removed it, or sampling
+    #: silently failed — and those call for opposite responses. A chart that cannot tell
+    #: them apart eventually has someone debugging a sampler that works fine.
+    pruned_at: dt.datetime | None = None
+    pruned_horizon_days: int | None = None
     # The devices that actually produced samples, so a client can build one series per
     # device without scanning the whole payload first. Counted over the whole series,
     # never over what a downsampled response happens to carry: a device that exists is
@@ -832,3 +840,47 @@ class SavedViewOut(BaseModel):
     filters: dict[str, Any] = Field(default_factory=dict)
     options: dict[str, Any] = Field(default_factory=dict)
     created_at: dt.datetime
+
+
+# ---------------------------------------------------------------------------
+# Storage and retention
+# ---------------------------------------------------------------------------
+
+
+class TableUsageOut(BaseModel):
+    name: str
+    rows: int
+    total_bytes: int
+    #: Whether retention may ever delete from this table, and the reason it may not.
+    #: Surfaced rather than kept internal: an operator looking at a large table needs to
+    #: know immediately whether it is reclaimable or whether it is the results.
+    protected: bool
+    protected_because: str | None = None
+
+
+class StorageOut(BaseModel):
+    total_bytes: int
+    tables: list[TableUsageOut]
+
+    engine_samples: int
+    gpu_samples: int
+    oldest_sample_at: dt.datetime | None = None
+
+    #: Telemetry bytes per hour of benchmarking, measured from this database's own
+    #: history. Null until there is something to measure — a made-up number here would be
+    #: worse than silence, since it is what someone would size a disk against.
+    bytes_per_run_hour: int | None = None
+
+    runs_with_telemetry: int = 0
+    runs_pruned: int = 0
+
+
+class PruneOut(BaseModel):
+    cutoff: dt.datetime
+    runs: int
+    engine_samples: int
+    gpu_samples: int
+    bytes_reclaimed: int
+    #: True unless the caller passed `confirm=true`. The default answer to "what would
+    #: this remove" is a number, not a removal.
+    dry_run: bool

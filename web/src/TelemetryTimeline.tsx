@@ -284,6 +284,21 @@ export function TelemetryTimeline({ runId }: { runId: string }) {
   if (!data) return <p className="muted">Loading telemetry…</p>;
 
   if (data.sample_count === 0) {
+    // Pruned and never-recorded look identical here and mean opposite things — the
+    // retention policy working, versus sampling that has been failing silently. Saying
+    // which is the whole reason the pruning is recorded rather than merely done.
+    if (data.pruned_at) {
+      return (
+        <p className="muted">
+          Telemetry for this run was removed by the retention policy on{" "}
+          {new Date(data.pruned_at).toLocaleDateString()}
+          {data.pruned_horizon_days
+            ? ` (runs older than ${data.pruned_horizon_days} days)`
+            : ""}
+          . The measurement itself is unaffected.
+        </p>
+      );
+    }
     return (
       <p className="muted">
         No telemetry for this run. Runs recorded before 0.3.0 have none, and an agent

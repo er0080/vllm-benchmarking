@@ -284,7 +284,17 @@ along — see CLAUDE.md.
       nothing else can distinguish out-of-memory from a rejected config. Those patterns
       come from output captured off a real vLLM, and an unrecognized failure stays at the
       general kind rather than being guessed into a specific one (ADR 0004)
-- [ ] Disk and retention management for raw results and logs
+- [x] Disk and retention management — sized from measurement rather than guesswork.
+      Telemetry is ~97% of what a run occupies and scales with duration and device count,
+      so it is the only thing retention deletes; the measurement, its summary and the raw
+      payload are protected by name, checked at runtime as well as by test, because
+      `raw_result` is the only way to fix a flattening mistake without re-running weeks of
+      GPU time. A pruned run is recorded as pruned — an empty timeline otherwise reads as
+      a sampling bug rather than as the policy working. Off by default: bounding growth is
+      the point, choosing the bound belongs to whoever owns the results. Agent-side, temp
+      directories left by a SIGKILL are swept at startup and disk headroom is checked
+      before an engine or a benchmark starts. Docker log rotation caps each service at
+      30 MB
 - [x] Agent restart and reconnection semantics — the host-facts probe that opens every run
       tolerates a briefly absent agent, with bounded backoff. Reconnection, not retry:
       nothing is re-measured, because that probe runs before any engine starts. Once the
