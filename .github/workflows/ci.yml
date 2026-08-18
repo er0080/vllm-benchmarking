@@ -295,30 +295,11 @@ jobs:
         # 2 (CLAUDE.md: have tier 2 re-derive the contract from a live server).
         run: |
           VERSION=${{ steps.vllm.outputs.version }}
-          SHIPPED="packages/protocol/src/vllmbench_protocol/data/vllm_serve_args_v${VERSION}.json"
-          docker exec -i vllm-cpu python - < scripts/capture_serve_args.py > "${RUNNER_TEMP}/raw.json"
-          # vLLM logs to stdout before the dump, so keep from the first brace on.
-          python -c "
-          import json, os, pathlib, sys
-          raw = pathlib.Path(os.environ['RUNNER_TEMP'], 'raw.json').read_text()
-          live = json.loads(raw[raw.index('{'):])
-          shipped = json.loads(pathlib.Path(sys.argv[1]).read_text())
-          if live == shipped:
-              print(f\"catalogue matches: {len(live['arguments'])} arguments\")
-              raise SystemExit(0)
-          added = sorted(set(live['arguments']) - set(shipped['arguments']))
-          removed = sorted(set(shipped['arguments']) - set(live['arguments']))
-          changed = sorted(
-              k for k in set(live['arguments']) & set(shipped['arguments'])
-              if live['arguments'][k] != shipped['arguments'][k]
-          )
-          print('::error::the shipped vllm serve argument catalogue is out of date')
-          for label, keys in (('added', added), ('removed', removed), ('changed', changed)):
-              if keys:
-                  print(f'{label}: {\", \".join(keys)}')
-          print('Regenerate with scripts/capture_serve_args.py and commit the result.')
-          raise SystemExit(1)
-          " "$SHIPPED"
+          docker exec -i vllm-cpu python - < scripts/capture_serve_args.py \
+            > "${RUNNER_TEMP}/serve-args.json"
+          uv run python scripts/check_serve_args_catalogue.py \
+            "${RUNNER_TEMP}/serve-args.json" \
+            "packages/protocol/src/vllmbench_protocol/data/vllm_serve_args_v${VERSION}.json"
 
       - name: Contract tests
         env:
