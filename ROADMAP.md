@@ -291,7 +291,14 @@ along — see CLAUDE.md.
       benchmark is running the window is gone, since a lost connection then means a lost
       measurement. The orchestrator also stands down after an unreachable host, so a
       reboot mid-sweep costs a pause rather than the whole remaining queue
-- [ ] Structured logging, no secrets in logs
+- [x] Structured logging, no secrets in logs — JSON lines carrying bound context, so a
+      run's whole trail across three services is a filter rather than a grep. Redaction is
+      by registered *value*, never by pattern: pattern matching cannot know what a
+      deployment's token looks like, and the leaks that actually happen are in text nobody
+      wrote — a Postgres failure quotes the DSN back, password included, from inside the
+      driver. Scrubbing runs in the formatter so it covers lazy `%s` arguments and
+      tracebacks, and uvicorn is unhooked onto the same handler so its access log cannot
+      route around it
 - [ ] Test coverage on the JSON-to-column flattening layer
 - [ ] Migration CI: applied against an empty database and one seeded at the previous tag
 

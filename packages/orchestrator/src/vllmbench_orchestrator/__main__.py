@@ -21,10 +21,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from vllmbench_db.enums import RunStatus, SweepStatus
 from vllmbench_db.models import Run, Sweep
-from vllmbench_db.session import create_engine, create_session_factory
+from vllmbench_db.session import create_engine, create_session_factory, database_password
 from vllmbench_orchestrator.runner import claim_next_run, execute_run
 from vllmbench_orchestrator.settings import OrchestratorSettings
 from vllmbench_protocol import PROTOCOL_VERSION, TRANSIENT_KINDS, __version__
+from vllmbench_protocol.logging import bound, configure_logging
 
 log = logging.getLogger("vllmbench.orchestrator")
 
@@ -139,8 +140,12 @@ async def _poll_once(factory: async_sessionmaker[AsyncSession], token: str) -> P
         watcher = asyncio.create_task(
             _watch_for_cancellation(factory, run.id, run.sweep_id, cancel)
         )
+        # Bound here rather than passed down. Everything logged for the rest of this
+        # run — by the runner, by SQLAlchemy, by httpx — carries these, so "what did
+        # this run do" is a filter rather than a grep across three services' formats.
         try:
-            await execute_run(session, run, token, cancel=cancel)
+            with bound(run_id=str(run.id), sweep_id=str(run.sweep_id) if run.sweep_id else None):
+                await execute_run(session, run, token, cancel=cancel)
         finally:
             watcher.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -153,8 +158,10 @@ async def _poll_once(factory: async_sessionmaker[AsyncSession], token: str) -> P
 
 
 async def main() -> None:
-    logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s %(levelname)-5s [%(name)s] %(message)s"
+    settings = OrchestratorSettings()
+    configure_logging(
+        "orchestrator",
+        secrets=[settings.token, database_password()],
     )
     log.info("orchestrator %s (protocol %d) starting", __version__, PROTOCOL_VERSION)
 
@@ -170,7 +177,6 @@ async def main() -> None:
     try:
         await _wait_for_database(sessions)
 
-        settings = OrchestratorSettings()
         if not settings.token:
             log.warning(
                 "VLLMBENCH_TOKEN is not set; runs will fail to authenticate against the agent"

@@ -75,6 +75,7 @@ explicit discussion, not a refactor.
 | Orchestrator | Python, separate service | Long-running sweeps survive API restarts |
 | Agent | FastAPI (Python), uv package | Deployed to GPU host, not containerized |
 | Frontend | React + Vite + ECharts | Served by nginx |
+| Logging | stdlib `logging`, JSON lines | `vllmbench_protocol.logging`; text on a TTY |
 | Migrations | Alembic | Forward-only, see below |
 | Packaging | uv | Both control plane and agent |
 
@@ -137,6 +138,11 @@ The agent runs on the machine under test. Its resource footprint is part of its 
 - Python: type hints on public functions, `ruff` for lint and format.
 - TypeScript: strict mode on.
 - Secrets come from environment variables. Never commit a token, and never log one.
+  Redaction is not left to care at each call site: every service calls
+  `configure_logging(...)` at startup with the values it holds, and the formatter strips
+  them from the rendered line, traceback included. Add a secret to settings and it must be
+  added there in the same change — a test asserts each service registers what it holds,
+  because the failure mode is otherwise silent until something goes wrong near it.
 - Prefer editing existing files over creating new ones. Do not add documentation files
   that were not asked for.
 

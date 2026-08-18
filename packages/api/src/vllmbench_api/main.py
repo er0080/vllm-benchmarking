@@ -11,15 +11,16 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from sqlalchemy import text
 
 from vllmbench_api.mcp_server import build_mcp_server, mount_mcp
 from vllmbench_api.routers import analysis, audit, hosts, imports, runs, sweeps, views
 from vllmbench_api.settings import ApiSettings
 from vllmbench_db.schema_version import check_schema_version
-from vllmbench_db.session import create_engine, create_session_factory
+from vllmbench_db.session import create_engine, create_session_factory, database_password
 from vllmbench_protocol import PROTOCOL_VERSION, __version__
+from vllmbench_protocol.logging import bound, configure_logging
 
 log = logging.getLogger(__name__)
 
@@ -31,6 +32,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.sessions = create_session_factory(engine)
     settings = ApiSettings()
     app.state.settings = settings
+
+    # Both tokens and the database password, registered before the first request. The
+    # database password is the one that matters most here: nobody ever writes a log line
+    # containing it, but a connection failure quotes the whole DSN back from inside the
+    # driver — including in the health check three lines below.
+    configure_logging(
+        "api",
+        secrets=[settings.token, settings.mcp_token, database_password()],
+    )
 
     # Checked once, at startup. A schema behind the code fails later as an opaque
     # Postgres type error in whatever request happens to write first.
@@ -78,6 +88,20 @@ app = FastAPI(
     docs_url="/api/docs",
     openapi_url="/api/openapi.json",
 )
+
+
+@app.middleware("http")
+async def bind_request_context(request: Request, call_next: Any) -> Any:
+    """Tag everything logged while serving one request.
+
+    The path and method rather than a generated request id: this control plane serves a
+    browser and a handful of agents, not a fleet, and "which endpoint was slow" is the
+    question that actually gets asked. A correlation id would be the right answer for a
+    service behind a load balancer, and is worth adding the day there is one.
+    """
+    with bound(method=request.method, path=request.url.path):
+        return await call_next(request)
+
 
 app.include_router(analysis.router)
 app.include_router(audit.router)

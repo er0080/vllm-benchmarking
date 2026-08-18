@@ -32,6 +32,7 @@ from vllmbench_agent.telemetry import TelemetrySampler
 from vllmbench_agent.vllm_server import ServerError, VllmServer
 from vllmbench_protocol import PROTOCOL_VERSION, __version__
 from vllmbench_protocol.failures import FAILURE_KIND_HEADER
+from vllmbench_protocol.logging import configure_logging
 from vllmbench_protocol.wire import (
     BenchRequest,
     BenchResponse,
@@ -216,10 +217,9 @@ def main() -> None:
     import uvicorn
 
     settings = AgentSettings()  # type: ignore[call-arg]
-    logging.basicConfig(
-        level=settings.log_level.upper(),
-        format="%(asctime)s %(levelname)-5s [%(name)s] %(message)s",
-    )
+    # The token is registered before anything else runs, so there is no window in which
+    # a startup failure could quote it.
+    configure_logging("agent", level=settings.log_level, secrets=[settings.token])
     log.info(
         "agent %s (protocol %d) listening on %s:%d",
         __version__,
@@ -227,4 +227,6 @@ def main() -> None:
         settings.host,
         settings.port,
     )
-    uvicorn.run(create_app(settings), host=settings.host, port=settings.port)
+    # log_config=None: uvicorn otherwise installs its own handlers over ours, and its
+    # access log would then bypass the redaction entirely.
+    uvicorn.run(create_app(settings), host=settings.host, port=settings.port, log_config=None)
