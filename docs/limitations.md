@@ -87,6 +87,14 @@ figure for your database.
 host is yours. A version mismatch against `VLLM_REFERENCE_VERSION` is recorded and warned
 about, never blocked.
 
+**Installing the agent into the vLLM environment can move that environment's packages.**
+The agent declares dependency floors and vLLM declares ceilings, and nothing arbitrates
+between them in a shared venv: a resolution that satisfies the agent can leave vLLM outside
+its own declared constraints. `uv pip check` after installing will say so. Tracked in
+[#60](https://github.com/er0080/vllm-benchmarking/issues/60); until it is resolved, check
+after installing, and prefer `VLLMBENCH_VLLM_BIN` with a separate environment on a host
+where that matters.
+
 **Windows is not supported.** Linux, or macOS with Colima, on the control host; Linux on
 the GPU host.
 

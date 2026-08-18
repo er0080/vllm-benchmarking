@@ -29,8 +29,10 @@ how to avoid triggering it.
    docker compose up -d --build
    ```
 
-4. **Upgrade every agent**, with `--reinstall` — without it `uv` sees the same package
-   version and does nothing even though the tag moved. See
+4. **Upgrade every agent**, with `--reinstall-package` for each of `vllmbench-agent` and
+   `vllmbench-protocol`. Without a reinstall flag `uv` does nothing when the version is
+   unchanged; with the bare `--reinstall` it reinstalls the whole resolution, including
+   the vLLM environment's own packages. See
    [agent-installation.md](agent-installation.md#6-upgrade).
 
 5. **Verify both ends.**

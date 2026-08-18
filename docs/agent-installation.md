@@ -171,14 +171,22 @@ rather than producing subtly wrong data mid-sweep.
 ```bash
 systemctl --user stop vllmbench-agent
 source /path/to/vllm-env/.venv/bin/activate
-uv pip install --reinstall \
+uv pip install \
+  --reinstall-package vllmbench-agent --reinstall-package vllmbench-protocol \
   "git+https://github.com/er0080/vllm-benchmarking@v1.0.0rc1#subdirectory=packages/agent"
 systemctl --user start vllmbench-agent
 ```
 
-`--reinstall` is required. Without it `uv` sees the same package version and does nothing,
-even though the tag moved. See [upgrading.md](upgrading.md) for the whole-deployment
-order of operations.
+Some form of reinstall flag is required: without one, `uv` sees a package version it
+already has and does nothing, even though the tag moved — which leaves the old agent in
+place and is exactly the stale agent the handshake exists to catch.
+
+Use `--reinstall-package`, not `--reinstall`. The bare flag applies to the whole
+resolution, so in a shared vLLM environment it reinstalls that environment's packages too
+and can move their versions. This is the machine whose behavior a measurement depends on;
+nothing the agent does should perturb it.
+
+See [upgrading.md](upgrading.md) for the whole-deployment order of operations.
 
 Upgrading vLLM itself is a separate decision and the agent does not manage it. A GPU host
 running a different vLLM version from `VLLM_REFERENCE_VERSION` is recorded and warned
