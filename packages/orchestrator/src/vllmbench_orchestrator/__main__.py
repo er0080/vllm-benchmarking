@@ -14,6 +14,7 @@ import contextlib
 import logging
 import signal
 import uuid
+from typing import NamedTuple
 
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -23,14 +24,40 @@ from vllmbench_db.models import Run, Sweep
 from vllmbench_db.session import create_engine, create_session_factory
 from vllmbench_orchestrator.runner import claim_next_run, execute_run
 from vllmbench_orchestrator.settings import OrchestratorSettings
-from vllmbench_protocol import PROTOCOL_VERSION, __version__
+from vllmbench_protocol import PROTOCOL_VERSION, TRANSIENT_KINDS, __version__
 
 log = logging.getLogger("vllmbench.orchestrator")
+
+
+class PollResult(NamedTuple):
+    """What one poll iteration did, and what the loop should do next.
+
+    ``host_unreachable`` is separate from ``worked`` because they call for opposite
+    responses: work found means come straight back for more, a host that is not
+    answering means stand off for a while.
+    """
+
+    worked: bool
+    host_unreachable: bool
+
 
 # How often to look for queued work when there is none. Short enough that a run
 # triggered from the UI starts promptly, long enough not to hammer the database while
 # idle overnight.
 POLL_INTERVAL_SECONDS = 2.0
+
+# How long to stand down after a run failed because its host could not be reached.
+#
+# Without this, a host that reboots mid-sweep loses the entire remaining queue in a few
+# seconds: each run is claimed, fails its reconnect window, and the next is claimed
+# immediately. Every one of those failures is real and correctly recorded — nothing is
+# hidden — but they are all the same failure, and burning fifty points on one restart is
+# not a defensible response to it.
+#
+# Deliberately not a retry, and deliberately not per-host. It only slows how fast work is
+# pulled while the last thing we heard from a host was silence; a run that has already
+# failed stays failed, and any queued run is still executed exactly once.
+UNREACHABLE_BACKOFF_SECONDS = 30.0
 
 
 async def _wait_for_database(
@@ -97,8 +124,8 @@ async def _watch_for_cancellation(
             log.exception("cancellation watch failed for run %s", run_id)
 
 
-async def _poll_once(factory: async_sessionmaker[AsyncSession], token: str) -> bool:
-    """Claim and execute one run. Returns whether there was work to do.
+async def _poll_once(factory: async_sessionmaker[AsyncSession], token: str) -> PollResult:
+    """Claim and execute one run.
 
     One at a time and deliberately: a GPU host runs a single engine, so a second
     concurrent run would contend for the same VRAM and measure the contention.
@@ -106,7 +133,7 @@ async def _poll_once(factory: async_sessionmaker[AsyncSession], token: str) -> b
     async with factory() as session:
         run = await claim_next_run(session)
         if run is None:
-            return False
+            return PollResult(worked=False, host_unreachable=False)
 
         cancel = asyncio.Event()
         watcher = asyncio.create_task(
@@ -118,7 +145,11 @@ async def _poll_once(factory: async_sessionmaker[AsyncSession], token: str) -> b
             watcher.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await watcher
-        return True
+
+        return PollResult(
+            worked=True,
+            host_unreachable=run.failure_kind in TRANSIENT_KINDS,
+        )
 
 
 async def main() -> None:
@@ -148,16 +179,27 @@ async def main() -> None:
         log.info("polling for queued runs every %.1fs", POLL_INTERVAL_SECONDS)
         while not stopping.is_set():
             try:
-                worked = await _poll_once(sessions, settings.token)
+                result = await _poll_once(sessions, settings.token)
             except Exception:
                 # A crash here would stop every future run, not just this one. Log and
                 # continue; the run itself has already been marked failed with a reason.
                 log.exception("poll iteration failed")
-                worked = False
+                result = PollResult(worked=False, host_unreachable=False)
 
-            if not worked:
+            pause = 0.0
+            if result.host_unreachable:
+                pause = UNREACHABLE_BACKOFF_SECONDS
+                log.warning(
+                    "last run failed with an unreachable host; pausing %.0fs before "
+                    "claiming more work",
+                    pause,
+                )
+            elif not result.worked:
+                pause = POLL_INTERVAL_SECONDS
+
+            if pause:
                 with contextlib.suppress(TimeoutError):
-                    await asyncio.wait_for(stopping.wait(), timeout=POLL_INTERVAL_SECONDS)
+                    await asyncio.wait_for(stopping.wait(), timeout=pause)
     finally:
         log.info("orchestrator stopping")
         await engine.dispose()

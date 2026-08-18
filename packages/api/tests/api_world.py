@@ -18,7 +18,13 @@ import os
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from vllmbench_db.enums import InitiatedBy, ReplicateOrder, RunStatus, SweepStatus
+from vllmbench_db.enums import (
+    FailureKind,
+    InitiatedBy,
+    ReplicateOrder,
+    RunStatus,
+    SweepStatus,
+)
 from vllmbench_db.models import GpuHost, Run, RunSummary, ServerConfig, Sweep, Workload
 
 
@@ -91,6 +97,7 @@ class World:
         *,
         sweep: Sweep | None = None,
         status: RunStatus = RunStatus.SUCCEEDED,
+        failure_kind: FailureKind | str | None = None,
         summary: bool = True,
         tpot: float = 25.0,
         per_gpu: float = 1000.0,
@@ -107,6 +114,14 @@ class World:
             workload_id=workload.id,
             gpu_host_id=host.id,
             status=status,
+            # A failed run names its failure — the check constraint requires it, so a
+            # builder that omitted it would produce rows the schema rejects. Tests that
+            # care which kind pass their own.
+            failure_kind=(
+                failure_kind
+                if failure_kind is not None
+                else (FailureKind.INTERNAL if status is RunStatus.FAILED else None)
+            ),
             finished_at=dt.datetime.now(dt.UTC),
             config_hash=config.config_hash,
             workload_hash=workload.workload_hash,

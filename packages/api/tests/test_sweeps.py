@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from vllmbench_api.main import app as api_app
 from vllmbench_api.settings import ApiSettings
-from vllmbench_db.enums import ReplicateOrder, RunStatus, SweepStatus
+from vllmbench_db.enums import FailureKind, ReplicateOrder, RunStatus, SweepStatus
 from vllmbench_db.models import GpuHost, Run, ServerConfig, Sweep, Workload
 from vllmbench_db.session import create_engine, create_session_factory
 from vllmbench_db.testing import reset_database, test_database_url
@@ -685,6 +685,7 @@ class TestRemainingTimeEstimate:
         )
         died_at = dt.datetime.now(dt.UTC)
         runs[2].status = RunStatus.FAILED
+        runs[2].failure_kind = FailureKind.ENGINE_OUT_OF_MEMORY
         runs[2].started_at = died_at
         runs[2].finished_at = died_at + dt.timedelta(seconds=10)
         await session.commit()

@@ -284,3 +284,75 @@ class TestProtocolCheckPrecedesValidation:
         assert str(PROTOCOL_VERSION) in message
         # Not a validation error about some field name the operator has never heard of.
         assert "extra" not in message.lower()
+
+
+class TestFailureKindHeader:
+    """The agent's verdict has to survive the trip, and cost nothing when it does not.
+
+    The header exists instead of a new wire field precisely so that neither side has to
+    be upgraded in lockstep for the other to keep working — no protocol bump, no
+    redeployment to every GPU host. That claim is worth a test on both halves: it is
+    present and correct when the agent sends it, and its absence changes nothing.
+    """
+
+    async def test_a_failed_start_names_its_kind_in_the_header(
+        self, app, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from vllmbench_agent.vllm_server import ServerError
+        from vllmbench_protocol.failures import FAILURE_KIND_HEADER, FailureKind
+
+        async def refuse(_self, **_kwargs: object):
+            raise ServerError("no memory left", FailureKind.ENGINE_OUT_OF_MEMORY)
+
+        # Patched on the class, which is the object `create_app` closed over an
+        # instance of — reaching for the instance would mean reaching into the closure.
+        from vllmbench_agent.vllm_server import VllmServer
+
+        monkeypatch.setattr(VllmServer, "start", refuse)
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://agent") as raw:
+            response = await raw.post(
+                "/server/start",
+                json={"config_yaml": "model: m\n", "config_hash": "a" * 64, "port": 8000},
+                headers={"Authorization": f"Bearer {TOKEN}"},
+            )
+
+        assert response.status_code == 409
+        assert response.headers[FAILURE_KIND_HEADER] == FailureKind.ENGINE_OUT_OF_MEMORY
+        # The message is still the whole message. The header adds a heading; it does not
+        # replace the only text that says *how much* memory was wanted.
+        assert "no memory left" in response.json()["detail"]
+
+    async def test_the_client_carries_it_onto_the_error(
+        self, app, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from vllmbench_agent.vllm_server import ServerError
+        from vllmbench_protocol import AgentError
+        from vllmbench_protocol.failures import FailureKind
+        from vllmbench_protocol.wire import StartServerRequest
+
+        async def refuse(_self, **_kwargs: object):
+            raise ServerError(
+                "vllm: error: unrecognized arguments: --nope", FailureKind.ENGINE_CONFIG_REJECTED
+            )
+
+        from vllmbench_agent.vllm_server import VllmServer
+
+        monkeypatch.setattr(VllmServer, "start", refuse)
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://agent",
+            # An injected client brings its own headers; the constructor only sets them
+            # on a client it makes itself.
+            headers={"Authorization": f"Bearer {TOKEN}"},
+        ) as http_client:
+            agent = AgentClient("http://agent", TOKEN, client=http_client)
+            with pytest.raises(AgentError) as exc:
+                await agent.start_server(
+                    StartServerRequest(config_yaml="model: m\n", config_hash="a" * 64, port=8000)
+                )
+
+        assert exc.value.reported_kind == FailureKind.ENGINE_CONFIG_REJECTED

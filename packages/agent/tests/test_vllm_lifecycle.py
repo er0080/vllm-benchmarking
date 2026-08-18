@@ -17,6 +17,7 @@ import pytest
 
 from vllmbench_agent.reaper import ProcessRegistry, _process_exists
 from vllmbench_agent.vllm_server import ServerError, VllmServer
+from vllmbench_protocol.failures import FailureKind
 from vllmbench_protocol.wire import ServerState
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -74,7 +75,7 @@ class TestStartup:
         a server with nothing loaded — producing numbers that look real.
         """
         monkeypatch.setenv("FAKE_VLLM_MODE", "never_ready")
-        with pytest.raises(ServerError, match="did not become ready"):
+        with pytest.raises(ServerError, match="did not become ready") as exc:
             await server.start(
                 config_yaml=CONFIG,
                 config_hash=CONFIG_HASH,
@@ -82,6 +83,10 @@ class TestStartup:
                 readiness_timeout_seconds=6,
             )
         assert server.state is ServerState.STOPPED
+        # Alive but never serving is not the same failure as died-during-load, and the
+        # two have opposite fixes: raise the budget, or fix the config. Only this side
+        # can tell them apart — from the control plane both are "the agent said 409".
+        assert exc.value.kind is FailureKind.ENGINE_NOT_READY
 
     async def test_crash_during_load_reports_the_reason(
         self, server: VllmServer, monkeypatch: pytest.MonkeyPatch
@@ -99,6 +104,10 @@ class TestStartup:
         # The log tail is the only thing that distinguishes OOM from a bad config, and
         # without it the operator gets "it failed" and nothing actionable.
         assert "out of memory" in message.lower()
+        # And it is named, not merely described. The message goes to a person; the kind
+        # goes to a GROUP BY, which is how a sweep with eleven failed points gets asked
+        # whether it hit one cause or eleven.
+        assert exc.value.kind is FailureKind.ENGINE_OUT_OF_MEMORY
 
     async def test_root_cause_survives_a_long_outer_traceback(
         self, server: VllmServer, monkeypatch: pytest.MonkeyPatch
@@ -122,6 +131,10 @@ class TestStartup:
         assert "ninja" in message, "the root cause was dropped in favour of the traceback"
         # And it must lead, not be buried: an operator reads the top of the message.
         assert message.index("ninja") < message.index("Last output")
+        # A missing build tool is not a memory problem and not a rejected config, and
+        # nothing here pretends otherwise. An unrecognized failure stays general: a
+        # confident wrong kind sends the reader to fix something that is not broken.
+        assert exc.value.kind is FailureKind.ENGINE_LOAD_FAILED
 
     async def test_a_failed_start_leaves_nothing_running(
         self, server: VllmServer, monkeypatch: pytest.MonkeyPatch, tmp_path: Path

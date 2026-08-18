@@ -14,7 +14,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from vllmbench_db.enums import RunStatus, SyntheticSource
+from vllmbench_db.enums import FailureKind, RunStatus, SyntheticSource
 from vllmbench_db.models import EngineSample, GpuSample
 
 pytestmark = pytest.mark.integration
@@ -155,6 +155,42 @@ class TestSyntheticQuarantine:
     async def test_consistent_real_run_is_accepted(self, run_factory) -> None:
         run = await run_factory(is_synthetic=False, synthetic_source=None)
         assert run.is_synthetic is False
+
+
+class TestFailuresNameThemselves:
+    """A failed run says what kind of failure it was.
+
+    Not a style rule: the column exists so that a sweep with eleven failed points can be
+    asked whether it hit one cause or eleven, and a NULL is a point that cannot join that
+    answer. The orchestrator's floor is `internal`, so there is no path that fails
+    without a kind — this is what keeps that true if someone adds one.
+    """
+
+    async def test_a_failed_run_without_a_kind_is_rejected(self, run_factory) -> None:
+        with pytest.raises(IntegrityError, match="failed_run_names_its_failure"):
+            await run_factory(status=RunStatus.FAILED, failure_kind=None)
+
+    async def test_a_failed_run_with_a_kind_is_accepted(self, run_factory) -> None:
+        run = await run_factory(
+            status=RunStatus.FAILED, failure_kind=FailureKind.ENGINE_OUT_OF_MEMORY
+        )
+        assert run.failure_kind == FailureKind.ENGINE_OUT_OF_MEMORY
+
+    async def test_an_unfamiliar_kind_is_recorded_rather_than_refused(self, run_factory) -> None:
+        """Free text, not a native enum, and this is the reason.
+
+        A newer agent naming a failure this build has never heard of must still be
+        *recorded*. With a native enum the insert would fail instead — turning "I do not
+        recognise this failure" into "the failure is lost", which is the one outcome
+        worse than filing it under the wrong heading.
+        """
+        run = await run_factory(status=RunStatus.FAILED, failure_kind="engine_ate_the_cache")
+        assert run.failure_kind == "engine_ate_the_cache"
+
+    async def test_runs_that_did_not_fail_need_no_kind(self, run_factory) -> None:
+        for status in (RunStatus.SUCCEEDED, RunStatus.CANCELLED, RunStatus.QUEUED):
+            run = await run_factory(status=status, failure_kind=None)
+            assert run.failure_kind is None
 
 
 class TestContentAddressing:

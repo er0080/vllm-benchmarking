@@ -121,6 +121,17 @@ def render_sweep_report(sweep: SweepOut, analysis: AnalysisOut) -> str:
     if sweep.error:
         out += [f"**Error:** {sweep.error}", ""]
 
+    if progress.failures:
+        # The one line that turns "11 failed" into something to act on. Eleven runs of
+        # one cause and eleven runs of eleven causes are different situations, and the
+        # count alone cannot tell them apart.
+        out += [
+            "**Failures:** "
+            + ", ".join(f"{count} {kind}" for kind, count in progress.failures.items())
+            + ".",
+            "",
+        ]
+
     if sweep.estimated_remaining is not None:
         out += _render_estimate(sweep.estimated_remaining)
 

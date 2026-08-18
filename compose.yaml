@@ -112,6 +112,15 @@ services:
         PACKAGE: vllmbench-mockagent
     environment:
       VLLMBENCH_TOKEN: ${VLLMBENCH_TOKEN:-dev-token}
+      # Failure injection. Set either to a FailureKind value — engine_out_of_memory,
+      # engine_config_rejected, engine_not_ready, benchmark_timeout, benchmark_failed —
+      # and the mock refuses that way, with the same status code, message and
+      # X-Vllmbench-Failure-Kind header the real agent sends.
+      #
+      # This is how the failure paths are exercised without a GPU. An engine cannot run
+      # out of memory on a laptop, and that is the failure a tuning sweep hits most.
+      VLLMBENCH_MOCK_START_FAILURE: ${VLLMBENCH_MOCK_START_FAILURE:-}
+      VLLMBENCH_MOCK_BENCH_FAILURE: ${VLLMBENCH_MOCK_BENCH_FAILURE:-}
     command:
       ["uvicorn", "vllmbench_mockagent.main:app", "--host", "0.0.0.0", "--port", "9110"]
     ports:

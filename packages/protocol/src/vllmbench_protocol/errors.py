@@ -9,7 +9,14 @@ from __future__ import annotations
 
 
 class AgentError(Exception):
-    """Base for anything that went wrong talking to an agent."""
+    """Base for anything that went wrong talking to an agent.
+
+    ``reported_kind`` is the agent's own name for what went wrong, when it sent one (see
+    ``failures.FAILURE_KIND_HEADER``). Left ``None`` by every subclass here: those are
+    raised on this side of the boundary, where the agent had no say.
+    """
+
+    reported_kind: str | None = None
 
 
 class AgentUnreachable(AgentError):

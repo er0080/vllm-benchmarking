@@ -19,19 +19,23 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from vllmbench_db.enums import InitiatedBy, RunStatus
+from vllmbench_db.enums import FailureKind, InitiatedBy, RunStatus, SweepStatus
 from vllmbench_db.models import (
     EngineSample,
     GpuHost,
     GpuSample,
     Run,
     ServerConfig,
+    Sweep,
     Workload,
 )
 from vllmbench_db.session import create_engine, create_session_factory
 from vllmbench_db.testing import reset_database, test_database_url
 from vllmbench_mockagent.main import create_app as create_mock_app
+from vllmbench_orchestrator import runner as runner_module
 from vllmbench_orchestrator.runner import claim_next_run, execute_run
+from vllmbench_protocol import AgentClient
+from vllmbench_protocol.errors import AgentAuthError, AgentUnreachable
 
 pytestmark = pytest.mark.integration
 
@@ -45,6 +49,10 @@ CONFIG_YAML = "model: facebook/opt-125m\ntensor_parallel_size: 2\n"
 def fast_mock(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("VLLMBENCH_MOCK_LOAD_SECONDS", "0.01")
     monkeypatch.setenv("VLLMBENCH_MOCK_BENCH_SECONDS", "0.01")
+    # The real reconnect window is ~37s of deliberate waiting. Tests that want to prove
+    # the retrying happens set their own schedule; every other test would just pay for
+    # it, so the default here is "try once".
+    monkeypatch.setattr(runner_module, "RECONNECT_BACKOFF_SECONDS", ())
 
 
 @pytest.fixture
@@ -274,6 +282,7 @@ class TestFailurePaths:
         # never finishes and a queue that never advances.
         assert finished.status is RunStatus.FAILED
         assert finished.error and "unreachable" in finished.error.lower()
+        assert finished.failure_kind == FailureKind.AGENT_UNREACHABLE
         assert finished.finished_at is not None
 
     async def test_a_config_without_a_model_fails_before_benchmarking(
@@ -294,6 +303,7 @@ class TestFailurePaths:
         assert finished is not None
         assert finished.status is RunStatus.FAILED
         assert "model" in (finished.error or "")
+        assert finished.failure_kind == FailureKind.ENGINE_CONFIG_REJECTED
 
 
 class TestClaiming:
@@ -736,3 +746,303 @@ async def _mock_server_state(mock_app) -> str:
     async with httpx.AsyncClient(transport=transport, base_url="http://mock-agent") as c:
         response = await c.get("/server", headers={"Authorization": f"Bearer {TOKEN}"})
         return str(response.json()["state"])
+
+
+class TestFailureClassification:
+    """Every failure mode a run can reach, and the kind it is recorded under.
+
+    Milestone 0.9.0's bar is that each has a *defined* behaviour, not merely that it does
+    not hang. The kind is what makes a sweep with eleven failed points answerable — nine
+    the same cause, two different — which free text never could.
+
+    Injected through the mock rather than provoked for real, because most of these need a
+    GPU to happen naturally: an engine cannot run out of memory on a laptop. The mock
+    sends the real agent's status code, message and header, and the messages themselves
+    are lifted from the captured vLLM output the classifier's patterns were read off.
+    """
+
+    async def _failed_run(
+        self,
+        session: AsyncSession,
+        route_to_mock,
+        *,
+        start_failure: str = "",
+        bench_failure: str = "",
+    ) -> Run:
+        route_to_mock(
+            create_mock_app(token=TOKEN, start_failure=start_failure, bench_failure=bench_failure)
+        )
+
+        await _seed(session)
+        claimed = await claim_next_run(session)
+        assert claimed is not None
+        run_id = claimed.id
+        await execute_run(session, claimed, TOKEN)
+
+        session.expire_all()
+        finished = await session.get(Run, run_id)
+        assert finished is not None
+        return finished
+
+    @pytest.mark.parametrize(
+        ("phase", "kind"),
+        [
+            ("start_failure", FailureKind.ENGINE_OUT_OF_MEMORY),
+            ("start_failure", FailureKind.ENGINE_CONFIG_REJECTED),
+            ("start_failure", FailureKind.ENGINE_NOT_READY),
+            ("bench_failure", FailureKind.BENCHMARK_TIMEOUT),
+            ("bench_failure", FailureKind.BENCHMARK_FAILED),
+        ],
+    )
+    async def test_each_failure_is_recorded_under_its_own_kind(
+        self,
+        session: AsyncSession,
+        route_to_mock,
+        phase: str,
+        kind: FailureKind,
+    ) -> None:
+        finished = await self._failed_run(session, route_to_mock, **{phase: kind.value})
+
+        assert finished.status is RunStatus.FAILED
+        assert finished.failure_kind == kind
+        assert finished.finished_at is not None
+
+    async def test_the_full_message_survives_alongside_the_kind(
+        self, session: AsyncSession, route_to_mock
+    ) -> None:
+        """The kind is a lens, never a summary.
+
+        "engine_out_of_memory" does not say how much memory it wanted, which is the only
+        part an operator can act on. Losing the text to gain the column would be a
+        straight downgrade.
+        """
+        finished = await self._failed_run(
+            session, route_to_mock, start_failure=FailureKind.ENGINE_OUT_OF_MEMORY.value
+        )
+
+        assert finished.failure_kind == FailureKind.ENGINE_OUT_OF_MEMORY
+        assert "No available memory for the cache blocks" in (finished.error or "")
+
+    async def test_a_failed_benchmark_leaves_nothing_holding_vram(
+        self, session: AsyncSession, route_to_mock
+    ) -> None:
+        """The reason the teardown lives in a `finally`.
+
+        A run that fails after starting an engine must not leave one loaded: holding VRAM
+        is only justified by something about to use it, and a failed run is the case
+        where nothing is.
+        """
+        mock = create_mock_app(token=TOKEN, bench_failure=FailureKind.BENCHMARK_FAILED.value)
+        route_to_mock(mock)
+
+        await _seed(session)
+        claimed = await claim_next_run(session)
+        assert claimed is not None
+        run_id = claimed.id
+        await execute_run(session, claimed, TOKEN)
+
+        session.expire_all()
+        finished = await session.get(Run, run_id)
+        assert finished is not None
+        assert finished.status is RunStatus.FAILED
+        assert finished.failure_kind == FailureKind.BENCHMARK_FAILED
+        assert await _mock_server_state(mock) == "stopped"
+
+
+class TestReconnection:
+    """An agent that steps out briefly should not cost a point of a six-hour sweep.
+
+    Reconnection, not retry. Nothing is re-measured: the probe runs before any engine is
+    started, so a second attempt cannot paper over a result. Once the benchmark is
+    running the window is gone, because a lost connection then means the measurement is
+    lost and the honest answer is a failed run.
+    """
+
+    async def test_an_agent_that_comes_back_is_waited_for(
+        self, session: AsyncSession, route_to_mock, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        mock = create_mock_app(token=TOKEN)
+        route_to_mock(mock)
+        monkeypatch.setattr(runner_module, "RECONNECT_BACKOFF_SECONDS", (0.01, 0.01, 0.01))
+
+        # Unreachable for the first two attempts, then answering normally.
+        real_host_info = AgentClient.host_info
+        attempts = {"n": 0}
+
+        async def flaky(self, **kwargs):
+            attempts["n"] += 1
+            if attempts["n"] <= 2:
+                raise AgentUnreachable(self.base_url, "connection reset by peer")
+            return await real_host_info(self, **kwargs)
+
+        monkeypatch.setattr(AgentClient, "host_info", flaky)
+
+        await _seed(session)
+        claimed = await claim_next_run(session)
+        assert claimed is not None
+        run_id = claimed.id
+        await execute_run(session, claimed, TOKEN)
+
+        session.expire_all()
+        finished = await session.get(Run, run_id)
+        assert finished is not None
+        assert finished.status is RunStatus.SUCCEEDED, finished.error
+        assert attempts["n"] == 3
+
+    async def test_a_host_that_stays_away_fails_the_run_after_the_window(
+        self, session: AsyncSession, route_to_mock, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The window is bounded, and its end is a real failure.
+
+        Waiting indefinitely would be the worse bug: a sweep that appears to be running
+        while its host has been switched off for a week.
+        """
+        route_to_mock(create_mock_app(token=TOKEN))
+        monkeypatch.setattr(runner_module, "RECONNECT_BACKOFF_SECONDS", (0.01, 0.01))
+
+        attempts = {"n": 0}
+
+        async def never(self, **kwargs):
+            attempts["n"] += 1
+            raise AgentUnreachable(self.base_url, "no route to host")
+
+        monkeypatch.setattr(AgentClient, "host_info", never)
+
+        await _seed(session)
+        claimed = await claim_next_run(session)
+        assert claimed is not None
+        run_id = claimed.id
+        await execute_run(session, claimed, TOKEN)
+
+        session.expire_all()
+        finished = await session.get(Run, run_id)
+        assert finished is not None
+        assert finished.status is RunStatus.FAILED
+        assert finished.failure_kind == FailureKind.AGENT_UNREACHABLE
+        # One attempt per backoff, plus the final one that is not followed by a wait.
+        assert attempts["n"] == 3
+
+    async def test_a_refused_token_is_not_retried(
+        self, session: AsyncSession, route_to_mock, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Retrying a wrong token just delays the report by the length of the window.
+
+        The distinction that makes reconnection safe is exactly this one: retry what
+        might fix itself, and nothing else.
+        """
+        route_to_mock(create_mock_app(token=TOKEN))
+        monkeypatch.setattr(runner_module, "RECONNECT_BACKOFF_SECONDS", (60.0, 60.0))
+
+        attempts = {"n": 0}
+
+        async def refused(self, **kwargs):
+            attempts["n"] += 1
+            raise AgentAuthError(self.base_url)
+
+        monkeypatch.setattr(AgentClient, "host_info", refused)
+
+        await _seed(session)
+        claimed = await claim_next_run(session)
+        assert claimed is not None
+        run_id = claimed.id
+        await execute_run(session, claimed, TOKEN)
+
+        session.expire_all()
+        finished = await session.get(Run, run_id)
+        assert finished is not None
+        assert finished.status is RunStatus.FAILED
+        assert finished.failure_kind == FailureKind.AGENT_AUTH
+        assert attempts["n"] == 1
+
+
+class TestTimeoutBudgets:
+    """How long a run may take, and where that number comes from.
+
+    Both limits already existed, hard-coded in the wire defaults. What is new is that
+    they are *stated* — so a host that loads a 70B, or a workload sending fifty thousand
+    prompts, can finish without a code change.
+    """
+
+    async def test_the_hosts_defaults_reach_the_agent(
+        self, session: AsyncSession, route_to_mock
+    ) -> None:
+        route_to_mock(create_mock_app(token=TOKEN))
+        seen: dict[str, float] = {}
+
+        run = await _seed(session)
+        host = await session.get(GpuHost, run.gpu_host_id)
+        assert host is not None
+        host.model_load_timeout_seconds = 1800
+        host.benchmark_timeout_seconds = 240
+        await session.commit()
+
+        real_start = AgentClient.start_server
+        real_bench = AgentClient.bench
+
+        async def start(self, request):
+            seen["load"] = request.readiness_timeout_seconds
+            return await real_start(self, request)
+
+        async def bench(self, request):
+            seen["bench"] = request.timeout_seconds
+            return await real_bench(self, request)
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(AgentClient, "start_server", start)
+            mp.setattr(AgentClient, "bench", bench)
+            claimed = await claim_next_run(session)
+            assert claimed is not None
+            await execute_run(session, claimed, TOKEN)
+
+        assert seen == {"load": 1800.0, "bench": 240.0}
+
+    async def test_a_sweep_overrides_its_hosts_defaults(
+        self, session: AsyncSession, route_to_mock
+    ) -> None:
+        """And only where it said something.
+
+        A sweep that copied the host's numbers at authoring time would be frozen at
+        whatever they were that day; null means "no opinion", so raising the host's
+        default raises this sweep too.
+        """
+        route_to_mock(create_mock_app(token=TOKEN))
+        seen: dict[str, float] = {}
+
+        run = await _seed(session)
+        host = await session.get(GpuHost, run.gpu_host_id)
+        assert host is not None
+        host.model_load_timeout_seconds = 1800
+        host.benchmark_timeout_seconds = 240
+
+        sweep = Sweep(
+            name="overriding",
+            status=SweepStatus.QUEUED,
+            gpu_host_id=host.id,
+            initiated_by=InitiatedBy.API,
+            # Only the benchmark budget is stated; the load budget stays the host's.
+            benchmark_timeout_seconds=7200,
+        )
+        session.add(sweep)
+        await session.flush()
+        run.sweep_id = sweep.id
+        await session.commit()
+
+        real_start = AgentClient.start_server
+        real_bench = AgentClient.bench
+
+        async def start(self, request):
+            seen["load"] = request.readiness_timeout_seconds
+            return await real_start(self, request)
+
+        async def bench(self, request):
+            seen["bench"] = request.timeout_seconds
+            return await real_bench(self, request)
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(AgentClient, "start_server", start)
+            mp.setattr(AgentClient, "bench", bench)
+            claimed = await claim_next_run(session)
+            assert claimed is not None
+            await execute_run(session, claimed, TOKEN)
+
+        assert seen == {"load": 1800.0, "bench": 7200.0}

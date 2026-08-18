@@ -18,11 +18,13 @@ import contextlib
 import datetime as dt
 import logging
 import uuid
+from collections.abc import Iterator
+from typing import NamedTuple
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from vllmbench_db.enums import RunStatus, SweepStatus
+from vllmbench_db.enums import FailureKind, RunStatus, SweepStatus
 from vllmbench_db.models import (
     EngineSample,
     GpuHost,
@@ -33,7 +35,13 @@ from vllmbench_db.models import (
     Sweep,
     Workload,
 )
-from vllmbench_protocol import AgentClient, AgentError
+from vllmbench_protocol import (
+    AgentClient,
+    AgentError,
+    AgentUnreachable,
+    classify_agent_error,
+)
+from vllmbench_protocol import FailureKind as WireFailureKind
 from vllmbench_protocol.bench_result import BenchResultError, flatten_bench_result
 from vllmbench_protocol.wire import (
     BenchRequest,
@@ -49,9 +57,29 @@ log = logging.getLogger("vllmbench.orchestrator.runner")
 # nothing to deconflict with.
 SERVER_PORT = 8000
 
+# How long to keep trying to reach an agent that is not answering, before giving up on
+# the run. Backoff between attempts, in seconds; the sum is the window.
+#
+# This is reconnection, not retry. Nothing is re-measured here — the probe runs before
+# the engine starts, so there is no result a second attempt could paper over. It exists
+# because an agent restart is seconds (a `uv`-installed systemd unit coming back), and
+# losing a point of a six-hour sweep to a restart that finished before anyone noticed is
+# not a defensible failure mode. The window closes once the benchmark is running: a lost
+# connection then means the measurement is lost, and the honest answer is a failed run.
+RECONNECT_BACKOFF_SECONDS: tuple[float, ...] = (2.0, 5.0, 10.0, 20.0)
+
 
 class RunFailed(RuntimeError):
-    """The run could not be completed. The message is recorded on the run."""
+    """The run could not be completed. The message is recorded on the run.
+
+    Carries a :class:`FailureKind` so the failure is countable as well as readable. The
+    kind is decided where the failure happens, because the phase a run was in is
+    evidence no later reader of the message can recover.
+    """
+
+    def __init__(self, kind: FailureKind, message: str) -> None:
+        super().__init__(message)
+        self.kind = kind
 
 
 class RunCancelled(RuntimeError):
@@ -155,7 +183,13 @@ async def settle_sweep(session: AsyncSession, sweep_id: uuid.UUID) -> None:
     log.info("sweep %s finished: %s", sweep_id, sweep.status)
 
 
-async def _ensure_server(client: AgentClient, config: ServerConfig, *, run_id: uuid.UUID):
+async def _ensure_server(
+    client: AgentClient,
+    config: ServerConfig,
+    *,
+    run_id: uuid.UUID,
+    readiness_timeout_seconds: float,
+):
     """Get a ready engine for this config, reusing the running one when it already is.
 
     A sweep varies workloads and replicates underneath a single server config far more
@@ -187,7 +221,9 @@ async def _ensure_server(client: AgentClient, config: ServerConfig, *, run_id: u
         await client.stop_server()
 
     log.info("run %s: starting server (config %s)", run_id, config.config_hash[:12])
-    return await client_start_server(client, config)
+    return await client_start_server(
+        client, config, readiness_timeout_seconds=readiness_timeout_seconds
+    )
 
 
 async def _next_run_wants_same_config(session: AsyncSession, run: Run) -> bool:
@@ -206,6 +242,79 @@ async def _next_run_wants_same_config(session: AsyncSession, run: Run) -> bool:
     return next_hash == run.config_hash
 
 
+class Budgets(NamedTuple):
+    """How long this run is allowed to take, per phase.
+
+    Resolved once, at the top of the run, from the host's defaults and the sweep's
+    overrides. Passed to the agent rather than enforced here: the agent owns the
+    processes, so it is the only side that can kill one, and a control-plane-side
+    deadline would leave a benchmark running on the host with nobody watching it.
+    """
+
+    model_load_seconds: float
+    benchmark_seconds: float
+
+
+async def _budgets(session: AsyncSession, run: Run, host: GpuHost) -> Budgets:
+    """Host defaults, overridden by the sweep where it said something.
+
+    Null on the sweep means "no opinion", so raising a host's default also raises every
+    sweep that never had one. A sweep that copied the host's numbers at authoring time
+    would instead be frozen at whatever they were that day.
+    """
+    load = float(host.model_load_timeout_seconds)
+    bench = float(host.benchmark_timeout_seconds)
+
+    if run.sweep_id is not None:
+        sweep = await session.get(Sweep, run.sweep_id)
+        if sweep is not None:
+            if sweep.model_load_timeout_seconds is not None:
+                load = float(sweep.model_load_timeout_seconds)
+            if sweep.benchmark_timeout_seconds is not None:
+                bench = float(sweep.benchmark_timeout_seconds)
+
+    return Budgets(model_load_seconds=load, benchmark_seconds=bench)
+
+
+async def _reach_host(client: AgentClient, *, run_id: uuid.UUID) -> HostInfo:
+    """Get the host's facts, tolerating an agent that is briefly away.
+
+    Only :class:`AgentUnreachable` is retried, and only here. A refused token or a
+    protocol mismatch will not fix itself, so retrying them just delays the report; and
+    every call after this one either starts an engine or runs a benchmark, neither of
+    which is safe to repeat.
+
+    This is also the reachability probe for the run — it is the first authenticated call
+    made, so an agent that is down fails here, before an engine is started, rather than
+    somewhere less recoverable.
+    """
+    last: AgentUnreachable | None = None
+    for attempt, pause in enumerate((*RECONNECT_BACKOFF_SECONDS, None), start=1):
+        try:
+            return await client.host_info()
+        except AgentUnreachable as exc:
+            last = exc
+            if pause is None:
+                break
+            log.warning(
+                "run %s: agent unreachable (attempt %d/%d), retrying in %.0fs: %s",
+                run_id,
+                attempt,
+                len(RECONNECT_BACKOFF_SECONDS) + 1,
+                pause,
+                exc.detail,
+            )
+            await asyncio.sleep(pause)
+
+    assert last is not None
+    window = sum(RECONNECT_BACKOFF_SECONDS)
+    raise RunFailed(
+        FailureKind.AGENT_UNREACHABLE,
+        f"{last} (still unreachable after {len(RECONNECT_BACKOFF_SECONDS) + 1} attempts "
+        f"over {window:.0f}s)",
+    )
+
+
 async def execute_run(
     session: AsyncSession,
     run: Run,
@@ -222,7 +331,12 @@ async def execute_run(
     config = await session.get(ServerConfig, run.server_config_id)
     workload = await session.get(Workload, run.workload_id)
     if host is None or config is None or workload is None:
-        await _fail(session, run, "run references a host, config or workload that no longer exists")
+        await _fail(
+            session,
+            run,
+            FailureKind.INTERNAL,
+            "run references a host, config or workload that no longer exists",
+        )
         return
 
     client = AgentClient(host.agent_url, token, timeout=None)
@@ -232,11 +346,23 @@ async def execute_run(
         if cancel is not None and cancel.is_set():
             raise RunCancelled("cancelled before the engine was started")
 
-        info = await client.host_info()
+        budgets = await _budgets(session, run, host)
+        info = await _reach_host(client, run_id=run.id)
         _record_provenance(run, info)
 
         server_started = True
-        status = await _ensure_server(client, config, run_id=run.id)
+        # Every failure from here to readiness is the engine refusing to come up, so the
+        # phase default is engine_load_failed and vLLM's own output narrows it: out of
+        # memory, or a configuration it would not accept. Distinguishing those matters
+        # because they have opposite responses — one is a sweep point that asked for
+        # more than the card has, the other is a config that is simply wrong.
+        with _failing_as(FailureKind.ENGINE_LOAD_FAILED):
+            status = await _ensure_server(
+                client,
+                config,
+                run_id=run.id,
+                readiness_timeout_seconds=budgets.model_load_seconds,
+            )
 
         # The engine's own version wins over the agent's environment probe: the agent
         # may live in a separate venv, and it is the engine that produced the numbers.
@@ -276,14 +402,16 @@ async def execute_run(
             model,
             served_model_name or model,
         )
-        response = await _bench_or_cancel(
-            client,
-            workload,
-            model=model,
-            served_model_name=served_model_name,
-            cancel=cancel,
-            run_id=run.id,
-        )
+        with _failing_as(FailureKind.BENCHMARK_FAILED):
+            response = await _bench_or_cancel(
+                client,
+                workload,
+                model=model,
+                served_model_name=served_model_name,
+                cancel=cancel,
+                run_id=run.id,
+                timeout_seconds=budgets.benchmark_seconds,
+            )
 
         if response.device_indices:
             run.device_indices = response.device_indices
@@ -310,16 +438,27 @@ async def execute_run(
 
     except RunCancelled as exc:
         await _cancel_run(session, run, str(exc))
+    except RunFailed as exc:
+        await _fail(session, run, exc.kind, str(exc))
     except BenchResultError as exc:
         # The benchmark ran but its output did not match the contract. Distinguished
         # from a failed benchmark because the fix is different: this means vLLM changed
-        # its schema, not that the configuration was bad.
-        await _fail(session, run, f"benchmark result did not match the expected schema: {exc}")
+        # its schema, not that the configuration was bad — so the work to do is in this
+        # repository, not on the host.
+        await _fail(
+            session,
+            run,
+            FailureKind.RESULT_SCHEMA_MISMATCH,
+            f"benchmark result did not match the expected schema: {exc}",
+        )
     except AgentError as exc:
-        await _fail(session, run, str(exc))
+        # Reached only outside the phase blocks above — teardown, or a call added later
+        # without one. `internal` rather than a plausible guess, so an unclassified path
+        # shows up as the defect it is instead of quietly inflating a real kind.
+        await _fail(session, run, _kind_of(exc, FailureKind.INTERNAL), str(exc))
     except Exception as exc:
         log.exception("run %s: unexpected failure", run.id)
-        await _fail(session, run, f"unexpected failure: {exc}")
+        await _fail(session, run, FailureKind.INTERNAL, f"unexpected failure: {exc}")
     finally:
         if server_started:
             # Left running only when the next queued run wants the same config, and only
@@ -353,21 +492,30 @@ async def execute_run(
                 log.exception("could not settle sweep %s", run.sweep_id)
 
 
-async def client_start_server(client: AgentClient, config: ServerConfig):
+async def client_start_server(
+    client: AgentClient, config: ServerConfig, *, readiness_timeout_seconds: float
+):
     return await client.start_server(
         StartServerRequest(
             config_yaml=config.yaml,
             config_hash=config.config_hash,
             port=SERVER_PORT,
+            readiness_timeout_seconds=readiness_timeout_seconds,
         )
     )
 
 
 async def client_bench(
-    client: AgentClient, workload: Workload, *, model: str, served_model_name: str | None
+    client: AgentClient,
+    workload: Workload,
+    *,
+    model: str,
+    served_model_name: str | None,
+    timeout_seconds: float,
 ):
     return await client.bench(
         BenchRequest(
+            timeout_seconds=timeout_seconds,
             model=model,
             served_model_name=served_model_name,
             dataset_name=workload.dataset_name,
@@ -469,8 +617,9 @@ def _model_names_from_config(config: ServerConfig) -> tuple[str, str | None]:
     weights = found.get("model")
     if not weights:
         raise RunFailed(
+            FailureKind.ENGINE_CONFIG_REJECTED,
             "could not find a `model:` entry in the server config; `vllm bench serve` "
-            "needs one to load the tokenizer"
+            "needs one to load the tokenizer",
         )
     return weights, found.get("served_model_name")
 
@@ -498,6 +647,7 @@ async def _bench_or_cancel(
     served_model_name: str | None,
     cancel: asyncio.Event | None,
     run_id: uuid.UUID,
+    timeout_seconds: float,
 ):
     """Run the benchmark, or stop it if cancellation arrives while it is running.
 
@@ -510,7 +660,13 @@ async def _bench_or_cancel(
     both slow and a good way to end up with an orphan.
     """
     bench = asyncio.ensure_future(
-        client_bench(client, workload, model=model, served_model_name=served_model_name)
+        client_bench(
+            client,
+            workload,
+            model=model,
+            served_model_name=served_model_name,
+            timeout_seconds=timeout_seconds,
+        )
     )
     if cancel is None:
         return await bench
@@ -537,6 +693,42 @@ async def _bench_or_cancel(
             await waiter
 
 
+@contextlib.contextmanager
+def _failing_as(default: FailureKind) -> Iterator[None]:
+    """Turn agent errors raised inside this block into a classified failure.
+
+    The block is the evidence. Which phase a run was in is knowable here and nowhere
+    later, so the kind is fixed at the point the call is made rather than reconstructed
+    afterwards from whatever text came back.
+
+    ``RunFailed`` passes through untouched: something closer to the failure already
+    named it, and a wrapper has no business overruling that.
+    """
+    try:
+        yield
+    except RunFailed:
+        raise
+    except AgentError as exc:
+        raise RunFailed(_kind_of(exc, default), str(exc)) from exc
+
+
+def _kind_of(exc: AgentError, default: FailureKind) -> FailureKind:
+    """Bridge the protocol's classification onto the column's vocabulary.
+
+    Two enums with the same members, on purpose: the protocol package owns the
+    classification and must stay installable on a GPU host, while the database package
+    owns what can be stored. A test asserts they agree, so this lookup cannot fail
+    silently — but it falls back to the phase default rather than raising, because a
+    failure being mislabelled is not a reason to lose it.
+    """
+    wire = classify_agent_error(exc, default=WireFailureKind(default.value))
+    try:
+        return FailureKind(wire.value)
+    except ValueError:  # pragma: no cover - the pinning test makes this unreachable
+        log.error("no stored FailureKind for %r; recording %s", wire, default)
+        return default
+
+
 async def _cancel_run(session: AsyncSession, run: Run, message: str) -> None:
     log.info("run %s cancelled: %s", run.id, message)
     run.status = RunStatus.CANCELLED
@@ -545,9 +737,17 @@ async def _cancel_run(session: AsyncSession, run: Run, message: str) -> None:
     await session.commit()
 
 
-async def _fail(session: AsyncSession, run: Run, message: str) -> None:
-    log.error("run %s failed: %s", run.id, message)
+async def _fail(session: AsyncSession, run: Run, kind: FailureKind, message: str) -> None:
+    """Record a failure with both its kind and its full text.
+
+    Both, always. The kind is what makes eleven failed points in a sweep answerable as
+    one question; the text is the only thing that says which card ran out of how much
+    memory. Neither substitutes for the other, and a database constraint requires the
+    kind so that no future path can fail without one.
+    """
+    log.error("run %s failed (%s): %s", run.id, kind, message)
     run.status = RunStatus.FAILED
+    run.failure_kind = kind.value
     run.error = message[:4000]
     run.finished_at = dt.datetime.now(dt.UTC)
     await session.commit()

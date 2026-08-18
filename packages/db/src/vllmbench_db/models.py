@@ -90,6 +90,17 @@ class GpuHost(Base):
     # synthetic run as real, silently.
     synthetic_source: Mapped[str | None] = mapped_column(String(32))
 
+    # -- Operational budgets -------------------------------------------------------
+    # How long this host is allowed to take, in seconds. Defaults, overridable per
+    # sweep. They live on the host because the host is what determines them: model load
+    # time is disk and PCIe, and both limits are enforced there.
+    #
+    # These are limits, not measurements. Nothing downstream reads them; they exist so
+    # that a hung run ends as a failure with a reason instead of sitting in
+    # `benchmarking` forever, and so that raising one does not mean editing code.
+    model_load_timeout_seconds: Mapped[int] = mapped_column(Integer, default=900)
+    benchmark_timeout_seconds: Mapped[int] = mapped_column(Integer, default=3600)
+
     created_at: Mapped[dt.datetime] = created_at_column()
 
     # lazy="raise_on_sql" throughout: under the async engine an implicit lazy load
@@ -233,6 +244,13 @@ class Sweep(Base):
 
     is_synthetic: Mapped[bool] = mapped_column(default=False, index=True)
 
+    # Null means "use the host's default". A sweep knows things the host cannot: that
+    # these points load a 70B, or that this workload sends fifty thousand prompts. Null
+    # rather than a copy of the host value so that raising the host default also raises
+    # every sweep that never had an opinion.
+    model_load_timeout_seconds: Mapped[int | None] = mapped_column(Integer)
+    benchmark_timeout_seconds: Mapped[int | None] = mapped_column(Integer)
+
     created_at: Mapped[dt.datetime] = created_at_column()
     started_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
@@ -264,6 +282,19 @@ class Run(Base):
             "(is_synthetic AND synthetic_source IS NOT NULL)"
             " OR (NOT is_synthetic AND synthetic_source IS NULL)",
             name="synthetic_source_matches_flag",
+        ),
+        # A failed run names why. Not "should" — the orchestrator's floor is
+        # FailureKind.INTERNAL, so there is no path that fails without a kind, and this
+        # is what keeps that true if someone adds one.
+        #
+        # Added NOT VALID in the migration, so it binds new and updated rows but leaves
+        # history alone. Runs that failed before this column existed keep an honest NULL;
+        # backfilling them would mean guessing a kind from old free text, which is the
+        # one thing FailureKind is written not to do.
+        CheckConstraint(
+            "status <> 'failed' OR failure_kind IS NOT NULL",
+            name="failed_run_names_its_failure",
+            postgresql_not_valid=True,
         ),
     )
 
@@ -336,6 +367,20 @@ class Run(Base):
     # -- Payload -------------------------------------------------------------------
     raw_result: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     error: Mapped[str | None] = mapped_column(Text)
+
+    #: Which class of failure this was, for a run that has one. See
+    #: :class:`vllmbench_db.enums.FailureKind`.
+    #:
+    #: Free text and nullable rather than a native enum: an agent or a vLLM version we
+    #: do not yet have a name for must still be *recorded*, and a native enum would fail
+    #: the insert instead — losing the failure altogether, which is worse than filing it
+    #: under the wrong heading. Indexed because the question it exists to answer is
+    #: "what went wrong across these eleven runs", which is a GROUP BY.
+    #:
+    #: Never a substitute for `error`, which always holds the full text. The kind throws
+    #: away exactly the detail an operator needs to act.
+    failure_kind: Mapped[str | None] = mapped_column(String(32), index=True)
+
     log_excerpt: Mapped[str | None] = mapped_column(Text)
 
     sweep: Mapped[Sweep | None] = relationship(back_populates="runs", lazy="raise_on_sql")

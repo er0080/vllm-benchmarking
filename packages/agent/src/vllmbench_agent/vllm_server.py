@@ -35,6 +35,7 @@ from vllmbench_agent.hardware import (
     vllm_binary_search_detail,
 )
 from vllmbench_agent.reaper import TERM_GRACE_SECONDS, ProcessRegistry
+from vllmbench_protocol.failures import FailureKind, classify_engine_output
 from vllmbench_protocol.wire import ServerState, ServerStatus
 
 log = logging.getLogger(__name__)
@@ -55,7 +56,17 @@ _ROOT_CAUSE = re.compile(
 
 
 class ServerError(RuntimeError):
-    """The server could not be started, or died while starting."""
+    """The server could not be started, or died while starting.
+
+    Names its own kind. The agent is the better classifier for this: it watched the whole
+    vLLM log rather than the tail that fits in a response, and it knows whether its own
+    readiness deadline expired or the process died — neither of which the control plane
+    can recover from the text afterwards.
+    """
+
+    def __init__(self, message: str, kind: FailureKind = FailureKind.ENGINE_LOAD_FAILED) -> None:
+        super().__init__(message)
+        self.kind = kind
 
 
 def _spawn(argv: list[str]) -> subprocess.Popen[str]:
@@ -378,7 +389,12 @@ class VllmServer:
                     # does not contain it.
                     message = self._startup_failure(exit_code)
                     self._fail(message)
-                    raise ServerError(message)
+                    # Classified against the root causes as well as the tail, which is
+                    # the whole reason they are collected separately: vLLM's last line
+                    # is usually "See root cause above", and the cause is hundreds of
+                    # lines earlier.
+                    kind = classify_engine_output("\n".join([*self._root_causes, *self._log]))
+                    raise ServerError(message, kind or FailureKind.ENGINE_LOAD_FAILED)
 
                 with contextlib.suppress(httpx.HTTPError):
                     health = await client.get(f"{url}/health")
@@ -407,9 +423,13 @@ class VllmServer:
 
                 await asyncio.sleep(READINESS_POLL_SECONDS)
 
+        # Alive but never serving. Distinct from a crash: the process is fine, the
+        # budget was wrong — or something upstream of the engine is hanging. Raising it
+        # under the same kind as a died-during-load would put two opposite fixes,
+        # "raise the timeout" and "fix the config", under one heading.
         message = f"vLLM did not become ready within {timeout_seconds:.0f}s"
         self._fail(message)
-        raise ServerError(message)
+        raise ServerError(message, FailureKind.ENGINE_NOT_READY)
 
     async def _capture_engine_facts(self, client: httpx.AsyncClient, url: str, pid: int) -> None:
         """Record what actually came up, as opposed to what was requested.

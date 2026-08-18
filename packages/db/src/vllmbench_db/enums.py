@@ -91,3 +91,31 @@ class SyntheticSource(enum.StrEnum):
     MOCK_AGENT = "mock_agent"
     FAKE_VLLM = "fake_vllm"
     CPU_BACKEND = "cpu_backend"
+
+
+class FailureKind(enum.StrEnum):
+    """Why a run did not produce a measurement.
+
+    Mirrors :class:`vllmbench_protocol.failures.FailureKind`, which is where the
+    classification logic and the reasoning live. Duplicated here rather than imported so
+    that the database package keeps its own vocabulary of what it can store — the two are
+    pinned together by a test, so they cannot drift apart quietly.
+
+    Stored as free text rather than a native enum, for the same reason
+    ``Run.synthetic_source`` is: an unfamiliar kind must be *recorded*, not rejected. A
+    native enum turns "I do not recognise this failure" into "the insert errors", which
+    loses the failure entirely — and losing the record of a failure is the one outcome
+    worse than mislabelling it.
+    """
+
+    AGENT_UNREACHABLE = "agent_unreachable"
+    AGENT_AUTH = "agent_auth"
+    PROTOCOL_MISMATCH = "protocol_mismatch"
+    ENGINE_OUT_OF_MEMORY = "engine_out_of_memory"
+    ENGINE_CONFIG_REJECTED = "engine_config_rejected"
+    ENGINE_LOAD_FAILED = "engine_load_failed"
+    ENGINE_NOT_READY = "engine_not_ready"
+    BENCHMARK_TIMEOUT = "benchmark_timeout"
+    BENCHMARK_FAILED = "benchmark_failed"
+    RESULT_SCHEMA_MISMATCH = "result_schema_mismatch"
+    INTERNAL = "internal"

@@ -14,6 +14,12 @@ from vllmbench_protocol.errors import (
     AgentUnreachable,
     ProtocolMismatch,
 )
+from vllmbench_protocol.failures import (
+    TRANSIENT_KINDS,
+    FailureKind,
+    classify_agent_error,
+    classify_engine_output,
+)
 from vllmbench_protocol.version import PROTOCOL_VERSION, __version__
 from vllmbench_protocol.wire import AUTH_HEADER, AUTH_SCHEME, GpuInfo, HealthResponse, HostInfo
 
@@ -21,13 +27,17 @@ __all__ = [
     "AUTH_HEADER",
     "AUTH_SCHEME",
     "PROTOCOL_VERSION",
+    "TRANSIENT_KINDS",
     "AgentAuthError",
     "AgentClient",
     "AgentError",
     "AgentUnreachable",
+    "FailureKind",
     "GpuInfo",
     "HealthResponse",
     "HostInfo",
     "ProtocolMismatch",
     "__version__",
+    "classify_agent_error",
+    "classify_engine_output",
 ]

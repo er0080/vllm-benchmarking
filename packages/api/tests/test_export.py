@@ -17,6 +17,8 @@ import httpx
 import pytest
 from api_world import World
 
+from vllmbench_db.enums import FailureKind, RunStatus
+
 pytestmark = pytest.mark.integration
 
 EXPORT = "/api/analysis/export"
@@ -207,6 +209,38 @@ class TestSweepReport:
 
         assert "not measurements of any real hardware" in text
         assert text.index("not measurements of any real hardware") < text.index("tok/s per GPU")
+
+    async def test_failures_are_broken_down_by_kind(
+        self, client: httpx.AsyncClient, world: World
+    ) -> None:
+        """ "Three failed" tells a reader to open three runs. This tells them what to change.
+
+        The point of the whole classification: eleven runs of one cause and eleven runs
+        of eleven causes are different situations, and a count alone cannot tell them
+        apart. A report is read by someone deciding what to do next.
+        """
+        host = await world.host("h")
+        config, workload = await world.config("c"), await world.a_workload()
+        sweep = await world.sweep(host)
+        for kind in (
+            FailureKind.ENGINE_OUT_OF_MEMORY,
+            FailureKind.ENGINE_OUT_OF_MEMORY,
+            FailureKind.BENCHMARK_TIMEOUT,
+        ):
+            await world.run(
+                host,
+                config,
+                workload,
+                sweep=sweep,
+                status=RunStatus.FAILED,
+                failure_kind=kind,
+                summary=False,
+            )
+
+        text = (await client.get(f"/api/sweeps/{sweep.id}/report")).text
+
+        assert "2 engine_out_of_memory" in text
+        assert "1 benchmark_timeout" in text
 
     async def test_download_names_the_file_after_the_sweep(
         self, client: httpx.AsyncClient, world: World

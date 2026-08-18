@@ -31,6 +31,7 @@ from vllmbench_agent.settings import AgentSettings
 from vllmbench_agent.telemetry import TelemetrySampler
 from vllmbench_agent.vllm_server import ServerError, VllmServer
 from vllmbench_protocol import PROTOCOL_VERSION, __version__
+from vllmbench_protocol.failures import FAILURE_KIND_HEADER
 from vllmbench_protocol.wire import (
     BenchRequest,
     BenchResponse,
@@ -126,8 +127,13 @@ def create_app(settings: AgentSettings | None = None) -> FastAPI:
         except ServerError as exc:
             # 409 rather than 500: the request was well-formed, the host was not in a
             # state to satisfy it. The detail carries the server's own log tail, which
-            # is the only thing that explains a model-load failure.
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+            # is the only thing that explains a model-load failure, and the header
+            # carries this side's verdict on what kind of failure it was.
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=str(exc),
+                headers={FAILURE_KIND_HEADER: exc.kind.value},
+            ) from exc
 
     @app.post("/server/stop", response_model=ServerStatus, dependencies=[Depends(require_token)])
     async def server_stop() -> ServerStatus:
@@ -169,7 +175,9 @@ def create_app(settings: AgentSettings | None = None) -> FastAPI:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
         except BenchError as exc:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=str(exc),
+                headers={FAILURE_KIND_HEADER: exc.kind.value},
             ) from exc
         finally:
             # Unconditional: a failed benchmark must not leave a sampler running against

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { api, configsApi, runsApi, workloadsApi } from "./api";
 import { TelemetryTimeline } from "./TelemetryTimeline";
+import { failureLabel } from "./types";
 import type { Config, Host, Run, RunStatus, Workload } from "./types";
 
 const TERMINAL: RunStatus[] = ["succeeded", "failed", "cancelled"];
@@ -63,6 +64,12 @@ function RunDetail({ run, onClose }: { run: Run; onClose: () => void }) {
 
       {run.error && (
         <p className="error" style={{ whiteSpace: "pre-wrap" }}>
+          {run.failure_kind && (
+            <>
+              <strong>{failureLabel(run.failure_kind)}</strong>
+              {"\n\n"}
+            </>
+          )}
           {run.error}
         </p>
       )}

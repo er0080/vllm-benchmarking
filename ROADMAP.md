@@ -276,9 +276,21 @@ least able to afford. Rationale still lands in PR bodies and `docs/adr/` as it h
 along — see CLAUDE.md.
 
 - [ ] Schema stabilized; forward-only migrations from here
-- [ ] Failure handling: agent unreachable, vLLM OOM, model load failure, benchmark timeout
+- [x] Failure handling: agent unreachable, vLLM OOM, model load failure, benchmark timeout.
+      Each is recorded under a `failure_kind` rather than only as free text, so a sweep's
+      failures are countable instead of eleven walls of traceback to read one at a time.
+      Classified from structural evidence where possible — the phase a run was in is
+      knowable at the call site and nowhere later — and from vLLM's own words only where
+      nothing else can distinguish out-of-memory from a rejected config. Those patterns
+      come from output captured off a real vLLM, and an unrecognized failure stays at the
+      general kind rather than being guessed into a specific one (ADR 0004)
 - [ ] Disk and retention management for raw results and logs
-- [ ] Agent restart and reconnection semantics
+- [x] Agent restart and reconnection semantics — the host-facts probe that opens every run
+      tolerates a briefly absent agent, with bounded backoff. Reconnection, not retry:
+      nothing is re-measured, because that probe runs before any engine starts. Once the
+      benchmark is running the window is gone, since a lost connection then means a lost
+      measurement. The orchestrator also stands down after an unreachable host, so a
+      reboot mid-sweep costs a pause rather than the whole remaining queue
 - [ ] Structured logging, no secrets in logs
 - [ ] Test coverage on the JSON-to-column flattening layer
 - [ ] Migration CI: applied against an empty database and one seeded at the previous tag
