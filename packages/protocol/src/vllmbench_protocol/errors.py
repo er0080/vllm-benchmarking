@@ -20,10 +20,23 @@ class AgentError(Exception):
 
 
 class AgentUnreachable(AgentError):
+    """Nothing answered, so there is no status code to reason from.
+
+    The detail is whatever the transport said, which for a connect timeout is nothing at
+    all — `httpx.ConnectTimeout` stringifies to the empty string. That left the message
+    ending in a bare colon, on what is the most common failure of a first install. The
+    hint is here rather than at the call site because every caller wants it and none of
+    them knows anything the others do not.
+    """
+
     def __init__(self, url: str, detail: str) -> None:
-        super().__init__(f"agent at {url} is unreachable: {detail}")
+        reason = detail.strip() or "no response"
+        super().__init__(
+            f"agent at {url} is unreachable: {reason}. Check the agent is running, that "
+            "the address and port are right, and that this host can reach them"
+        )
         self.url = url
-        self.detail = detail
+        self.detail = reason
 
 
 class AgentAuthError(AgentError):

@@ -203,3 +203,31 @@ class TestAgentReportedKind:
             classify_agent_error(exc, default=FailureKind.ENGINE_LOAD_FAILED)
             is FailureKind.ENGINE_OUT_OF_MEMORY
         )
+
+
+class TestUnreachableSaysSomething:
+    """The most likely failure of a first install, and it used to say nothing.
+
+    `httpx.ConnectTimeout` stringifies to the empty string, which left the message ending
+    in a bare colon — the one place a diagnosis would go, blank.
+    """
+
+    def test_a_silent_transport_error_still_names_its_kind(self) -> None:
+        import httpx
+
+        from vllmbench_protocol import AgentClient
+
+        client = AgentClient("http://10.255.255.1:9110", "a-token-long-enough")
+        exc = client._unreachable(httpx.ConnectTimeout(""))
+
+        assert "is unreachable: ConnectTimeout" in str(exc)
+        assert "is unreachable: ." not in str(exc)
+
+    def test_it_says_what_to_check(self) -> None:
+        from vllmbench_protocol import AgentUnreachable
+
+        message = str(AgentUnreachable("http://host:9110", "Connection refused"))
+
+        assert "Connection refused" in message
+        assert "agent is running" in message
+        assert "reach them" in message
