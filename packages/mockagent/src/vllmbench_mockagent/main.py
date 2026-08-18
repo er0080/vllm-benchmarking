@@ -19,6 +19,7 @@ import logging
 import os
 import time
 from collections import defaultdict
+from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException, status
 
@@ -94,6 +95,30 @@ def _default_bench_failure() -> str:
     return os.environ.get("VLLMBENCH_MOCK_BENCH_FAILURE", "")
 
 
+def _default_empty_result() -> bool:
+    return os.environ.get("VLLMBENCH_MOCK_EMPTY_RESULT", "").lower() in ("1", "true", "yes")
+
+
+#: What vLLM returns when every request failed, which it reports as a *success*.
+#:
+#: Captured shape, not an invention: `bench_serve_all_requests_failed_v0.25.1.json` in the
+#: protocol fixtures is the real thing, produced by benchmarking a model name the server
+#: does not serve. The client exits 0, writes a result file, and fills every metric with
+#: 0.00 — which on a latency axis is the best value there is.
+#:
+#: Reproducible here because it is otherwise unreachable without a live engine and a
+#: deliberate misconfiguration, and it is the most dangerous payload this system can be
+#: handed.
+def _empty_result(raw: dict[str, Any]) -> dict[str, Any]:
+    zeroed = {
+        key: (0 if isinstance(value, int) else 0.0 if isinstance(value, float) else value)
+        for key, value in raw.items()
+    }
+    zeroed["completed"] = 0
+    zeroed["failed"] = raw.get("num_prompts", 8)
+    return zeroed
+
+
 # What the real agent's message looks like for each injectable kind. Taken from the same
 # captured vLLM output the classifier's patterns were read off, so a control plane that
 # ignores the header and reads the text reaches the same conclusion — which is exactly
@@ -129,6 +154,7 @@ def create_app(
     *,
     start_failure: str | None = None,
     bench_failure: str | None = None,
+    empty_result: bool | None = None,
 ) -> FastAPI:
     """Build the mock agent.
 
@@ -141,6 +167,7 @@ def create_app(
     require_token = token_dependency(token)
     injected_start_failure = _default_start_failure() if start_failure is None else start_failure
     injected_bench_failure = _default_bench_failure() if bench_failure is None else bench_failure
+    injected_empty_result = _default_empty_result() if empty_result is None else empty_result
 
     app = FastAPI(title="vLLM Benchmarking Mock Agent", version=__version__, docs_url="/docs")
 
@@ -286,6 +313,8 @@ def create_app(
             replicate_seed=str(replicate),
             tensor_parallel_size=tp,
         )
+        if injected_empty_result:
+            raw = _empty_result(raw)
         devices = list(range(tp))
         interval = request.telemetry_interval_seconds or 1.0
         # The synthetic benchmark takes seconds while a real one takes minutes, so the

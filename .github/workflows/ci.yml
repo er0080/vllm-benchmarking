@@ -176,6 +176,60 @@ jobs:
       - name: Integration tests
         run: uv run pytest -m integration
 
+      # --- Forward-only, against data ------------------------------------------------
+      #
+      # The step above proves migrations run. This proves they run against *rows*, which
+      # is a different claim and the one CLAUDE.md actually makes: "a migration that
+      # cannot run against real existing data is a release-blocking bug".
+      #
+      # An empty database cannot find that class of bug at all. A NOT NULL column with no
+      # default, a type change that fails on real values, a constraint no historical row
+      # satisfies — every one of those passes against nothing and fails against a month of
+      # results.
+      #
+      # The baseline is `main` rather than a tag: for a pull request, main *is* the
+      # schema that is already deployed, and it needs no tags to exist. When milestone
+      # tags are cut this step reads the same way against them; only the ref changes.
+      - name: Check out the deployed schema
+        run: git worktree add --detach ../baseline origin/${{ github.event.pull_request.base.ref || 'main' }}
+
+      - name: Create a database at the deployed schema
+        run: |
+          psql "postgresql://vllmbench:vllmbench@localhost:5432/postgres" \
+            -c "CREATE DATABASE vllmbench_seeded;"
+
+      - name: Migrate it with the deployed code, not this branch's
+        working-directory: ../baseline
+        env:
+          DATABASE_URL: postgresql+psycopg://vllmbench:vllmbench@localhost:5432/vllmbench_seeded
+        run: |
+          uv sync --all-packages --frozen
+          cd packages/db && uv run alembic upgrade head
+
+      - name: Seed it with a run, its result and its telemetry
+        # Plain SQL with explicit column lists, run against the *old* schema where this
+        # branch's models do not exist. An ORM insert would emit the new columns and fail
+        # before testing anything.
+        run: |
+          psql -v ON_ERROR_STOP=1 \
+            "postgresql://vllmbench:vllmbench@localhost:5432/vllmbench_seeded" \
+            -f scripts/seed_previous_schema.sql
+
+      - name: Apply this branch's migrations on top
+        working-directory: packages/db
+        env:
+          DATABASE_URL: postgresql+psycopg://vllmbench:vllmbench@localhost:5432/vllmbench_seeded
+        run: uv run alembic upgrade head
+
+      - name: Every seeded value survived
+        # Values, not row counts. A migration that rewrote a throughput figure or dropped
+        # one device's telemetry while keeping its peer would pass a count-based check,
+        # and that is exactly the silent corruption this repository exists to prevent.
+        run: |
+          psql -v ON_ERROR_STOP=1 \
+            "postgresql://vllmbench:vllmbench@localhost:5432/vllmbench_seeded" \
+            -f scripts/verify_seeded_data.sql
+
   # --- Tier 2b ------------------------------------------------------------------
   # Real vLLM on the CPU backend. The only automated check against actual vLLM
   # anywhere in this project, so a failure here is blocking, not flaky.

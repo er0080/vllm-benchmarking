@@ -1046,3 +1046,95 @@ class TestTimeoutBudgets:
             await execute_run(session, claimed, TOKEN)
 
         assert seen == {"load": 1800.0, "bench": 7200.0}
+
+
+class TestBenchmarksThatMeasuredNothing:
+    """A benchmark where every request failed, driven end to end.
+
+    The most dangerous payload this system can be handed, and the reason is that nothing
+    about it looks wrong: `vllm bench serve` exits 0, writes a result file, and fills
+    every metric with 0.00. Before this was caught, the run was recorded as *succeeded*
+    with a full summary row — and on a latency axis 0 ms is the best value there is, so it
+    would have rendered as the fastest configuration ever tested and sat on the Pareto
+    frontier.
+    """
+
+    async def test_the_run_fails_rather_than_recording_zeros(
+        self, session: AsyncSession, route_to_mock
+    ) -> None:
+        route_to_mock(create_mock_app(token=TOKEN, empty_result=True))
+        await _seed(session)
+
+        claimed = await claim_next_run(session)
+        assert claimed is not None
+        run_id = claimed.id
+        await execute_run(session, claimed, TOKEN)
+
+        session.expire_all()
+        finished = await session.get(Run, run_id)
+        assert finished is not None
+        assert finished.status is RunStatus.FAILED
+        assert "0 requests" in (finished.error or "")
+
+    async def test_it_is_a_failed_benchmark_not_a_schema_mismatch(
+        self, session: AsyncSession, route_to_mock
+    ) -> None:
+        """The two have different fixes and must not share a heading.
+
+        A schema mismatch means vLLM changed its output and the work is in this
+        repository. An empty benchmark means the run itself failed — usually a served
+        model name the engine is not answering to — and the work is on the host.
+        """
+        route_to_mock(create_mock_app(token=TOKEN, empty_result=True))
+        await _seed(session)
+
+        claimed = await claim_next_run(session)
+        assert claimed is not None
+        run_id = claimed.id
+        await execute_run(session, claimed, TOKEN)
+
+        session.expire_all()
+        finished = await session.get(Run, run_id)
+        assert finished is not None
+        assert finished.failure_kind == FailureKind.BENCHMARK_FAILED
+
+    async def test_no_summary_row_is_written(self, session: AsyncSession, route_to_mock) -> None:
+        """The zeros must not reach `run_summary` at all.
+
+        A failed run with a summary row is worse than either alone: analysis selects on
+        the summary, so the row would be charted whatever the run's status said.
+        """
+        from vllmbench_db.models import RunSummary
+
+        route_to_mock(create_mock_app(token=TOKEN, empty_result=True))
+        await _seed(session)
+
+        claimed = await claim_next_run(session)
+        assert claimed is not None
+        run_id = claimed.id
+        await execute_run(session, claimed, TOKEN)
+
+        session.expire_all()
+        assert await session.get(RunSummary, run_id) is None
+
+    async def test_the_raw_payload_is_still_kept(
+        self, session: AsyncSession, route_to_mock
+    ) -> None:
+        """Refusing to flatten it is not a reason to throw it away.
+
+        The raw record is what lets someone confirm afterwards that the benchmark really
+        did report zeros, rather than take this failure's word for it.
+        """
+        route_to_mock(create_mock_app(token=TOKEN, empty_result=True))
+        await _seed(session)
+
+        claimed = await claim_next_run(session)
+        assert claimed is not None
+        run_id = claimed.id
+        await execute_run(session, claimed, TOKEN)
+
+        session.expire_all()
+        finished = await session.get(Run, run_id)
+        assert finished is not None
+        assert finished.raw_result is not None
+        assert finished.raw_result["completed"] == 0

@@ -42,7 +42,11 @@ from vllmbench_protocol import (
     classify_agent_error,
 )
 from vllmbench_protocol import FailureKind as WireFailureKind
-from vllmbench_protocol.bench_result import BenchResultError, flatten_bench_result
+from vllmbench_protocol.bench_result import (
+    BenchResultError,
+    EmptyBenchResult,
+    flatten_bench_result,
+)
 from vllmbench_protocol.wire import (
     BenchRequest,
     BenchResponse,
@@ -440,6 +444,11 @@ async def execute_run(
         await _cancel_run(session, run, str(exc))
     except RunFailed as exc:
         await _fail(session, run, exc.kind, str(exc))
+    except EmptyBenchResult as exc:
+        # The benchmark ran and completed nothing. Not a schema problem — every field the
+        # contract requires is present — so it is filed as a failed benchmark, which is
+        # what it is, and the work to do is on the host rather than here.
+        await _fail(session, run, FailureKind.BENCHMARK_FAILED, str(exc))
     except BenchResultError as exc:
         # The benchmark ran but its output did not match the contract. Distinguished
         # from a failed benchmark because the fix is different: this means vLLM changed

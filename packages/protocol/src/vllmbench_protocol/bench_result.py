@@ -90,6 +90,16 @@ class BenchResultError(ValueError):
     """The payload is not a usable ``vllm bench serve`` result."""
 
 
+class EmptyBenchResult(BenchResultError):
+    """The benchmark ran to completion and measured nothing.
+
+    Separated from its parent because the two mean different things and have different
+    fixes. A schema mismatch means vLLM changed its output and the work is in this
+    repository; this means the benchmark itself failed — a model name that is not served,
+    an engine that fell over mid-run — and the work is on the host.
+    """
+
+
 def flatten_bench_result(payload: dict[str, Any], *, gpu_count: int = 1) -> dict[str, Any]:
     """Map a raw ``--save-result`` payload onto ``run_summary`` columns.
 
@@ -117,6 +127,8 @@ def flatten_bench_result(payload: dict[str, Any], *, gpu_count: int = 1) -> dict
     if gpu_count < 1:
         raise BenchResultError(f"gpu_count must be at least 1, got {gpu_count}")
 
+    _reject_empty(payload)
+
     flattened: dict[str, Any] = {}
     for source, column in SUMMARY_FIELD_MAP.items():
         value = payload.get(source)
@@ -137,3 +149,41 @@ def flatten_bench_result(payload: dict[str, Any], *, gpu_count: int = 1) -> dict
     flattened["extra"] = {k: v for k, v in payload.items() if k not in known}
 
     return flattened
+
+
+def _reject_empty(payload: dict[str, Any]) -> None:
+    """Refuse a benchmark in which nothing completed.
+
+    This is not defensive programming; it is a real payload, captured from vLLM 0.25.1
+    and checked in as ``bench_serve_all_requests_failed_v0.25.1.json``. Point
+    ``vllm bench serve`` at a model name the server does not serve and every request
+    404s — and the client **exits 0**, writes a result file, and reports:
+
+        completed: 0, failed: 8, mean_ttft_ms: 0.0, output_throughput: 0.0
+
+    Every field the contract requires is present, so nothing upstream of here notices.
+    Without this check the run is recorded as succeeded with a full summary row of zeros,
+    and those zeros are not neutral: on a latency axis 0 ms is the *best* value there is,
+    so a benchmark that measured nothing renders as the fastest configuration ever
+    tested. It would sit on the Pareto frontier.
+
+    Zero completions is therefore not a measurement of zero. It is the absence of a
+    measurement, and the only honest thing to record is a failure.
+
+    A run with *some* completions is kept: those requests really did complete and the
+    figures describe them. `failed_requests` is flattened alongside, and the analysis
+    layer warns when it is non-zero, because throughput divided by the whole duration
+    understates a partially failed run rather than invalidating it.
+    """
+    completed = payload.get("completed")
+    if not isinstance(completed, int) or completed > 0:
+        return
+
+    failed = payload.get("failed")
+    detail = f"{failed} request(s) failed" if failed else "no requests were issued"
+    raise EmptyBenchResult(
+        f"the benchmark completed 0 requests ({detail}), so its metrics are zeros rather "
+        "than measurements — on a latency axis that would read as the fastest result "
+        "ever recorded. Usually the served model name does not match what the engine is "
+        "answering to, or the engine failed during the run; check the benchmark's output."
+    )
