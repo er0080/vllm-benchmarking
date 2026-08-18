@@ -141,54 +141,102 @@ this framework exists to answer. Multi-node deployments are out of scope for 1.0
 
 ## Quick start
 
-**On the GPU host**, install the agent **into the vLLM environment**, from git:
+Three steps: bring up the control plane, install the agent on the GPU host, take a
+measurement. Verified end to end from a clean control host and a GPU host with no agent
+installed.
+
+### 1. Control plane
 
 ```bash
-source /path/to/your/vllm-env/.venv/bin/activate
-uv pip install "git+https://github.com/er0080/vllm-benchmarking@main#subdirectory=packages/agent"
-
-VLLMBENCH_TOKEN=... vllmbench-agent
+git clone https://github.com/er0080/vllm-benchmarking
+cd vllm-benchmarking
+cp .env.example .env
 ```
 
-Install from git rather than from a local clone. `vllmbench-protocol` is a workspace
-member, so inside a checkout `uv pip install ./packages/agent` resolves it through
-`tool.uv.sources` and installs it **editable** — a `.pth` file pointing back at the
-checkout. Nothing complains, and the agent works until the clone is moved or deleted,
-at which point it dies with `ModuleNotFoundError: vllmbench_protocol`. Installing from
-git resolves the same workspace inside a throwaway clone and installs both packages
-normally, pinned to a commit that `pip show`/`direct_url.json` records — which is
-better provenance than a directory path anyway.
+Edit `.env` and set two values:
 
-Replace `@main` with a milestone tag (`@v0.3.0`) to pin a GPU host to a known commit.
-
-Installing into the vLLM environment rather than beside it is deliberate, and it adds
-nothing: vLLM's server is itself a FastAPI and uvicorn application using pydantic,
-psutil and NVML, so every one of the agent's dependencies is already present. Only the
-two small pure-Python packages above get added.
-
-Verify the install is self-contained — this is the check that would have caught the
-editable-install trap:
+- `VLLMBENCH_TOKEN` — the shared secret with the agent.
+  Generate one with `python3 -c 'import secrets; print(secrets.token_urlsafe(32))'`.
+- `VLLMBENCH_AGENT_URL` — the LAN address of the GPU host, e.g. `http://192.168.1.50:9110`.
+  Not `localhost`: the control plane runs on a different machine by design.
 
 ```bash
-python -c "import vllmbench_agent, vllmbench_protocol; print(vllmbench_protocol.__version__)"
-ls "$VIRTUAL_ENV"/lib/python*/site-packages/_editable_impl_vllmbench_*.pth 2>/dev/null \
-  && echo "NOT self-contained — reinstall from git"
-```
-
-If isolation is genuinely required — a shared host, an immutable environment — install
-the agent elsewhere and set `VLLMBENCH_VLLM_BIN` to the absolute path of the `vllm`
-executable. Do **not** solve it by putting the vLLM venv on `PATH`: that is invisible in
-`ps`, silently lost across systemd units, tmux sessions and reboots, and when wrong it
-yields a confusing null version rather than an error.
-
-**On the control host**, bring up the stack:
-
-```bash
-cp .env.example .env      # set VLLMBENCH_AGENT_URL and VLLMBENCH_TOKEN
 docker compose up -d
 ```
 
-Open http://localhost:8080, register the GPU host, and author your first sweep.
+This builds the images, applies the schema and starts five services. Check it:
+
+```bash
+curl -s localhost:8000/api/health   # {"status":"ok", ... "schema":{"ok":true, ...}}
+```
+
+Then open <http://localhost:8080>.
+
+### 2. Agent, on the GPU host
+
+Install it **into the vLLM environment**, from git:
+
+```bash
+source /path/to/vllm-env/.venv/bin/activate
+uv pip install "git+https://github.com/er0080/vllm-benchmarking@main#subdirectory=packages/agent"
+```
+
+Give it the same token, in a file rather than on a command line where `ps` can read it,
+and start it:
+
+```bash
+umask 077 && echo "VLLMBENCH_TOKEN=the-token-from-step-1" > ~/.vllmbench-agent.env
+set -a; . ~/.vllmbench-agent.env; set +a; vllmbench-agent
+```
+
+```bash
+curl -s localhost:9110/health
+```
+
+That is enough to take a measurement. Running it as a service, upgrading it, and the
+environment facts that cost the most time — chiefly that a service does not inherit the
+`HF_HOME` you set in `~/.bashrc`, so vLLM re-downloads weights the host already has — are
+in [docs/agent-installation.md](docs/agent-installation.md).
+
+### 3. Your first measurement
+
+In the UI:
+
+1. **Hosts → Register.** Give it a name and the agent URL. The handshake reads the host's
+   facts, and per-device GPU model, VRAM, driver, CUDA and vLLM version appear. Those
+   become provenance on every run this host produces.
+2. **Runs.** Pick the host. Config and workload can both be authored inline the first
+   time — leave each dropdown on "New from…" and fill in the fields below it:
+
+   ```yaml
+   model: facebook/opt-125m
+   max_model_len: 2048
+   gpu_memory_utilization: 0.30
+   tensor_parallel_size: 1
+   ```
+
+   A workload of 20 prompts at concurrency 4 is enough to prove the path. Start it.
+3. Watch it move through `starting` and `benchmarking`, then open the run. TTFT, TPOT, ITL
+   and per-GPU throughput are in Postgres, with the raw benchmark payload kept verbatim
+   beside them and a per-second telemetry timeline underneath.
+
+On a small model this takes about ninety seconds end to end.
+
+The config you just wrote is now content-addressed and reusable. The **Configs** tab is
+where configs get validated before they cost GPU time, annotated with the run that
+justifies them, and exported — the bytes are identical to what ran, so they go straight
+into production.
+
+From there: **Sweeps** authors a matrix of configs × workloads with replicates, and the
+analysis tabs chart the results. What each chart means and what to change next is
+[docs/tuning-playbook.md](docs/tuning-playbook.md).
+
+### Without a GPU
+
+The stack is fully developable on a laptop. `docker compose --profile dev up` adds a mock
+agent that implements the agent's HTTP contract and returns synthetic but realistic results
+and telemetry, with configurable failure injection. Everything it produces is marked
+synthetic at the moment of creation and can never be charted beside a real measurement.
 
 ---
 
