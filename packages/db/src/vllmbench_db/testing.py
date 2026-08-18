@@ -47,6 +47,22 @@ async def reset_database(engine: AsyncEngine) -> None:
             await connection.execute(tables[name].delete())
 
 
+#: Where the integration suite goes when nothing says otherwise.
+#:
+#: Deliberately not ``vllmbench``, which is the database the compose stack keeps results
+#: in. ``reset_database`` empties every table in whatever this resolves to, so a default
+#: pointing at the working database means ``make test-integration`` destroys a developer's
+#: recorded runs — silently, and with no way to get them back. This repository's first
+#: rule is that recorded measurements outrank everything else; a default that deletes them
+#: is the opposite of that rule.
+#:
+#: A name-based refusal in ``reset_database`` would be the more thorough guard and cannot
+#: be had: CI legitimately points at ``vllmbench`` and ``vllmbench_seeded``. Making the
+#: default safe is what is available, and it is enough — destroying real results now
+#: requires naming the database that holds them.
+DEFAULT_TEST_DATABASE_URL = "postgresql+psycopg://vllmbench:vllmbench@localhost:5432/vllmbench_test"
+
+
 def test_database_url() -> str:
     """Where integration tests find Postgres.
 
@@ -55,9 +71,7 @@ def test_database_url() -> str:
     by that name — pytest puts each test directory on ``sys.path``, so a second
     ``conftest.py`` would collide with the first at import time.
     """
-    return os.environ.get(
-        "DATABASE_URL", "postgresql+psycopg://vllmbench:vllmbench@localhost:5432/vllmbench"
-    )
+    return os.environ.get("DATABASE_URL", DEFAULT_TEST_DATABASE_URL)
 
 
 # pytest collects by name, so this helper is otherwise gathered as a test in every module

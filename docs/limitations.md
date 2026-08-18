@@ -49,8 +49,8 @@ during a sweep is inside the measurement. The framework cannot detect this, and 
 against a busy host produces numbers that look exactly like real ones.
 
 **Tail latencies are noisier than throughput.** Replicates of the reference sweep agreed to
-within 1% on throughput and disagreed by a factor of two on p99 TTFT, because a p99 over a
-few hundred prompts is an estimate from roughly one request. Do not decide between
+within 1% on throughput and disagreed by a factor of two on p99 TTFT, because a p99 over
+128 prompts is an estimate from roughly one request. Do not decide between
 configurations on a p99 alone. See [tuning-playbook.md](tuning-playbook.md).
 
 **Grouped replicates understate real variance.** They measure repeatability under

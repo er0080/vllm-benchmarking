@@ -288,6 +288,12 @@ test, and anything running there during a sweep corrupts the measurement in flig
 
 ### Tier 2 — Integration (every PR, GitHub-hosted)
 
+The suite empties every table in whatever `DATABASE_URL` names. Locally that must be
+`vllmbench_test` and never the database the stack keeps results in: `make test-integration`
+creates it, migrates it, and builds the DSN from `.env` so the safe path is also the
+convenient one. Pointing `DATABASE_URL` at real results is possible and is entirely on
+whoever does it.
+
 - Postgres service container, migrations applied from scratch
 - Control plane against the mock agent, end to end
 - **Real vLLM on the CPU backend** (`facebook/opt-125m`, `--load-format dummy`), which
