@@ -158,7 +158,19 @@ class ServerConfig(Base):
     notes: Mapped[str | None] = mapped_column(Text)
 
     model_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("model.id"), index=True)
-    # Lineage: which config this was derived from.
+
+    #: How this configuration first came to exist: the config it was edited from.
+    #:
+    #: "First" is load-bearing. Content addressing means the text is the identity, so
+    #: submitting YAML that already exists returns the existing row — and if two people
+    #: edit two different parents into byte-identical results, the second submission does
+    #: not overwrite the first's parent. This records the derivation that created the row,
+    #: which is a true and useful thing, and is deliberately not a claim to be a complete
+    #: derivation graph.
+    #:
+    #: It is *not* what groups a config with its tensor-parallel variants; that is
+    #: computed from the text (see `sweep_plan.config_family_text`), so it works for
+    #: configs nobody derived from anything.
     parent_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("server_config.id"), index=True)
 
     created_at: Mapped[dt.datetime] = created_at_column()
@@ -534,3 +546,39 @@ class McpWriteAudit(Base):
     #: What the call produced, when it produced something identifiable — a sweep id, a
     #: config hash. Enough to join this record to the thing it created.
     subject: Mapped[str | None] = mapped_column(String(128), index=True)
+
+
+class ConfigJustification(Base):
+    """The measurement somebody would point at to defend a configuration.
+
+    A configuration on its own says what was set, never why. Six months later the YAML is
+    a list of numbers with no argument attached, and the sweep that produced them is one
+    of forty. This is the link back to the evidence, and it is the difference between a
+    config you can defend and one you are afraid to touch.
+
+    **A table rather than a column on ``server_config``, to avoid a circular foreign key.**
+    ``run`` already points at ``server_config``; pointing back would make the two mutually
+    dependent, which Postgres tolerates but which defeats any topological ordering over the
+    schema — including the metadata-derived delete order the test fixtures rely on, which
+    exists precisely because a hand-written one drifted. As a separate table this is a
+    leaf, and the graph stays acyclic.
+
+    One per configuration, enforced by a unique constraint: the question is "what is the
+    argument for this config", and a list of five runs is not an argument.
+    """
+
+    __tablename__ = "config_justification"
+    __table_args__ = (UniqueConstraint("server_config_id"),)
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    server_config_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("server_config.id", ondelete="CASCADE"), index=True
+    )
+    #: The run must be one that actually used this configuration. Checked in the API rather
+    #: than by constraint — the comparison is against ``run.config_hash``, which a foreign
+    #: key cannot express — because a link that can point at the wrong evidence is worse
+    #: than no link.
+    run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("run.id"), index=True)
+    #: Why this run settles it, in the author's words.
+    note: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[dt.datetime] = created_at_column()

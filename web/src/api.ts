@@ -3,8 +3,10 @@ import type {
   AnalysisQuery,
   Comparison,
   Config,
+  ConfigValidation,
   DeviceBalance,
   Host,
+  Lineage,
   Run,
   RunSource,
   SavedView,
@@ -70,8 +72,41 @@ export { RequestError };
 
 export const configsApi = {
   list: () => request<Config[]>("/configs"),
-  create: (name: string, yaml: string) =>
-    request<Config>("/configs", { method: "POST", body: JSON.stringify({ name, yaml }) }),
+
+  create: (name: string, yaml: string, parentId?: string | null) =>
+    request<Config>("/configs", {
+      method: "POST",
+      body: JSON.stringify({ name, yaml, parent_id: parentId ?? null }),
+    }),
+
+  /** Check a config before it costs a model load. Stores nothing. */
+  validate: (yaml: string, gpuHostId?: string | null) =>
+    request<ConfigValidation>("/configs/validate", {
+      method: "POST",
+      body: JSON.stringify({ yaml, gpu_host_id: gpuHostId ?? null }),
+    }),
+
+  lineage: (configHash: string) => request<Lineage>(`/configs/${configHash}/lineage`),
+
+  annotate: (
+    configHash: string,
+    body: {
+      name?: string;
+      notes?: string;
+      justified_by_run_id?: string | null;
+      justification_note?: string;
+      clear_justification?: boolean;
+    },
+  ) =>
+    request<Config>(`/configs/${configHash}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+
+  /** The path the browser downloads from. Not fetched through `request`: the response is
+   *  the config file itself, byte for byte, and routing it through JSON handling is how
+   *  an export stops being identical to what ran. */
+  exportUrl: (configHash: string) => `${BASE}/configs/${configHash}/export`,
 };
 
 export const workloadsApi = {

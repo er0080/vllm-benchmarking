@@ -517,3 +517,119 @@ select[multiple] {
   gap: 0.25rem;
   font-size: 0.85rem;
 }
+
+/* --- Configuration editor -------------------------------------------------
+   Findings are separated by severity rather than colour-coded in one list: an error
+   ("vLLM will not start") and a warning ("it will start and may not do what you meant")
+   are different claims, and identity here never rests on colour alone — each group
+   carries a heading that says which it is. */
+
+.yaml-editor {
+  min-height: 18rem;
+  line-height: 1.5;
+  tab-size: 2;
+}
+
+.findings {
+  margin-top: 0.75rem;
+}
+
+.finding-heading {
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin: 0.75rem 0 0.35rem;
+}
+
+.findings ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.finding {
+  font-size: 0.85rem;
+  padding: 0.4rem 0.6rem;
+  border-radius: 6px;
+  border-left: 3px solid var(--border);
+  background: var(--bg);
+  overflow-wrap: anywhere;
+}
+
+.finding-error {
+  border-left-color: var(--danger);
+}
+
+.finding-warning {
+  border-left-color: var(--warn-border);
+}
+
+.finding-line {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-right: 0.5rem;
+}
+
+.finding-suggestion {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.05rem 0.3rem;
+}
+
+.ok {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  margin-top: 0.75rem;
+}
+
+.lineage p {
+  margin: 0.25rem 0;
+}
+
+/* A button that reads as a link, for navigating between related configs without
+   implying a destructive action. */
+.linky {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.justification {
+  margin-top: 1rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+}
+
+.justification h4 {
+  margin: 0 0 0.5rem;
+  font-size: 0.9rem;
+}
+
+/* The export link is an anchor, not a button, so the browser downloads the exact bytes
+   the API sends rather than anything JavaScript reconstructed. It should still look
+   like the controls beside it. */
+a.button {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.4rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.85rem;
+  text-decoration: none;
+}
+
+a.button:hover {
+  border-color: var(--accent);
+}

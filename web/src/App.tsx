@@ -4,6 +4,7 @@ import { api } from "./api";
 import type { Filters } from "./AnalysisFilters";
 import { FilterBar, NO_FILTERS, fromView } from "./AnalysisFilters";
 import { CompareView } from "./CompareView";
+import { ConfigsView } from "./ConfigsView";
 import { DeviceBalanceView } from "./DeviceBalanceView";
 import { LoadCurvesView } from "./LoadCurvesView";
 import { ParetoView } from "./ParetoView";
@@ -172,7 +173,16 @@ function RegisterForm({ onRegistered }: { onRegistered: () => void }) {
 
 const ANALYSIS_TABS = new Set<string>(["analysis", "scaling", "load", "balance", "compare"]);
 
-type Tab = "hosts" | "runs" | "sweeps" | "analysis" | "scaling" | "load" | "balance" | "compare";
+type Tab =
+  | "hosts"
+  | "configs"
+  | "runs"
+  | "sweeps"
+  | "analysis"
+  | "scaling"
+  | "load"
+  | "balance"
+  | "compare";
 
 export function App() {
   const [hosts, setHosts] = useState<Host[]>([]);
@@ -202,11 +212,23 @@ export function App() {
     <div className="page">
       <header>
         <h1>vLLM Benchmarking</h1>
-        <p>Milestone 0.5.0 — analysis.</p>
+        <p>Milestone 0.7.0 — configuration management.</p>
       </header>
 
       <nav className="tabs">
-        {(["hosts", "runs", "sweeps", "analysis", "scaling", "load", "balance", "compare"] as Tab[]).map((name) => (
+        {(
+          [
+            "hosts",
+            "configs",
+            "runs",
+            "sweeps",
+            "analysis",
+            "scaling",
+            "load",
+            "balance",
+            "compare",
+          ] as Tab[]
+        ).map((name) => (
           <button key={name} aria-current={tab === name} onClick={() => setTab(name)}>
             {name.charAt(0).toUpperCase() + name.slice(1)}
           </button>
@@ -243,6 +265,7 @@ export function App() {
         </>
       )}
 
+      {tab === "configs" && <ConfigsView />}
       {tab === "runs" && <RunsView />}
       {tab === "sweeps" && <SweepsView />}
       {ANALYSIS_TABS.has(tab) && (
