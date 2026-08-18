@@ -453,20 +453,32 @@ jobs:
       # a code change does exactly this recreate, so the documented upgrade broke the UI.
       - name: The UI survives the api container moving
         run: |
+          net=vllmbench_default
           before=$(docker inspect vllmbench-api-1 \
             --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}')
           docker compose stop api
 
-          # Hold the address api just released so it is forced onto a different one.
-          # Without this, a recreate usually hands the same address straight back and the
-          # check passes while proving nothing — which is how the bug survived this long.
-          docker run -d --name ip-squatter --network vllmbench_default --ip "${before}" \
-            alpine sleep 120
+          # Force api onto a different address by occupying the one it just released.
+          # Without this a recreate usually hands the same address straight back and the
+          # check passes while proving nothing, which is how the bug survived this long.
+          #
+          # Docker hands out the lowest free address, so throwaway containers fill from
+          # the bottom until one takes the address api had. `--ip` would say it in one
+          # line and only works on a network with a user-configured subnet, which the
+          # compose default is not.
+          squatters=""
+          for _ in 1 2 3 4 5 6 7 8; do
+            cid=$(docker run -d --network "${net}" alpine sleep 300)
+            squatters="${squatters} ${cid}"
+            got=$(docker inspect "${cid}" \
+              --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}')
+            [ "${got}" = "${before}" ] && break
+          done
 
           docker compose up -d --wait api
           after=$(docker inspect vllmbench-api-1 \
             --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}')
-          docker rm -f ip-squatter
+          docker rm -f ${squatters} > /dev/null
 
           if [ "${before}" = "${after}" ]; then
             echo "api kept ${before}; this check would prove nothing, so failing instead"
