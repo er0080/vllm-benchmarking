@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from vllmbench_db.enums import RunStatus, SweepStatus
 from vllmbench_db.models import Run, Sweep
+from vllmbench_db.retention import prune_telemetry
 from vllmbench_db.session import create_engine, create_session_factory, database_password
 from vllmbench_orchestrator.runner import claim_next_run, execute_run
 from vllmbench_orchestrator.settings import OrchestratorSettings
@@ -59,6 +60,14 @@ POLL_INTERVAL_SECONDS = 2.0
 # pulled while the last thing we heard from a host was silence; a run that has already
 # failed stays failed, and any queued run is still executed exactly once.
 UNREACHABLE_BACKOFF_SECONDS = 30.0
+
+# How often to apply the telemetry retention horizon, when one is set.
+#
+# Once a day, and from the idle path rather than a timer: the orchestrator's whole
+# purpose is executing runs, and a deletion competing with a benchmark for the same
+# database is exactly the kind of interference that shows up as an unexplained latency
+# outlier in somebody's results.
+RETENTION_INTERVAL_SECONDS = 86400.0
 
 
 async def _wait_for_database(
@@ -157,6 +166,26 @@ async def _poll_once(factory: async_sessionmaker[AsyncSession], token: str) -> P
         )
 
 
+async def _apply_retention(factory: async_sessionmaker[AsyncSession], *, days: int) -> None:
+    """Run one retention pass. Never raises.
+
+    A failure here must not stop the orchestrator executing runs — the queue is the job,
+    and reclaiming disk is housekeeping. Loud in the log, invisible to the sweep.
+    """
+    try:
+        async with factory() as session:
+            result = await prune_telemetry(session, older_than_days=days)
+        if result.runs:
+            log.info(
+                "retention: pruned %d run(s) older than %d days, ~%.1f MB",
+                result.runs,
+                days,
+                result.bytes_reclaimed / 1e6,
+            )
+    except Exception:
+        log.exception("retention pass failed; runs are unaffected")
+
+
 async def main() -> None:
     settings = OrchestratorSettings()
     configure_logging(
@@ -182,7 +211,16 @@ async def main() -> None:
                 "VLLMBENCH_TOKEN is not set; runs will fail to authenticate against the agent"
             )
 
+        if settings.telemetry_retention_days:
+            log.info(
+                "telemetry retention: deleting samples for runs finished more than %d days ago",
+                settings.telemetry_retention_days,
+            )
+        else:
+            log.info("telemetry retention is off; samples are kept indefinitely")
+
         log.info("polling for queued runs every %.1fs", POLL_INTERVAL_SECONDS)
+        next_retention = 0.0
         while not stopping.is_set():
             try:
                 result = await _poll_once(sessions, settings.token)
@@ -202,6 +240,14 @@ async def main() -> None:
                 )
             elif not result.worked:
                 pause = POLL_INTERVAL_SECONDS
+
+            # Only while idle. A deletion competing with a benchmark for the same
+            # database is the kind of interference that surfaces as an unexplained
+            # latency outlier in somebody's results.
+            now = asyncio.get_running_loop().time()
+            if settings.telemetry_retention_days and not result.worked and now >= next_retention:
+                await _apply_retention(sessions, days=settings.telemetry_retention_days)
+                next_retention = now + RETENTION_INTERVAL_SECONDS
 
             if pause:
                 with contextlib.suppress(TimeoutError):

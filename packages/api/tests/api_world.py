@@ -97,6 +97,10 @@ class World:
         *,
         sweep: Sweep | None = None,
         status: RunStatus = RunStatus.SUCCEEDED,
+        # Settable because a terminal run cannot be aged afterwards — the immutability
+        # trigger refuses even a raw UPDATE, which is the point of it. A test that needs
+        # a run to look two hundred days old has to build it that way.
+        finished_at: dt.datetime | None = None,
         failure_kind: FailureKind | str | None = None,
         summary: bool = True,
         tpot: float = 25.0,
@@ -122,7 +126,7 @@ class World:
                 if failure_kind is not None
                 else (FailureKind.INTERNAL if status is RunStatus.FAILED else None)
             ),
-            finished_at=dt.datetime.now(dt.UTC),
+            finished_at=finished_at or dt.datetime.now(dt.UTC),
             config_hash=config.config_hash,
             workload_hash=workload.workload_hash,
             vllm_version=vllm_version,

@@ -83,6 +83,12 @@ explicit discussion, not a refactor.
 
 ## Data model conventions
 
+- **Retention deletes telemetry and nothing else.** `vllmbench_db.retention` names what
+  it may never touch — runs, summaries, raw payloads, provenance — and refuses to run if
+  that list ever intersects what it prunes. A pruned run is *recorded* as pruned, because
+  an empty timeline otherwise reads as a sampling bug rather than as the policy working.
+  Deleting samples does not contradict append-only: append-only means never rewritten in
+  place, which is what stops a chart lying about what was observed.
 - **Raw before derived.** Persist the full benchmark JSON verbatim in a `jsonb` column
   alongside the flattened, queryable columns. If we later discover we flattened something
   wrong, the raw record lets us recompute. Never discard the original.
@@ -107,6 +113,10 @@ The agent runs on the machine under test. Its resource footprint is part of its 
 
 - Sampling loops must be bounded and cheap. Telemetry sampling should not be a measurable
   perturbation of the thing it measures.
+- Disk is part of the footprint too, and it fails quietly. Working directories left by a
+  SIGKILL are swept at startup on the same principle as reaping an orphaned engine, and
+  headroom is checked before starting work — a disk with no room turns a forty-minute
+  benchmark into a write error at the end of it.
 - Subprocess lifecycle must be leak-free. Every `vllm serve` this agent starts, it kills —
   including on agent crash and restart. Orphaned processes holding VRAM are a serious
   failure mode; reap on startup.

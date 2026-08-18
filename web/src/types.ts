@@ -202,6 +202,13 @@ export interface RunTelemetry {
   gpu: GpuSample[];
   /** Devices that actually produced samples, in ascending order. */
   gpu_indices: number[];
+  /**
+   * When this run's telemetry was deleted by the retention policy, if it was. Without
+   * it an empty timeline has two readings — the policy removed it, or sampling failed —
+   * and those call for opposite responses.
+   */
+  pruned_at: string | null;
+  pruned_horizon_days: number | null;
   sample_count: number;
 }
 

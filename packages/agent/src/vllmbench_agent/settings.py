@@ -18,6 +18,12 @@ class AgentSettings(BaseSettings):
 
     log_level: str = "INFO"
 
+    # Free space required before starting an engine or a benchmark. A disk with no room
+    # turns a forty-minute benchmark into a write error at the end of it; checking first
+    # costs a statvfs. Lower it on a host with a deliberately small scratch filesystem;
+    # setting it to 0 disables the check, which is a choice rather than a default.
+    min_free_disk_bytes: int = 1_073_741_824
+
     # How often to sample /metrics and NVML during a benchmark. The agent runs on the
     # machine under test, so this is a knob on how much the measurement is disturbed:
     # 1s costs one loopback GET and one NVML read per device per second, against an

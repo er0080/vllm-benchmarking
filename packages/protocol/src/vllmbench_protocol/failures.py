@@ -79,6 +79,13 @@ class FailureKind(StrEnum):
     #: The engine started and stayed alive but never began serving within its budget.
     ENGINE_NOT_READY = "engine_not_ready"
 
+    #: The GPU host is out of disk. Named separately from every engine failure because
+    #: it is not a property of the configuration at all — the same config on the same
+    #: card works again once space is freed, so re-running is the right response, and
+    #: filing it under `engine_load_failed` would send the reader to tune a config that
+    #: is fine.
+    HOST_DISK_FULL = "host_disk_full"
+
     #: The benchmark client exceeded the time allowed for it and was killed.
     BENCHMARK_TIMEOUT = "benchmark_timeout"
     #: `vllm bench serve` ran and failed.

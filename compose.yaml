@@ -10,11 +10,25 @@ x-python-build: &python-build
   context: .
   dockerfile: docker/python.Dockerfile
 
+# Docker's json-file driver is unbounded by default, and these services run for weeks.
+# A control plane that fills the host's disk with its own logs would take the database
+# down with it — and the first symptom would be a sweep failing to write results, which
+# is the most expensive moment to discover a disk problem.
+#
+# 10 MB × 3 caps each service at 30 MB. Structured logs are one line per event rather
+# than per request body, so that is a long history at this stack's volume.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 x-db-env: &db-env
   DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-vllmbench}:${POSTGRES_PASSWORD:-vllmbench}@postgres:5432/${POSTGRES_DB:-vllmbench}
 
 services:
   postgres:
+    logging: *logging
     image: postgres:17-alpine
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-vllmbench}
@@ -35,6 +49,7 @@ services:
       start_period: 10s
 
   migrate:
+    logging: *logging
     build:
       <<: *python-build
       args:
@@ -48,6 +63,7 @@ services:
     restart: "no"
 
   api:
+    logging: *logging
     build:
       <<: *python-build
       args:
@@ -78,6 +94,7 @@ services:
       start_period: 10s
 
   orchestrator:
+    logging: *logging
     build:
       <<: *python-build
       args:
@@ -94,6 +111,7 @@ services:
         condition: service_completed_successfully
 
   web:
+    logging: *logging
     build:
       context: .
       dockerfile: docker/web.Dockerfile
@@ -105,6 +123,7 @@ services:
   # --- dev profile: everything below lets the stack run with no GPU host present ---
 
   mockagent:
+    logging: *logging
     profiles: ["dev"]
     build:
       <<: *python-build
@@ -127,6 +146,7 @@ services:
       - "9110:9110"
 
   web-dev:
+    logging: *logging
     profiles: ["dev"]
     image: node:22-alpine
     working_dir: /app
