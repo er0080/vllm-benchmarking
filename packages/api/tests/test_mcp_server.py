@@ -10,6 +10,7 @@ whether or not the surface is reachable at all.
 from __future__ import annotations
 
 import contextlib
+import uuid
 from collections.abc import AsyncIterator
 
 import httpx
@@ -21,6 +22,7 @@ from mcp.client.streamable_http import streamable_http_client
 
 from vllmbench_api.mcp_server import DEFAULT_PAGE, MAX_PAGE, StaticTokenVerifier, _page, _source
 from vllmbench_api.settings import ApiSettings
+from vllmbench_db.testing import test_database_url
 
 pytestmark = pytest.mark.integration
 
@@ -322,3 +324,390 @@ async def test_no_tool_can_mutate_or_delete_a_run() -> None:
             names = {tool.name for tool in (await session.list_tools()).tools}
     forbidden = {n for n in names if any(w in n for w in ("delete", "update", "edit", "remove"))}
     assert forbidden == set(), f"unexpected mutating tools: {forbidden}"
+
+
+# ---------------------------------------------------------------------------
+# Resources
+#
+# Both are content the client can cache by URI, which is only safe because both are
+# immutable: a config's hash *is* its text, and a finished sweep's runs cannot change.
+# ---------------------------------------------------------------------------
+
+
+async def _seeded_sweep(synthetic: bool = False) -> tuple[str, str, str]:
+    """A finished sweep with two measured points, one dominating the other.
+
+    Returns (sweep_id, config_hash, yaml). Runs are inserted already terminal — a
+    succeeded run is immutable by trigger, so building one any other way fights the
+    schema for nothing.
+    """
+    import datetime as dt
+    import os
+
+    from vllmbench_db.enums import InitiatedBy, ReplicateOrder, RunStatus, SweepStatus
+    from vllmbench_db.models import (
+        GpuHost,
+        Run,
+        RunSummary,
+        ServerConfig,
+        Sweep,
+        Workload,
+    )
+    from vllmbench_db.session import create_engine, create_session_factory
+    from vllmbench_db.testing import reset_database, test_database_url
+
+    yaml = "model: Qwen/Qwen3.5-9B\ntensor-parallel-size: 1\nmax-model-len: 8192\n"
+    engine = create_engine(test_database_url())
+    try:
+        await reset_database(engine)
+        async with create_session_factory(engine)() as db:
+            host = GpuHost(
+                name="ubuntu-llm",
+                agent_url="http://agent",
+                gpu_count=2,
+                synthetic_source="mock_agent" if synthetic else None,
+            )
+            config = ServerConfig(config_hash=os.urandom(32).hex(), name="qwen-9b", yaml=yaml)
+            db.add_all([host, config])
+            await db.flush()
+
+            sweep = Sweep(
+                name="first real measurements",
+                description="TP 1 and 2 across three concurrencies.",
+                gpu_host_id=host.id,
+                status=SweepStatus.SUCCEEDED,
+                replicates=2,
+                replicate_order=ReplicateOrder.GROUPED,
+                initiated_by=InitiatedBy.MCP,
+                is_synthetic=synthetic,
+            )
+            db.add(sweep)
+            await db.flush()
+
+            # Two workloads so the two points differ in something the table shows, and
+            # so the dominated one is dominated for a legible reason.
+            for name, concurrency, per_gpu, tpot in (
+                ("c4", 4, 700.0, 20.0),
+                ("c64", 64, 500.0, 40.0),
+            ):
+                workload = Workload(
+                    workload_hash=os.urandom(32).hex(),
+                    name=name,
+                    dataset_name="random",
+                    num_prompts=64,
+                    max_concurrency=concurrency,
+                )
+                db.add(workload)
+                await db.flush()
+                for replicate in range(2):
+                    run = Run(
+                        sweep_id=sweep.id,
+                        replicate_idx=replicate,
+                        server_config_id=config.id,
+                        workload_id=workload.id,
+                        gpu_host_id=host.id,
+                        status=RunStatus.SUCCEEDED,
+                        finished_at=dt.datetime.now(dt.UTC),
+                        config_hash=config.config_hash,
+                        workload_hash=workload.workload_hash,
+                        vllm_version="0.25.1",
+                        gpu_model="NVIDIA GeForce RTX 3090",
+                        driver_version="580.95.05",
+                        gpu_count=1,
+                        tensor_parallel_size=1,
+                        is_synthetic=synthetic,
+                        synthetic_source="mock_agent" if synthetic else None,
+                        initiated_by=InitiatedBy.MCP,
+                    )
+                    db.add(run)
+                    await db.flush()
+                    db.add(
+                        RunSummary(
+                            run_id=run.id,
+                            tpot_ms_mean=tpot,
+                            tpot_ms_p99=tpot * 2,
+                            total_token_throughput_per_gpu=per_gpu + replicate * 10,
+                            output_token_throughput_per_gpu=per_gpu / 2,
+                            total_token_throughput_tok_sec=per_gpu + replicate * 10,
+                            ttft_ms_p99=120.0,
+                        )
+                    )
+            await db.commit()
+            return str(sweep.id), config.config_hash, yaml
+    finally:
+        await engine.dispose()
+
+
+async def test_resource_templates_are_advertised() -> None:
+    async with _app() as app:
+        async with _client(app) as session:
+            listed = await session.list_resource_templates()
+            templates = {t.uri_template for t in listed.resource_templates}
+    assert "vllmbench://config/{config_hash}" in templates
+    assert "vllmbench://sweep/{sweep_id}/report" in templates
+
+
+async def test_a_config_resource_is_the_exact_yaml() -> None:
+    """Byte for byte, with no envelope.
+
+    Invariant 5: what is stored is what gets passed to `vllm serve --config`. An agent
+    that reads this resource and writes it to a file has the configuration that ran, and
+    a JSON wrapper or a re-emitted YAML would break that in a way nothing would notice
+    until the engine came up differently.
+    """
+    _, config_hash, yaml = await _seeded_sweep()
+
+    async with _app() as app:
+        async with _client(app) as session:
+            result = await session.read_resource(f"vllmbench://config/{config_hash}")
+
+    (content,) = result.contents
+    assert getattr(content, "text", None) == yaml
+    assert content.mime_type == "text/yaml"
+
+
+async def test_an_unknown_config_hash_is_an_error() -> None:
+    """It fails rather than returning an empty document.
+
+    The SDK replaces the reason with a generic one on the way out, so an agent that
+    needs to know *why* should use the `get_config` tool, which says. What matters here
+    is that a hash nobody stored never reads as a config with no settings in it.
+    """
+    async with _app() as app:
+        async with _client(app) as session:
+            with pytest.raises(Exception, match=r"config/0{64}"):
+                await session.read_resource("vllmbench://config/" + "0" * 64)
+
+
+async def test_a_sweep_report_carries_the_frontier_and_its_provenance() -> None:
+    """The report has to be readable *and* not invite an invalid comparison."""
+    sweep_id, _, _ = await _seeded_sweep()
+
+    async with _app() as app:
+        async with _client(app) as session:
+            result = await session.read_resource(f"vllmbench://sweep/{sweep_id}/report")
+
+    (content,) = result.contents
+    report = getattr(content, "text", "")
+
+    assert "first real measurements" in report
+    # Provenance in the section heading, not a footnote: the reason two tables exist is
+    # that they may not be read as one.
+    assert "NVIDIA GeForce RTX 3090" in report
+    assert "vLLM 0.25.1" in report
+    # The dominated point is present, and the frontier point is marked.
+    assert "c4" in report and "c64" in report
+    assert "★" in report
+    # Per-GPU throughput is the leftmost metric column (invariant 8).
+    assert report.index("tok/s per GPU") < report.index("tok/s aggregate")
+    # A spread accompanies every number that has one, and says what it means.
+    assert "±" in report
+    assert "not a result" in report
+
+
+async def test_a_synthetic_sweep_report_leads_with_the_quarantine() -> None:
+    """Invariant 7, in the one place an agent cannot skim past it.
+
+    A synthetic result that reads like a measurement is the failure this flag exists to
+    prevent, and an agent reading a report will act on the first thing that looks like a
+    number unless told otherwise first.
+    """
+    sweep_id, _, _ = await _seeded_sweep(synthetic=True)
+
+    async with _app() as app:
+        async with _client(app) as session:
+            result = await session.read_resource(f"vllmbench://sweep/{sweep_id}/report")
+
+    report = getattr(result.contents[0], "text", "")
+    banner = report.index("not measurements of any real hardware")
+    # Before any measurement in the document.
+    assert banner < report.index("tok/s per GPU")
+
+
+# ---------------------------------------------------------------------------
+# The write audit log
+# ---------------------------------------------------------------------------
+
+
+async def _audit_rows() -> list[object]:
+    from sqlalchemy import select
+
+    from vllmbench_db.models import McpWriteAudit
+    from vllmbench_db.session import create_engine, create_session_factory
+    from vllmbench_db.testing import test_database_url
+
+    engine = create_engine(test_database_url())
+    try:
+        async with create_session_factory(engine)() as db:
+            return list(
+                (
+                    await db.execute(select(McpWriteAudit).order_by(McpWriteAudit.called_at))
+                ).scalars()
+            )
+    finally:
+        await engine.dispose()
+
+
+async def _empty_database() -> None:
+    from vllmbench_db.session import create_engine
+    from vllmbench_db.testing import reset_database, test_database_url
+
+    engine = create_engine(test_database_url())
+    try:
+        await reset_database(engine)
+    finally:
+        await engine.dispose()
+
+
+async def test_a_successful_write_is_recorded_with_what_it_produced() -> None:
+    await _empty_database()
+
+    async with _app() as app:
+        async with _client(app) as session:
+            await session.call_tool(
+                "create_config", {"name": "audited", "yaml": "model: m\n", "notes": "why"}
+            )
+
+    (row,) = await _audit_rows()
+    assert row.tool == "create_config"  # type: ignore[attr-defined]
+    assert row.outcome == "succeeded"  # type: ignore[attr-defined]
+    assert row.client == "mcp"  # type: ignore[attr-defined]
+    # Enough to join the record to the thing it made.
+    assert row.subject and len(row.subject) == 64  # type: ignore[attr-defined]
+    # The arguments as they arrived, so a later mishandling can be diagnosed against
+    # what was actually asked for rather than what we assume was.
+    assert row.arguments["name"] == "audited"  # type: ignore[attr-defined]
+    assert row.arguments["yaml"] == "model: m\n"  # type: ignore[attr-defined]
+
+
+async def test_a_refusal_is_recorded_because_nothing_else_records_it() -> None:
+    """The rows that justify the table.
+
+    A refused call writes nothing to any other table. Without this the only evidence it
+    happened lives in the agent's context, which does not survive the session — and an
+    agent bouncing repeatedly off a read-only control plane is precisely what an operator
+    needs to be able to see.
+    """
+    await _empty_database()
+
+    async with _app(mcp_write_enabled=False) as app:
+        async with _client(app) as session:
+            result = await session.call_tool("create_config", {"name": "no", "yaml": "model: m\n"})
+            assert result.is_error
+
+    (row,) = await _audit_rows()
+    assert row.outcome == "refused"  # type: ignore[attr-defined]
+    assert "disabled" in (row.error or "")  # type: ignore[attr-defined]
+    assert row.subject is None  # type: ignore[attr-defined]
+
+
+async def test_a_domain_refusal_records_the_reason() -> None:
+    """A refusal the surface understood, told apart from a bug.
+
+    Reading the log back, a hundred refusals is an agent that needs better instructions
+    and one failure is something to fix; conflating them makes both invisible.
+    """
+    await _empty_database()
+
+    async with _app() as app:
+        async with _client(app) as session:
+            result = await session.call_tool(
+                "create_sweep",
+                {
+                    "name": "doomed",
+                    "gpu_host_id": str(uuid.uuid4()),
+                    "config_hashes": ["0" * 64],
+                    "workload_hashes": ["1" * 64],
+                },
+            )
+            assert result.is_error
+
+    (row,) = await _audit_rows()
+    assert row.tool == "create_sweep"  # type: ignore[attr-defined]
+    assert row.outcome == "refused"  # type: ignore[attr-defined]
+    assert "unknown config or workload" in (row.error or "")  # type: ignore[attr-defined]
+
+
+async def test_reads_are_not_audited() -> None:
+    """This log is about what changed, not about what was looked at.
+
+    Recording every query would bury the writes in noise and grow without bound while an
+    agent polls a running sweep.
+    """
+    await _empty_database()
+
+    async with _app() as app:
+        async with _client(app) as session:
+            await session.call_tool("list_hosts", {})
+            await session.call_tool("query_runs", {})
+            await session.call_tool("server_info", {})
+
+    assert await _audit_rows() == []
+
+
+async def test_an_outsized_argument_is_trimmed_not_dropped() -> None:
+    """One call must not be able to grow this table without bound.
+
+    Trimmed rather than omitted: a truncated config still identifies what was submitted,
+    where a missing key looks like it was never sent.
+    """
+    from vllmbench_api.mcp_server import MAX_LOGGED_VALUE
+
+    await _empty_database()
+    huge = "model: m\n" + ("# padding\n" * 2000)
+    assert len(huge) > MAX_LOGGED_VALUE
+
+    async with _app() as app:
+        async with _client(app) as session:
+            await session.call_tool("create_config", {"name": "big", "yaml": huge})
+
+    (row,) = await _audit_rows()
+    logged = row.arguments["yaml"]  # type: ignore[attr-defined]
+    assert logged.startswith("model: m\n")
+    assert str(len(huge)) in logged
+    assert len(logged) < len(huge)
+
+
+async def test_the_log_is_readable_and_filterable() -> None:
+    """Written by the MCP surface, read over HTTP.
+
+    Deliberately tested as one path: a log nothing can read is not an audit trail, and
+    the operator who needs it is looking at the control plane, not connected as an agent.
+    """
+    from vllmbench_api.main import app as rest_app
+    from vllmbench_db.session import create_engine, create_session_factory
+
+    await _empty_database()
+
+    async with _app() as app:
+        async with _client(app) as session:
+            await session.call_tool("create_config", {"name": "kept", "yaml": "model: m\n"})
+            await session.call_tool(
+                "create_sweep",
+                {
+                    "name": "doomed",
+                    "gpu_host_id": str(uuid.uuid4()),
+                    "config_hashes": ["0" * 64],
+                    "workload_hashes": ["1" * 64],
+                },
+            )
+
+    engine = create_engine(test_database_url())
+    rest_app.state.engine = engine
+    rest_app.state.sessions = create_session_factory(engine)
+    rest_app.state.settings = ApiSettings(token="test-token-not-a-real-secret")
+    try:
+        transport = httpx.ASGITransport(app=rest_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://api") as rest:
+            everything = (await rest.get("/api/mcp-audit")).json()
+            refused = (await rest.get("/api/mcp-audit?outcome=refused")).json()
+    finally:
+        await engine.dispose()
+
+    assert {row["tool"] for row in everything} == {"create_config", "create_sweep"}
+    # Newest first: an operator opening this wants the last thing that happened.
+    assert everything[0]["tool"] == "create_sweep"
+    # The filter that matters. A refusal writes nothing to any other table, so this is
+    # the only view of an agent that has been asking for something it cannot have.
+    assert [row["tool"] for row in refused] == ["create_sweep"]
+    assert refused[0]["outcome"] == "refused"

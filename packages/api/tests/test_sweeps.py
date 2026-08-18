@@ -8,6 +8,7 @@ free, and a multi-hour job independent of any one service staying up.
 
 from __future__ import annotations
 
+import datetime as dt
 import itertools
 import os
 import uuid
@@ -588,3 +589,119 @@ class TestGuardrails:
             },
         )
         assert created.json()["initiated_by"] == "api"
+
+
+class TestRemainingTimeEstimate:
+    """What `get_sweep` says about how much longer, and when it declines to say.
+
+    The estimate's arithmetic is covered in :mod:`test_duration`; this is the wiring —
+    that the plan is read in execution order, that a run's engine load is attributed to
+    the right run, and that a finished sweep does not carry a countdown.
+    """
+
+    async def _sweep_of(
+        self, session: AsyncSession, client: httpx.AsyncClient, *, replicates: int
+    ) -> str:
+        host, config, workload = await _fixtures(session)
+        response = await client.post(
+            "/api/sweeps",
+            json={
+                "name": "estimated",
+                "gpu_host_id": str(host.id),
+                "server_config_ids": [str(config.id)],
+                "workload_ids": [str(workload.id)],
+                "replicates": replicates,
+            },
+        )
+        assert response.status_code == 201, response.text
+        return str(response.json()["id"])
+
+    async def _finish(
+        self, session: AsyncSession, sweep_id: str, *, count: int, seconds: list[float]
+    ) -> None:
+        """Mark the first `count` runs succeeded, with the durations given."""
+        runs = list(
+            (
+                await session.execute(
+                    select(Run).where(Run.sweep_id == uuid.UUID(sweep_id)).order_by(Run.sweep_seq)
+                )
+            ).scalars()
+        )
+        base = dt.datetime.now(dt.UTC)
+        for run, duration in zip(runs[:count], seconds, strict=True):
+            run.started_at = base
+            run.finished_at = base + dt.timedelta(seconds=duration)
+            run.status = RunStatus.SUCCEEDED
+        await session.commit()
+
+    async def test_nothing_finished_means_no_number(
+        self, session: AsyncSession, client: httpx.AsyncClient
+    ) -> None:
+        """A countdown with nothing behind it looks measured. It must not exist."""
+        sweep_id = await self._sweep_of(session, client, replicates=4)
+
+        estimate = (await client.get(f"/api/sweeps/{sweep_id}")).json()["estimated_remaining"]
+
+        assert estimate["seconds_remaining"] is None
+        assert estimate["runs_remaining"] == 4
+        # One config, so only the first run pays for a load.
+        assert estimate["engine_loads_remaining"] == 1
+        assert estimate["caveats"]
+
+    async def test_the_engine_load_is_charged_to_the_run_that_paid_for_it(
+        self, session: AsyncSession, client: httpx.AsyncClient
+    ) -> None:
+        """The decomposition, end to end.
+
+        Four runs of one config: the first loads the engine, the rest do not. Once two
+        have finished, the two remaining are priced at benchmark time alone — and the
+        recovered load overhead is not charged again, because nothing left restarts.
+        """
+        sweep_id = await self._sweep_of(session, client, replicates=4)
+        await self._finish(session, sweep_id, count=2, seconds=[240.0, 60.0])
+
+        estimate = (await client.get(f"/api/sweeps/{sweep_id}")).json()["estimated_remaining"]
+
+        assert estimate["median_run_seconds"] == 60.0
+        assert estimate["median_engine_load_seconds"] == 180.0
+        assert estimate["engine_loads_remaining"] == 0
+        # Two runs at 60s, with no load to pay for. An estimate that pooled the two
+        # observed durations would have said 300s — five minutes for two minutes of work.
+        assert estimate["seconds_remaining"] == 120.0
+        assert estimate["sample_size"] == 2
+
+    async def test_a_failed_run_is_neither_counted_nor_extrapolated_from(
+        self, session: AsyncSession, client: httpx.AsyncClient
+    ) -> None:
+        """A run that died after ten seconds is not evidence a run takes ten seconds."""
+        sweep_id = await self._sweep_of(session, client, replicates=4)
+        await self._finish(session, sweep_id, count=2, seconds=[240.0, 60.0])
+        runs = list(
+            (
+                await session.execute(
+                    select(Run).where(Run.sweep_id == uuid.UUID(sweep_id)).order_by(Run.sweep_seq)
+                )
+            ).scalars()
+        )
+        died_at = dt.datetime.now(dt.UTC)
+        runs[2].status = RunStatus.FAILED
+        runs[2].started_at = died_at
+        runs[2].finished_at = died_at + dt.timedelta(seconds=10)
+        await session.commit()
+
+        estimate = (await client.get(f"/api/sweeps/{sweep_id}")).json()["estimated_remaining"]
+
+        assert estimate["sample_size"] == 2
+        assert estimate["runs_remaining"] == 1
+        assert estimate["seconds_remaining"] == 60.0
+
+    async def test_a_finished_sweep_has_no_countdown(
+        self, session: AsyncSession, client: httpx.AsyncClient
+    ) -> None:
+        """Not a zero, which would be a claim about work that is not happening."""
+        sweep_id = await self._sweep_of(session, client, replicates=2)
+        await client.post(f"/api/sweeps/{sweep_id}/cancel")
+
+        body = (await client.get(f"/api/sweeps/{sweep_id}")).json()
+
+        assert body["estimated_remaining"] is None

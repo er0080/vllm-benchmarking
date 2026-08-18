@@ -485,3 +485,52 @@ class SavedView(Base):
     options: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
 
     created_at: Mapped[dt.datetime] = created_at_column()
+
+
+class McpWriteAudit(Base):
+    """Every write call the MCP surface received, including the ones it refused.
+
+    Named for the surface it covers rather than "audit log", because it covers exactly
+    one interface and a name that implied otherwise would be a trap: somebody would read
+    an empty table and conclude nothing had changed anything.
+
+    The MCP surface is the one that needs this, and the reason is not suspicion. A person
+    who clicks *create sweep* remembers doing it, and `initiated_by` on the resulting rows
+    records the rest. An agent working unattended remembers nothing, and — the part no
+    other record covers — **a refused call leaves no trace anywhere else at all**. A
+    `create_sweep` rejected because the host was busy, or because the matrix exceeded the
+    bound, writes nothing to any table; without this, the only evidence it ever happened
+    is in the agent's own context, which is gone by morning.
+
+    Append-only in the same sense the sample tables are: rows are inserted and never
+    updated. There is no endpoint that edits one.
+    """
+
+    __tablename__ = "mcp_write_audit"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    called_at: Mapped[dt.datetime] = created_at_column()
+
+    #: The tool name as the caller invoked it.
+    tool: Mapped[str] = mapped_column(String(64), index=True)
+
+    #: Who asked, as far as the surface can tell. Declared by the client rather than
+    #: sniffed — the same trust model as `initiated_by`, and for the same reason: HTTP
+    #: cannot honestly identify the thing on the other end, so a confident guess would be
+    #: a wrong answer in an audit column.
+    client: Mapped[str | None] = mapped_column(String(128))
+
+    #: What was asked for, verbatim, as it arrived. Raw before derived: if the surface
+    #: later turns out to have mishandled an argument, this is what says so.
+    arguments: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+
+    #: "succeeded", "refused" or "failed". Refused is the interesting one — it is the
+    #: outcome that writes nothing anywhere else.
+    outcome: Mapped[str] = mapped_column(String(16), index=True)
+
+    #: Why, when it was not "succeeded".
+    error: Mapped[str | None] = mapped_column(Text)
+
+    #: What the call produced, when it produced something identifiable — a sweep id, a
+    #: config hash. Enough to join this record to the thing it created.
+    subject: Mapped[str | None] = mapped_column(String(128), index=True)

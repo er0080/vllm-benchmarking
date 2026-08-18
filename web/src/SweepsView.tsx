@@ -13,7 +13,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { api, configsApi, sweepsApi, workloadsApi } from "./api";
-import type { Config, Host, Sweep, SweepStatus, Workload } from "./types";
+import type {
+  Config,
+  DurationEstimate,
+  Host,
+  Sweep,
+  SweepStatus,
+  Workload,
+} from "./types";
 
 const ACTIVE: SweepStatus[] = ["queued", "running"];
 const POLL_MS = 3000;
@@ -59,6 +66,57 @@ function ProgressBar({ sweep }: { sweep: Sweep }) {
         {sweep.progress.total} total
       </p>
     </>
+  );
+}
+
+/** Seconds as a duration a person can act on.
+ *
+ * Rounded hard, and never to the second: the estimate comes from a handful of completed
+ * runs, and rendering "18 min 42 s" would claim a precision it does not have. */
+function duration(seconds: number): string {
+  if (seconds < 90) return `${Math.round(seconds)}s`;
+  const minutes = seconds / 60;
+  if (minutes < 90) return `${Math.round(minutes)} min`;
+  return `${(minutes / 60).toFixed(1)} h`;
+}
+
+/** How much longer, shown only while there is a sweep to wait for.
+ *
+ * A sweep that sits at the same count for twenty minutes because a 70B model is loading
+ * is the usability failure CLAUDE.md names, and the fix is not a spinner — it is saying
+ * which of the remaining time is benchmarking and which is model loading. Those are the
+ * two numbers, so those are the two shown.
+ *
+ * When nothing has finished there is no estimate, and the absence is stated rather than
+ * filled in. A countdown extrapolated from nothing looks exactly like one extrapolated
+ * from something. */
+function Remaining({ estimate }: { estimate: DurationEstimate }) {
+  const { seconds_remaining, runs_remaining, engine_loads_remaining } = estimate;
+  const plan =
+    `${runs_remaining} run${runs_remaining === 1 ? "" : "s"} left` +
+    (engine_loads_remaining > 0
+      ? `, ${engine_loads_remaining} restarting the engine`
+      : ", none restarting the engine");
+
+  return (
+    <div className="fact">
+      <dt>Remaining</dt>
+      <dd>
+        {seconds_remaining === null ? (
+          <span className="muted">not yet known</span>
+        ) : (
+          <>~{duration(seconds_remaining)}</>
+        )}
+        <br />
+        <span className="muted">{plan}</span>
+        {estimate.caveats.map((caveat) => (
+          <span key={caveat} className="muted">
+            <br />
+            {caveat}
+          </span>
+        ))}
+      </dd>
+    </div>
   );
 }
 
@@ -109,6 +167,7 @@ function SweepCard({ sweep, onChanged }: { sweep: Sweep; onChanged: () => void }
           <dt>Model loads</dt>
           <dd>{sweep.engine_starts}</dd>
         </div>
+        {sweep.estimated_remaining && <Remaining estimate={sweep.estimated_remaining} />}
         <div className="fact">
           <dt>Started</dt>
           <dd>{sweep.started_at ? new Date(sweep.started_at).toLocaleString() : "—"}</dd>

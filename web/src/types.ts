@@ -186,6 +186,20 @@ export interface Sweep {
   progress: SweepProgress;
   /** Model loads implied by the plan — most of a sweep's wall clock. */
   engine_starts: number;
+  /** Present only while a sweep still has work. Null on anything terminal. */
+  estimated_remaining: DurationEstimate | null;
+}
+
+export interface DurationEstimate {
+  runs_remaining: number;
+  engine_loads_remaining: number;
+  /** Null means not known. Never a fabricated zero — nothing has finished yet. */
+  seconds_remaining: number | null;
+  median_run_seconds: number | null;
+  median_engine_load_seconds: number | null;
+  basis: string;
+  sample_size: number;
+  caveats: string[];
 }
 
 export interface SweepCreate {

@@ -192,17 +192,24 @@ analysis tools depend on 0.5.0 and the control tools on 0.4.0.
 - [x] Write tools, enabled by default and separately switchable — `create_config`,
       `create_workload`, `create_sweep`, `cancel_sweep`. No tool mutates or deletes a run,
       and a test asserts none is ever added
-- [ ] MCP resources: `vllmbench://config/{hash}`, `vllmbench://sweep/{id}/report`
-- [ ] Context economy: pagination with a hard maximum, summary fields by default,
-      server-side telemetry downsampling
+- [x] MCP resources: `vllmbench://config/{hash}`, `vllmbench://sweep/{id}/report` — both
+      immutable, so a client may cache them by URI: a config's hash *is* its text, and a
+      finished sweep's runs cannot change
+- [x] Context economy: pagination with a hard maximum, summary fields by default,
+      server-side telemetry downsampling — thinned per device in the query, because
+      striding the interleaved series drops whole GPUs while looking complete
 - [x] `initiated_by` provenance on sweeps and runs (`ui` / `mcp` / `api`) plus client
       identity — declared by the caller, since HTTP cannot tell a browser from curl and
       guessing would put a confident wrong answer in a provenance column
-- [ ] `get_sweep` returns `estimated_remaining`, extrapolated from completed points
+- [x] `get_sweep` returns `estimated_remaining`, extrapolated from completed points
 - [x] Guardrails: one active sweep per host enforced in the domain layer (two sweeps
       interleave engine restarts, so neither measures what it planned), bounded matrix
       size, exact run count and engine-load count returned at authoring
-- [ ] Structured duration estimate and an audit log of write calls
+- [x] Structured duration estimate — benchmark time and engine-load time separated,
+      because a plan with three config changes left costs minutes more than one with
+      three runs of the same config, and no number at all when nothing has finished
+- [x] Audit log of write calls, including the refused ones — a refusal writes nothing to
+      any other table, so without it the only record is the agent's own context
 
 **Done when:** an agent connected over MCP can author a config, define and start a sweep,
 poll it to completion, and read back a per-GPU normalized Pareto frontier — without
