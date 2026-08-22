@@ -2,6 +2,7 @@
 name = "vllmbench-protocol"
 version = "1.0.0rc3"
 description = "Wire types and protocol version shared by the control plane and the GPU-host agent"
+license = "Apache-2.0"
 requires-python = ">=3.11,<3.14"
 dependencies = [
     "pydantic>=2.9",

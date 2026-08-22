@@ -283,7 +283,23 @@ including `make check` for everything CI runs.
 - [docs/tuning-playbook.md](docs/tuning-playbook.md) — how to read each chart and what to change next
 - [docs/upgrading.md](docs/upgrading.md) — moving a running deployment forward, and what cannot be rolled back
 - [docs/limitations.md](docs/limitations.md) — what this release does not do
+- [docs/mcp.md](docs/mcp.md) — enabling the MCP surface and pointing an agent at it
 - [docs/adr/](docs/adr/) — accepted architecture decisions and the alternatives they rejected
 - [docs/hardware-verification.md](docs/hardware-verification.md) — what real hardware found, and what it confirmed
 - [vLLM Benchmark CLI](https://docs.vllm.ai/en/v0.25.1/benchmarking/cli/) — upstream reference
 - [vLLM Parameter Sweeps](https://docs.vllm.ai/en/v0.25.1/benchmarking/sweeps/) — upstream sweep tooling
+
+---
+
+## Licence
+
+[Apache License 2.0](LICENSE). Copyright 2026 Eric L. Parent.
+
+Apache-2.0 rather than something shorter because this wraps vLLM, which is Apache-2.0, and
+matching the licence of the thing you sit on top of is the arrangement with the fewest
+surprises for anyone combining the two. The explicit patent grant is the substantive
+difference from MIT, and it is the one that matters for infrastructure.
+
+There is no `NOTICE` file. Apache-2.0 only requires propagating one that exists, and this
+project bundles no third-party code carrying attribution notices — adding an empty
+formality would put an obligation on everyone downstream in exchange for nothing.

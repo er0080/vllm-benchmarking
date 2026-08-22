@@ -2,6 +2,7 @@
 name = "vllmbench-db"
 version = "1.0.0rc3"
 description = "SQLAlchemy models and Alembic migrations for the results store"
+license = "Apache-2.0"
 requires-python = ">=3.11,<3.14"
 dependencies = [
     # Not just for __version__: lockstep versioning means the results store and the wire
