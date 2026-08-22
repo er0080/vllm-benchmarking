@@ -321,6 +321,16 @@ async def analysis_points(
     means both. Invariant 7 is a property of the request shape rather than a check that
     could be forgotten (see :class:`~vllmbench_api.analysis.RunSource`).
     """
+    # An unrecognised axis falls back to the default rather than erroring, and that is
+    # deliberate *for this caller*. The reader is a browser holding a URL that may have
+    # been bookmarked across a release; blanking their chart to punish a stale query
+    # string helps nobody, and the response states which axis it actually used, which the
+    # chart then labels. A person cannot miss it.
+    #
+    # The MCP surface must not inherit this. An agent has no axis label to read, and a
+    # substitution there is a successful call answering a question that was not asked —
+    # so ``vllmbench_api.mcp_server._metric_key`` refuses first. If you are here to make
+    # the two consistent, that is the direction: keep this, keep that.
     x_key = pareto_x if pareto_x in METRICS_BY_KEY else PARETO_X
     y_key = pareto_y if pareto_y in METRICS_BY_KEY else PARETO_Y
     capped = max(1, min(limit, MAX_RUN_LIMIT))

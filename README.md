@@ -26,7 +26,9 @@ This framework:
 - **Displays** them as Pareto frontiers, saturation curves, and per-run timelines.
 - **Stores** server configurations as native vLLM YAML, directly usable with `vllm serve --config`.
 - **Exposes** all of the above over MCP, so Claude Code and similar agent harnesses can
-  drive a tuning loop directly. See [ADR 0001](docs/adr/0001-mcp-server-interface.md).
+  drive a tuning loop directly. Off by default; see [docs/mcp.md](docs/mcp.md) to turn it
+  on and connect a client, and [ADR 0001](docs/adr/0001-mcp-server-interface.md) for why it
+  is shaped the way it is.
 
 ---
 

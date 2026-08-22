@@ -11,6 +11,12 @@
 > Accepted. The decisions below are binding; changing one requires a superseding ADR, not
 > an edit to this file. Rejected alternatives are retained deliberately — they are the
 > record of why the project is not doing the obvious other thing.
+>
+> **This is a decision record, not a reference.** For what the surface exposes today and
+> how to connect a client to it, see [docs/mcp.md](../mcp.md). Tool names and argument
+> shapes below were firmed up during implementation, as the final section of this ADR
+> anticipated; where they moved, the tables have been brought into line with what shipped
+> and the change is noted.
 
 ---
 
@@ -174,7 +180,8 @@ than implied.
 | Tool | Returns |
 | --- | --- |
 | `list_hosts` | GPU hosts, device inventory, driver and vLLM versions |
-| `list_configs` / `get_config` | vLLM YAML server configs, with lineage |
+| `list_configs` / `get_config` | vLLM YAML server configs |
+| `get_config_lineage` | What a config was edited from, and what was edited from it |
 | `validate_config` | Structured, actionable errors for a candidate YAML. No side effects. |
 | `list_workloads` | Workload definitions |
 | `list_sweeps` / `get_sweep` | Definition, status, progress, points remaining, `estimated_remaining` |
@@ -182,7 +189,12 @@ than implied.
 | `get_run` | Full metrics for one run, with provenance |
 | `get_run_telemetry` | Downsampled engine and per-device GPU series |
 | `compare_runs` | Structured diff of configuration and metrics across runs |
-| `get_pareto` | Frontier points for a sweep, per-GPU normalized |
+| `get_pareto` | Frontier points, per-GPU normalized, partitioned by comparability |
+| `server_info` | Version, protocol version, write switch, and the guarantees above |
+
+Lineage was split out of `get_config` rather than returned with it: the reason to ask what
+a config was edited from is a tuning session in progress, and that is not the reason most
+callers fetch YAML.
 
 ### Write tools
 
@@ -194,11 +206,16 @@ analysis-only surface.
 
 | Tool | Effect |
 | --- | --- |
-| `create_config` | Validate and store a vLLM YAML config |
+| `create_config` | Store a vLLM YAML config, byte for byte |
+| `annotate_config` | Record why a config is worth keeping. Never edits the YAML. |
 | `create_workload` | Store a workload definition |
-| `create_sweep` | Define a matrix from a base config and structured axes. **Does not start it.** Returns exact run count and a structured duration estimate. |
-| `start_sweep` | Begin execution. Returns immediately. |
-| `cancel_sweep` | Stop a running sweep, tearing down cleanly |
+| `create_sweep` | Materialize the matrix as queued runs. Returns the exact run count and the number of engine loads implied. |
+| `cancel_sweep` | Stop a sweep, tearing down cleanly |
+
+`annotate_config` was added during implementation because the alternative — editing a
+config's notes in place — is not available: configs are content-addressed, so changing the
+YAML makes a different configuration. What a config *means* has to be mutable separately
+from what it *is*.
 
 **There is deliberately no tool that mutates or deletes a run, a result, or a telemetry
 sample.** Runs are immutable once terminal, and that invariant should not have an
@@ -208,8 +225,13 @@ not a tool call.
 ### Resources
 
 Configs and completed sweep reports are also exposed as MCP resources addressed by URI
-(`vllmbench://config/{hash}`, `vllmbench://sweep/{id}/report`). Resources are the right
-primitive for stable, cacheable, human-inspectable documents; tools are for actions.
+(`vllmbench://config/{config_hash}`, `vllmbench://sweep/{sweep_id}/report`). Resources are
+the right primitive for stable, cacheable, human-inspectable documents; tools are for
+actions.
+
+Both are *templated*, so they are advertised under `resources/templates/list` and not under
+`resources/list`, which is empty. That has already been misread as the feature being
+absent, so `server_info` names both templates and [docs/mcp.md](../mcp.md) says so plainly.
 
 ---
 
@@ -217,12 +239,20 @@ primitive for stable, cacheable, human-inspectable documents; tools are for acti
 
 ### Sweeps outlive tool calls
 
-A sweep runs for hours. An MCP tool call is a request and a response. `start_sweep`
+A sweep runs for hours. An MCP tool call is a request and a response. `create_sweep`
 therefore returns as soon as the sweep is queued, and the agent polls `get_sweep`. No tool
 call ever blocks on sweep completion — not with a long timeout, not with a streamed
-progress hack. The separation between `create_sweep` and `start_sweep` exists for the same
-reason it exists in the UI: the agent should be able to show a human what it is about to
-spend two hours of GPU time on before it spends it.
+progress hack.
+
+**As implemented, `create_sweep` and `start_sweep` are one call.** The two-step above was
+meant to let an agent show a human the plan before spending GPU time on it, and the split
+did not deliver that: creating the runs is already the commitment, since they are
+materialized in the database in execution order and a host takes one active sweep at a
+time. A `start_sweep` that could only ever be called immediately afterwards was a step that
+looked like a checkpoint without being one. What actually serves the intent is
+`validate_config` before either, and the run count and engine-load count that `create_sweep`
+returns — the second of which is what predicts the wall clock, most of a sweep's time being
+model loading. An agent that wants confirmation asks for it with those numbers in hand.
 
 ### Context economy is a correctness concern
 
