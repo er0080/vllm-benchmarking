@@ -420,6 +420,19 @@ nothing was not tested.
   exactly the way a user's would have been: `resources/list` is empty because both
   resources are templated, and the working feature was reported missing. There is a guide
   now, and a tier-1 test that fails if the guide and the surface disagree.
+- **v1.0.0rc4** — the two issues left open against this milestone, plus two the MCP surface
+  turned up while being asked a question. **The first candidate to move
+  `PROTOCOL_VERSION`, so every GPU host's agent must be upgraded alongside the control
+  plane** — which makes it the first real exercise of a refusal the design has always
+  promised. The repository had no licence, so the quick start was inviting people to do
+  something exclusive copyright did not permit; it is Apache-2.0, matching vLLM. The agent
+  could leave vLLM's own virtualenv outside vLLM's declared constraints with nothing saying
+  so: it now checks, warns at startup, and records the answer as run provenance, never
+  blocking, because refusing to start would adjudicate someone's virtualenv from another
+  machine. And two MCP tools described themselves wrongly — `validate_config` advertised
+  that it crossed the host boundary when it reads a database row, and `cancel_sweep`
+  promised an interruption the orchestrator performs three seconds later, so an agent that
+  cancelled and polled immediately had been told that meant failure.
 
 ---
 

@@ -1,6 +1,6 @@
 [project]
 name = "vllmbench-agent"
-version = "1.0.0rc3"
+version = "1.0.0rc4"
 description = "GPU-host agent: vLLM lifecycle, benchmarking and telemetry"
 license = "Apache-2.0"
 requires-python = ">=3.11,<3.14"
