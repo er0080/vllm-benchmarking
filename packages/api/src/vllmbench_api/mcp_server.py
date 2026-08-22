@@ -82,6 +82,18 @@ MCP_CLIENT_NAME = "mcp"
 
 log = logging.getLogger(__name__)
 
+#: Every tool here answers from this control plane's own database and from argument
+#: catalogues checked into this repository. None of them contacts the GPU host: the agent
+#: is reached by host registration and by the orchestrator, neither of which is exposed as
+#: a tool. So ``openWorldHint`` is false for the whole surface, and stating it once is the
+#: honest form — a per-tool switch invites the guess that got this wrong, which was that
+#: ``validate_config`` must be talking to the host because it checks against the host's
+#: vLLM version. It checks against what that host *last reported*, which is a database row.
+#:
+#: A tool that live-probes the agent would be the first true case, and would need its own
+#: value here rather than this one.
+CLOSED_WORLD = False
+
 #: Valid Pareto axes, derived from the metric catalogue rather than restated beside it.
 #: The published ``enum`` and what the analysis layer can actually plot are then the same
 #: list, which is the only arrangement in which they cannot drift apart.
@@ -270,7 +282,7 @@ def build_mcp_server(sessions: async_sessionmaker[Any], settings: ApiSettings) -
         ),
     )
 
-    def tool(*, open_world: bool = False) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    def tool() -> Callable[[Callable[..., Any]], Callable[..., Any]]:
         """Register a read tool, with the hints that say it is one.
 
         ``read_only_hint`` is the field a harness consults when deciding what it may call
@@ -290,9 +302,7 @@ def build_mcp_server(sessions: async_sessionmaker[Any], settings: ApiSettings) -
                     read_only_hint=True,
                     destructive_hint=False,
                     idempotent_hint=True,
-                    # False means the tool answers from this control plane's own database.
-                    # True is reserved for the ones that reach across the host boundary.
-                    open_world_hint=open_world,
+                    open_world_hint=CLOSED_WORLD,
                 ),
             )(fn)
 
@@ -537,9 +547,7 @@ def build_mcp_server(sessions: async_sessionmaker[Any], settings: ApiSettings) -
             )
             return result.model_dump(mode="json")
 
-    # Reaches across the host boundary when gpu_host_id is given: the target host's own
-    # vLLM version and device count are what it checks against.
-    @tool(open_world=True)
+    @tool()
     async def validate_config(
         yaml: Annotated[
             str,
@@ -577,9 +585,12 @@ def build_mcp_server(sessions: async_sessionmaker[Any], settings: ApiSettings) -
         Reads only — nothing is stored and nothing is rewritten. Every finding names the
         setting at fault and says what is wrong with it; the fix stays with you.
 
-        Pass `gpu_host_id` to check against that host's own vLLM version and device
-        count. Without it the config is checked in the abstract against the reference
-        version, and the topology checks are skipped rather than guessed at.
+        Pass `gpu_host_id` to check against the vLLM version and device count that host
+        last reported. Nothing is sent to the host to find out — this reads what is on
+        record here, so a host whose environment changed since it last checked in is
+        checked against what it said then. Without the id the config is checked in the
+        abstract against the reference version, and the topology checks are skipped rather
+        than guessed at.
 
         `severity` matters: "error" means `vllm serve` will refuse to start, "warning"
         means it will start and may not do what you meant. `checked_against` names the
@@ -681,7 +692,6 @@ def build_mcp_server(sessions: async_sessionmaker[Any], settings: ApiSettings) -
         *,
         destructive: bool = False,
         idempotent: bool = True,
-        open_world: bool = False,
     ) -> Callable[..., Any]:
         """Register a write tool, audited, with the read-only switch enforced here.
 
@@ -740,7 +750,7 @@ def build_mcp_server(sessions: async_sessionmaker[Any], settings: ApiSettings) -
                     read_only_hint=False,
                     destructive_hint=destructive,
                     idempotent_hint=idempotent,
-                    open_world_hint=open_world,
+                    open_world_hint=CLOSED_WORLD,
                 ),
             )(wrapper)
 
@@ -921,8 +931,10 @@ def build_mcp_server(sessions: async_sessionmaker[Any], settings: ApiSettings) -
 
     # Not idempotent, and the only tool here that commits another machine to hours of
     # work: calling it twice authors two sweeps, and the second is refused only because
-    # the host is already busy with the first.
-    @write_tool(subject_key="id", idempotent=False, open_world=True)
+    # the host is already busy with the first. That commitment is real but it is not this
+    # call reaching out — the runs are rows until the orchestrator picks them up — so it
+    # is carried by the idempotency hint and the description, not by openWorldHint.
+    @write_tool(subject_key="id", idempotent=False)
     async def create_sweep(
         name: Annotated[str, Field(description="A human label for the sweep.")],
         gpu_host_id: Annotated[
@@ -1018,9 +1030,15 @@ def build_mcp_server(sessions: async_sessionmaker[Any], settings: ApiSettings) -
             str, Field(description="The sweep to stop, by the id from list_sweeps.")
         ],
     ) -> dict[str, Any]:
-        """Stop a sweep. Queued runs are cancelled and one in flight is interrupted.
+        """Stop a sweep. Queued runs are cancelled immediately.
 
-        Runs that already finished keep their results — cancelling a sweep is a decision
+        A run already in flight keeps running for a few seconds. This call does not reach
+        into it — that would leave the orchestrator writing results for a run the database
+        already calls cancelled — so stopping it is the orchestrator's job, which notices
+        within about three seconds. Polling straight after this returns and seeing that run
+        still active is the handover working, not the cancel having failed.
+
+        Runs that already finished keep their results. Cancelling a sweep is a decision
         about the work remaining, never about the measurements already taken.
         """
         async with sessions() as session:
