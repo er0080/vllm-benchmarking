@@ -20,6 +20,15 @@ in every list result.
 *A stated population.* Every tool that returns measurements takes ``source`` and defaults
 to real. Invariant 7 is not something an agent should have to remember: as with the HTTP
 analysis endpoints, there is no value meaning both.
+
+*A schema that is the documentation.* No agent reads a README before calling a tool, so
+whatever ``tools/list`` returns is the whole contract. Every parameter carries a
+description, every closed set of values is published as an ``enum``, and every tool
+carries behavioural hints — a harness deciding what to auto-approve should not have to
+parse English to learn that ``cancel_sweep`` is not a read. What cannot be expressed in
+the schema is refused at the boundary instead: an unknown value is an error here, never a
+quiet substitution, because a tool reporting success on a question it did not answer is
+the one failure an agent cannot detect.
 """
 
 from __future__ import annotations
@@ -29,18 +38,19 @@ import inspect
 import logging
 import uuid
 from collections.abc import Callable
-from typing import Any
+from typing import Annotated, Any, Literal
 
 from mcp.server.auth.provider import AccessToken, TokenVerifier
 from mcp.server.auth.settings import AuthSettings
 from mcp.server.mcpserver import MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
-from pydantic import AnyHttpUrl
+from mcp.types import ToolAnnotations
+from pydantic import AnyHttpUrl, Field
 from sqlalchemy.ext.asyncio import async_sessionmaker
 from starlette.routing import Route
 from starlette.types import Receive, Scope, Send
 
-from vllmbench_api.analysis import PARETO_X, PARETO_Y, RunSource
+from vllmbench_api.analysis import METRICS, METRICS_BY_KEY, PARETO_X, PARETO_Y, RunSource
 from vllmbench_api.reports import render_sweep_report
 from vllmbench_api.routers import analysis as analysis_routes
 from vllmbench_api.routers import hosts as host_routes
@@ -71,6 +81,61 @@ MCP_CLIENT_NAME = "mcp"
 
 
 log = logging.getLogger(__name__)
+
+#: Valid Pareto axes, derived from the metric catalogue rather than restated beside it.
+#: The published ``enum`` and what the analysis layer can actually plot are then the same
+#: list, which is the only arrangement in which they cannot drift apart.
+METRIC_KEYS: tuple[str, ...] = tuple(metric.key for metric in METRICS)
+
+#: Parameters shared across tools, described once. A description written nineteen times
+#: is a description that will be right in eighteen places.
+SourceArg = Annotated[
+    Literal["real", "synthetic"],
+    Field(
+        description=(
+            "Which population to read. 'real' is measurements from real hardware; "
+            "'synthetic' is the mock agent or the CPU backend. There is no value meaning "
+            "both — synthetic runs are quarantined and never appear beside real ones."
+        )
+    ),
+]
+
+LimitArg = Annotated[
+    int | None,
+    Field(
+        description=(
+            f"How many rows to return. Defaults to {DEFAULT_PAGE}; capped at {MAX_PAGE} "
+            "however large a value is passed."
+        )
+    ),
+]
+
+HostIdArg = Annotated[
+    str | None,
+    Field(
+        description="Restrict to one GPU host, by the id from list_hosts. Null means every host."
+    ),
+]
+
+SweepIdFilterArg = Annotated[
+    str | None,
+    Field(description="Restrict to one sweep, by the id from list_sweeps. Null means every run."),
+]
+
+ParetoAxisArg = Annotated[
+    str,
+    Field(
+        description=(
+            "Metric key for this axis. The response's own `metrics` catalogue says what "
+            "each one measures and its unit; lower-is-better metrics are allowed and the "
+            "frontier orients them correctly. An unrecognised key is refused, not "
+            "substituted."
+        ),
+        # Derived from the catalogue, so the advertised values are the accepted values.
+        json_schema_extra={"enum": list(METRIC_KEYS)},
+    ),
+]
+
 
 #: Longest argument value kept verbatim in an audit row. A config's YAML is worth keeping
 #: — it is what the caller actually asked to store — but there is no reason for this table
@@ -155,6 +220,25 @@ def _source(value: str) -> RunSource:
         ) from exc
 
 
+def _metric_key(value: str, parameter: str) -> str:
+    """Parse a Pareto axis, refusing anything the analysis layer cannot plot.
+
+    The HTTP endpoint underneath substitutes the default axis for an unrecognised key,
+    which is right for a browser: a stale bookmark should still draw a chart rather than
+    an error page. It is wrong here, and the difference is who is reading. A person sees
+    the axis label and knows immediately that they are looking at something else; an agent
+    is handed a number that answers a question it did not ask, from a call that reported
+    success. So the substitution is refused before it can happen, and the fallback stays
+    where it belongs — see ``vllmbench_api.routers.analysis.analysis_points``.
+    """
+    if value in METRICS_BY_KEY:
+        return value
+    raise ValueError(
+        f"{parameter} must be one of: {', '.join(METRIC_KEYS)}. "
+        f"Got {value!r}, which is not a metric this control plane records."
+    )
+
+
 def build_mcp_server(sessions: async_sessionmaker[Any], settings: ApiSettings) -> MCPServer:
     """Assemble the MCP server. Called only when the feature flag is on."""
     server = MCPServer(
@@ -167,7 +251,11 @@ def build_mcp_server(sessions: async_sessionmaker[Any], settings: ApiSettings) -
             "provenance: figures from different GPUs, hosts or vLLM versions are never "
             "returned as one comparable series. Throughput is reported per GPU as well as "
             "aggregate, because a tensor-parallel run out-throughputs a single-GPU one "
-            "trivially while possibly being worse per device."
+            "trivially while possibly being worse per device. Two resource templates are "
+            "also served — vllmbench://config/{config_hash} for a configuration's exact "
+            "YAML and vllmbench://sweep/{sweep_id}/report for what a sweep measured. "
+            "Being templated, they appear under resources/templates/list rather than "
+            "resources/list, which is empty."
         ),
         token_verifier=StaticTokenVerifier(settings.mcp_token),
         # The SDK requires auth settings alongside a verifier. This service is a resource
@@ -182,12 +270,37 @@ def build_mcp_server(sessions: async_sessionmaker[Any], settings: ApiSettings) -
         ),
     )
 
-    def tool(fn: Callable[..., Any]) -> Callable[..., Any]:
-        return server.tool()(fn)
+    def tool(*, open_world: bool = False) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+        """Register a read tool, with the hints that say it is one.
+
+        ``read_only_hint`` is the field a harness consults when deciding what it may call
+        without asking, so it is set here rather than per tool: a read added later is
+        annotated by construction, and cannot arrive looking like a write.
+
+        ``inspect.cleandoc`` is not cosmetic. The SDK publishes ``__doc__`` verbatim, and
+        a docstring indented to sit inside a nested function arrives with eight leading
+        spaces on every line after the first — which is a code block in any client that
+        renders the description as markdown.
+        """
+
+        def decorate(fn: Callable[..., Any]) -> Callable[..., Any]:
+            return server.tool(
+                description=inspect.cleandoc(fn.__doc__ or ""),
+                annotations=ToolAnnotations(
+                    read_only_hint=True,
+                    destructive_hint=False,
+                    idempotent_hint=True,
+                    # False means the tool answers from this control plane's own database.
+                    # True is reserved for the ones that reach across the host boundary.
+                    open_world_hint=open_world,
+                ),
+            )(fn)
+
+        return decorate
 
     # -- Inventory ---------------------------------------------------------------
 
-    @tool
+    @tool()
     async def list_hosts() -> list[dict[str, Any]]:
         """GPU hosts this control plane knows about, and what each last reported."""
         async with sessions() as session:
@@ -207,8 +320,8 @@ def build_mcp_server(sessions: async_sessionmaker[Any], settings: ApiSettings) -
                 for host in found
             ]
 
-    @tool
-    async def list_configs(limit: int | None = None) -> list[dict[str, Any]]:
+    @tool()
+    async def list_configs(limit: LimitArg = None) -> list[dict[str, Any]]:
         """Server configurations, newest first. YAML is omitted — use get_config."""
         async with sessions() as session:
             found = await run_routes.list_configs(session)
@@ -222,8 +335,19 @@ def build_mcp_server(sessions: async_sessionmaker[Any], settings: ApiSettings) -
                 for config in found[: _page(limit)]
             ]
 
-    @tool
-    async def get_config(config_hash: str) -> dict[str, Any]:
+    @tool()
+    async def get_config(
+        config_hash: Annotated[
+            str,
+            Field(
+                description=(
+                    "The config's content hash, from list_configs or from a run's "
+                    "`config_hash`. Configurations are addressed by content, so this "
+                    "identifies exact bytes rather than a name that could be reused."
+                )
+            ),
+        ],
+    ) -> dict[str, Any]:
         """One configuration's exact YAML.
 
         The text is the configuration: it is what gets written to disk and passed to
@@ -241,8 +365,12 @@ def build_mcp_server(sessions: async_sessionmaker[Any], settings: ApiSettings) -
                     }
         raise ValueError(f"no config with hash {config_hash!r}")
 
-    @tool
-    async def get_config_lineage(config_hash: str) -> dict[str, Any]:
+    @tool()
+    async def get_config_lineage(
+        config_hash: Annotated[
+            str, Field(description="The config's content hash, from list_configs.")
+        ],
+    ) -> dict[str, Any]:
         """Where a configuration came from, and what came from it.
 
         The record of a tuning session: which config this was edited from, back to the
@@ -253,8 +381,8 @@ def build_mcp_server(sessions: async_sessionmaker[Any], settings: ApiSettings) -
             result = await run_routes.config_lineage(config_hash, session)
             return result.model_dump(mode="json")
 
-    @tool
-    async def list_workloads(limit: int | None = None) -> list[dict[str, Any]]:
+    @tool()
+    async def list_workloads(limit: LimitArg = None) -> list[dict[str, Any]]:
         """Benchmark workloads — the traffic each run was measured under."""
         async with sessions() as session:
             found = await run_routes.list_workloads(session)
@@ -276,8 +404,8 @@ def build_mcp_server(sessions: async_sessionmaker[Any], settings: ApiSettings) -
 
     # -- Sweeps ------------------------------------------------------------------
 
-    @tool
-    async def list_sweeps(limit: int | None = None) -> list[dict[str, Any]]:
+    @tool()
+    async def list_sweeps(limit: LimitArg = None) -> list[dict[str, Any]]:
         """Sweeps, newest first, with run counts by status."""
         async with sessions() as session:
             found = await sweep_routes.list_sweeps(session)
@@ -295,8 +423,10 @@ def build_mcp_server(sessions: async_sessionmaker[Any], settings: ApiSettings) -
                 for sweep in found[: _page(limit)]
             ]
 
-    @tool
-    async def get_sweep(sweep_id: str) -> dict[str, Any]:
+    @tool()
+    async def get_sweep(
+        sweep_id: Annotated[str, Field(description="The sweep's id, from list_sweeps.")],
+    ) -> dict[str, Any]:
         """One sweep, including how far through it is."""
         async with sessions() as session:
             sweep = await sweep_routes.get_sweep(uuid.UUID(sweep_id), session)
@@ -304,8 +434,8 @@ def build_mcp_server(sessions: async_sessionmaker[Any], settings: ApiSettings) -
 
     # -- Runs --------------------------------------------------------------------
 
-    @tool
-    async def query_runs(limit: int | None = None) -> list[dict[str, Any]]:
+    @tool()
+    async def query_runs(limit: LimitArg = None) -> list[dict[str, Any]]:
         """Recent runs with their headline metrics and the provenance behind them."""
         async with sessions() as session:
             found = await run_routes.list_runs(session, limit=_page(limit))
@@ -338,8 +468,12 @@ def build_mcp_server(sessions: async_sessionmaker[Any], settings: ApiSettings) -
                 for run in found
             ]
 
-    @tool
-    async def get_run(run_id: str) -> dict[str, Any]:
+    @tool()
+    async def get_run(
+        run_id: Annotated[
+            str, Field(description="The run's id, from query_runs or a sweep's run list.")
+        ],
+    ) -> dict[str, Any]:
         """One run in full, including every flattened metric."""
         async with sessions() as session:
             # Through the same response model the HTTP route serializes with, rather than
@@ -350,13 +484,13 @@ def build_mcp_server(sessions: async_sessionmaker[Any], settings: ApiSettings) -
 
     # -- Analysis ----------------------------------------------------------------
 
-    @tool
+    @tool()
     async def get_pareto(
-        source: str = "real",
-        host_id: str | None = None,
-        sweep_id: str | None = None,
-        pareto_x: str = PARETO_X,
-        pareto_y: str = PARETO_Y,
+        source: SourceArg = "real",
+        host_id: HostIdArg = None,
+        sweep_id: SweepIdFilterArg = None,
+        pareto_x: ParetoAxisArg = PARETO_X,
+        pareto_y: ParetoAxisArg = PARETO_Y,
     ) -> dict[str, Any]:
         """Measurement points, partitioned into sets that may honestly be compared.
 
@@ -374,13 +508,22 @@ def build_mcp_server(sessions: async_sessionmaker[Any], settings: ApiSettings) -
                 source=_source(source),
                 host_id=uuid.UUID(host_id) if host_id else None,
                 sweep_id=[uuid.UUID(sweep_id)] if sweep_id else None,
-                pareto_x=pareto_x,
-                pareto_y=pareto_y,
+                # Parsed rather than passed through: the endpoint would substitute the
+                # default for an unrecognised key, and this caller cannot see that happen.
+                pareto_x=_metric_key(pareto_x, "pareto_x"),
+                pareto_y=_metric_key(pareto_y, "pareto_y"),
             )
             return result.model_dump(mode="json")
 
-    @tool
-    async def compare_runs(left: str, right: str, source: str = "real") -> dict[str, Any]:
+    @tool()
+    async def compare_runs(
+        left: Annotated[
+            str,
+            Field(description="A `point_id` from get_pareto — one config, workload and TP size."),
+        ],
+        right: Annotated[str, Field(description="The `point_id` to compare it against.")],
+        source: SourceArg = "real",
+    ) -> dict[str, Any]:
         """Two measurement points side by side, with a diff of their configurations.
 
         Takes ``point_id`` values from get_pareto. This is the one comparison that may
@@ -394,11 +537,40 @@ def build_mcp_server(sessions: async_sessionmaker[Any], settings: ApiSettings) -
             )
             return result.model_dump(mode="json")
 
-    @tool
+    # Reaches across the host boundary when gpu_host_id is given: the target host's own
+    # vLLM version and device count are what it checks against.
+    @tool(open_world=True)
     async def validate_config(
-        yaml: str,
-        gpu_host_id: str | None = None,
-        tensor_parallel_is_swept: bool = False,
+        yaml: Annotated[
+            str,
+            Field(
+                description=(
+                    "The candidate vLLM YAML, exactly as it would be passed to "
+                    "`vllm serve --config`. Nothing is stored and nothing is rewritten."
+                )
+            ),
+        ],
+        gpu_host_id: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Check against this host's own vLLM version and device count, by the "
+                    "id from list_hosts. Null checks against the reference version in the "
+                    "abstract and skips the topology checks rather than guessing at them."
+                )
+            ),
+        ] = None,
+        tensor_parallel_is_swept: Annotated[
+            bool,
+            Field(
+                description=(
+                    "True when this config is destined for a sweep that varies "
+                    "tensor-parallel-size. The sweep overrides that setting per run, so a "
+                    "value in the file is not the value that will run — set this and the "
+                    "topology checks stop objecting to a number that is about to change."
+                )
+            ),
+        ] = False,
     ) -> dict[str, Any]:
         """Check a configuration before committing GPU time to it.
 
@@ -426,8 +598,19 @@ def build_mcp_server(sessions: async_sessionmaker[Any], settings: ApiSettings) -
             )
             return result.model_dump(mode="json")
 
-    @tool
-    async def get_run_telemetry(run_id: str, max_samples: int = 200) -> dict[str, Any]:
+    @tool()
+    async def get_run_telemetry(
+        run_id: Annotated[str, Field(description="The run's id, from query_runs.")],
+        max_samples: Annotated[
+            int,
+            Field(
+                description=(
+                    "Ceiling on samples returned per series. The response's `stride` says "
+                    "what thinning this forced; `sample_count` says what was recorded."
+                )
+            ),
+        ] = 200,
+    ) -> dict[str, Any]:
         """Engine and per-device series for one run, thinned to at most `max_samples`.
 
         Thinned by stride rather than averaged, and per device rather than pooled. A
@@ -493,7 +676,13 @@ def build_mcp_server(sessions: async_sessionmaker[Any], settings: ApiSettings) -
         except Exception:  # pragma: no cover - the database being down fails the tool first
             log.exception("could not write the MCP audit record for %s", tool_name)
 
-    def write_tool(subject_key: str | None = None) -> Callable[..., Any]:
+    def write_tool(
+        subject_key: str | None = None,
+        *,
+        destructive: bool = False,
+        idempotent: bool = True,
+        open_world: bool = False,
+    ) -> Callable[..., Any]:
         """Register a write tool, audited, with the read-only switch enforced here.
 
         The switch lives in this decorator rather than in each tool body so that a tool
@@ -542,13 +731,56 @@ def build_mcp_server(sessions: async_sessionmaker[Any], settings: ApiSettings) -
                 return result
 
             wrapper.__signature__ = inspect.signature(fn, eval_str=True)  # type: ignore[attr-defined]
-            return server.tool()(wrapper)
+            # From ``fn``, not from ``wrapper``: functools.wraps copies the docstring, but
+            # taking it from the original is what makes that a convenience rather than a
+            # dependency.
+            return server.tool(
+                description=inspect.cleandoc(fn.__doc__ or ""),
+                annotations=ToolAnnotations(
+                    read_only_hint=False,
+                    destructive_hint=destructive,
+                    idempotent_hint=idempotent,
+                    open_world_hint=open_world,
+                ),
+            )(wrapper)
 
         return decorate
 
+    # Idempotent because configurations are content-addressed: the same YAML submitted
+    # twice returns the same row, so a retry after a dropped response is safe.
     @write_tool(subject_key="config_hash")
     async def create_config(
-        name: str, yaml: str, notes: str | None = None, derived_from: str | None = None
+        name: Annotated[
+            str,
+            Field(
+                description=(
+                    "A human label for this configuration. Not its identity — two configs "
+                    "with the same name and different YAML are two configurations."
+                )
+            ),
+        ],
+        yaml: Annotated[
+            str,
+            Field(
+                description=(
+                    "The vLLM YAML, stored byte for byte and passed to "
+                    "`vllm serve --config` unmodified. Nothing is reordered or re-emitted, "
+                    "so comments survive and the hash is of exactly what will run."
+                )
+            ),
+        ],
+        notes: Annotated[
+            str | None, Field(description="Free text about why this configuration exists.")
+        ] = None,
+        derived_from: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "The config hash this was edited from, when it is an edit. Builds the "
+                    "lineage get_config_lineage reads back."
+                )
+            ),
+        ] = None,
     ) -> dict[str, Any]:
         """Store a vLLM server configuration, exactly as given.
 
@@ -579,11 +811,28 @@ def build_mcp_server(sessions: async_sessionmaker[Any], settings: ApiSettings) -
 
     @write_tool(subject_key="config_hash")
     async def annotate_config(
-        config_hash: str,
-        justified_by_run_id: str | None = None,
-        justification_note: str | None = None,
-        notes: str | None = None,
-        name: str | None = None,
+        config_hash: Annotated[
+            str, Field(description="The configuration to annotate, by content hash.")
+        ],
+        justified_by_run_id: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "A run that used this configuration, as the evidence for keeping it. "
+                    "A run of a different config is not evidence and is refused."
+                )
+            ),
+        ] = None,
+        justification_note: Annotated[
+            str | None,
+            Field(description="What that run showed — the reading, not just the pointer."),
+        ] = None,
+        notes: Annotated[
+            str | None, Field(description="Replacement free-text notes. Null leaves them alone.")
+        ] = None,
+        name: Annotated[
+            str | None, Field(description="Replacement label. Null leaves it alone.")
+        ] = None,
     ) -> dict[str, Any]:
         """Record why a configuration is worth keeping.
 
@@ -609,15 +858,45 @@ def build_mcp_server(sessions: async_sessionmaker[Any], settings: ApiSettings) -
             )
             return result.model_dump(mode="json")
 
+    # Content-addressed on what it sends, so the same traffic definition submitted twice
+    # is one workload.
     @write_tool(subject_key="workload_hash")
     async def create_workload(
-        name: str,
-        dataset_name: str = "random",
-        num_prompts: int = 200,
-        max_concurrency: int | None = None,
-        request_rate: float | None = None,
-        input_len: int | None = None,
-        output_len: int | None = None,
+        name: Annotated[
+            str, Field(description="A human label. Not part of the workload's identity.")
+        ],
+        dataset_name: Annotated[
+            str,
+            Field(
+                description=(
+                    "The upstream dataset `vllm bench serve` will send — 'random' "
+                    "synthesises prompts to input_len/output_len."
+                )
+            ),
+        ] = "random",
+        num_prompts: Annotated[
+            int, Field(description="How many requests the benchmark sends in total.")
+        ] = 200,
+        max_concurrency: Annotated[
+            int | None,
+            Field(
+                description=(
+                    "Requests in flight at once. Null is unbounded — genuinely no limit, "
+                    "which is not the same as zero. This is the axis a saturation curve "
+                    "sweeps."
+                )
+            ),
+        ] = None,
+        request_rate: Annotated[
+            float | None,
+            Field(description="Requests per second offered. Null is unbounded (upstream's inf)."),
+        ] = None,
+        input_len: Annotated[
+            int | None, Field(description="Prompt tokens per request, for synthetic datasets.")
+        ] = None,
+        output_len: Annotated[
+            int | None, Field(description="Tokens to generate per request, for synthetic datasets.")
+        ] = None,
     ) -> dict[str, Any]:
         """Define the traffic a run is measured under.
 
@@ -640,15 +919,53 @@ def build_mcp_server(sessions: async_sessionmaker[Any], settings: ApiSettings) -
             )
             return {"workload_hash": workload.workload_hash, "name": workload.name}
 
-    @write_tool(subject_key="id")
+    # Not idempotent, and the only tool here that commits another machine to hours of
+    # work: calling it twice authors two sweeps, and the second is refused only because
+    # the host is already busy with the first.
+    @write_tool(subject_key="id", idempotent=False, open_world=True)
     async def create_sweep(
-        name: str,
-        gpu_host_id: str,
-        config_hashes: list[str],
-        workload_hashes: list[str],
-        replicates: int = 3,
-        tensor_parallel_sizes: list[int] | None = None,
-        description: str | None = None,
+        name: Annotated[str, Field(description="A human label for the sweep.")],
+        gpu_host_id: Annotated[
+            str, Field(description="The host that will run it, by the id from list_hosts.")
+        ],
+        config_hashes: Annotated[
+            list[str],
+            Field(
+                description=(
+                    "Configurations to sweep, by content hash. One axis of the matrix; "
+                    "runs are grouped by config so the engine reloads once per config "
+                    "rather than once per run."
+                )
+            ),
+        ],
+        workload_hashes: Annotated[
+            list[str],
+            Field(description="Workloads to sweep, by content hash. The second axis."),
+        ],
+        replicates: Annotated[
+            int,
+            Field(
+                description=(
+                    "Runs per matrix point. More than one because a single measurement "
+                    "has no spread, and a difference smaller than the spread is not a "
+                    "result."
+                )
+            ),
+        ] = 3,
+        tensor_parallel_sizes: Annotated[
+            list[int] | None,
+            Field(
+                description=(
+                    "Tensor-parallel sizes to sweep, overriding what each config's YAML "
+                    "says. Null runs each config at the size it declares. Throughput is "
+                    "reported per GPU as well as aggregate, because a wider run "
+                    "out-throughputs a narrower one trivially."
+                )
+            ),
+        ] = None,
+        description: Annotated[
+            str | None, Field(description="What this sweep is trying to find out.")
+        ] = None,
     ) -> dict[str, Any]:
         """Author a sweep. Every run is created immediately, in the order it will execute.
 
@@ -692,8 +1009,15 @@ def build_mcp_server(sessions: async_sessionmaker[Any], settings: ApiSettings) -
                 "is_synthetic": sweep.is_synthetic,
             }
 
-    @write_tool(subject_key="id")
-    async def cancel_sweep(sweep_id: str) -> dict[str, Any]:
+    # Destructive in the MCP sense — it takes work away that cannot be given back, and a
+    # harness should ask before calling it. Idempotent all the same: cancelling an already
+    # cancelled sweep changes nothing further.
+    @write_tool(subject_key="id", destructive=True)
+    async def cancel_sweep(
+        sweep_id: Annotated[
+            str, Field(description="The sweep to stop, by the id from list_sweeps.")
+        ],
+    ) -> dict[str, Any]:
         """Stop a sweep. Queued runs are cancelled and one in flight is interrupted.
 
         Runs that already finished keep their results — cancelling a sweep is a decision
@@ -762,18 +1086,31 @@ def build_mcp_server(sessions: async_sessionmaker[Any], settings: ApiSettings) -
             )
         return render_sweep_report(sweep, analysis)
 
-    @tool
+    @tool()
     async def server_info() -> dict[str, Any]:
-        """What this control plane is, and what it will and will not do."""
+        """What this control plane is, and what it will and will not do.
+
+        Names the resource templates as well as the tools. Both resources here are
+        templated, so they are advertised under `resources/templates/list` and *not* under
+        `resources/list`, which is empty and correct — a caller that checks only the latter
+        concludes this server has no resources at all. That has happened. Stating them
+        here is cheaper than expecting everyone to know the distinction.
+        """
         return {
             "version": __version__,
             "protocol_version": PROTOCOL_VERSION,
             "write_tools_enabled": settings.mcp_write_enabled,
             "populations": [s.value for s in RunSource],
+            "pareto_axes": list(METRIC_KEYS),
+            "resource_templates": [
+                "vllmbench://config/{config_hash}",
+                "vllmbench://sweep/{sweep_id}/report",
+            ],
             "notes": [
                 "Runs are immutable once terminal; no tool mutates or deletes one.",
                 "Real and synthetic runs are never returned together.",
                 "Throughput is reported per GPU as well as aggregate.",
+                "Resources are templated: list them with resources/templates/list.",
             ],
         }
 
