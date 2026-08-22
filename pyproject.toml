@@ -2,6 +2,7 @@
 name = "vllm-benchmarking"
 version = "1.0.0rc3"
 description = "Benchmarking and tuning framework for locally-hosted LLMs served by vLLM"
+license = "Apache-2.0"
 requires-python = ">=3.11,<3.14"
 dependencies = []
 
