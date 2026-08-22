@@ -10,9 +10,10 @@ import datetime as dt
 import uuid
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from vllmbench_db.enums import InitiatedBy, ReplicateOrder
+from vllmbench_protocol import EnvironmentStatus
 
 
 class GpuDeviceOut(BaseModel):
@@ -34,6 +35,17 @@ class HostCreate(BaseModel):
     benchmark_timeout_seconds: int = Field(default=3600, ge=30, le=86_400)
 
 
+def _reported_status(value: str | None) -> str:
+    """A stored NULL is an agent that could not say, which is its own answer.
+
+    Every row written before protocol 6 has NULL here, and so would any row written from
+    an agent that failed to report. Letting that surface as null puts the decision on
+    every consumer, and the tempting default — treat missing as fine — is the one that
+    turns "nobody checked" into "checked and clean".
+    """
+    return value or EnvironmentStatus.NOT_REPORTED.value
+
+
 class HostOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -48,10 +60,25 @@ class HostOut(BaseModel):
     cuda_version: str | None = None
     gpu_count: int = 0
     synthetic_source: str | None = None
+    # Never null on the wire: a stored NULL means an agent that could not say, which is
+    # "not_reported" and not "ok". Rounding one to the other would turn silence into a
+    # clean bill of health.
+    environment_status: str = EnvironmentStatus.NOT_REPORTED.value
+    environment_conflicts: list[str] = Field(default_factory=list)
     model_load_timeout_seconds: int = 900
     benchmark_timeout_seconds: int = 3600
     last_seen_at: dt.datetime | None = None
     created_at: dt.datetime
+
+    @field_validator("environment_status", mode="before")
+    @classmethod
+    def _status_reported(cls, value: str | None) -> str:
+        return _reported_status(value)
+
+    @field_validator("environment_conflicts", mode="before")
+    @classmethod
+    def _conflicts_listed(cls, value: list[str] | None) -> list[str]:
+        return value or []
 
     devices: list[GpuDeviceOut] = Field(default_factory=list)
 
@@ -259,6 +286,14 @@ class RunOut(BaseModel):
     gpu_model: str | None = None
     driver_version: str | None = None
     cuda_version: str | None = None
+    # Whether the host's environment was internally consistent when this ran. See HostOut
+    # for why the absent case is a value rather than a null.
+    environment_status: str = EnvironmentStatus.NOT_REPORTED.value
+
+    @field_validator("environment_status", mode="before")
+    @classmethod
+    def _status_reported(cls, value: str | None) -> str:
+        return _reported_status(value)
 
     gpu_count: int
     tensor_parallel_size: int

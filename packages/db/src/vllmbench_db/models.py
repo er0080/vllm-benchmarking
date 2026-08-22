@@ -84,6 +84,19 @@ class GpuHost(Base):
     gpu_count: Mapped[int] = mapped_column(Integer, default=0)
     last_seen_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
 
+    # Whether this host's Python environment satisfies the constraints everything
+    # installed there declares. The agent installs into vLLM's own virtualenv, so the two
+    # can diverge with nothing arbitrating between them (issue #60).
+    #
+    # NULL means an agent older than protocol 6, which could not say. That is a third
+    # state and not a synonym for "fine" — see EnvironmentStatus.NOT_REPORTED, which is
+    # what reading code substitutes so the distinction survives into the API.
+    environment_status: Mapped[str | None] = mapped_column(String(16))
+    #: The conflict lines themselves, current as of the last handshake. Kept here rather
+    #: than on every run because they are long, identical across a sweep, and only useful
+    #: while somebody is fixing the host.
+    environment_conflicts: Mapped[list[str] | None] = mapped_column(JSONB)
+
     # Declared by the agent itself, never inferred here (invariant 7). A host backed by
     # the mock agent produces synthetic runs, and this is where that propagates from.
     # Inferring it instead — "the GPU model looks made up" — would eventually mark a
@@ -329,6 +342,12 @@ class Run(Base):
     cuda_version: Mapped[str | None] = mapped_column(String(32))
     gpu_model: Mapped[str | None] = mapped_column(String(128), index=True)
     dataset_identity: Mapped[str | None] = mapped_column(Text)
+
+    # Point-in-time, like every other column in this block: whether the host's environment
+    # was internally consistent when this run was measured. The detail lives on the host,
+    # which is where somebody fixes it; what a result needs to carry is whether it was
+    # taken on a coherent machine. NULL is "the agent did not say", not "it was fine".
+    environment_status: Mapped[str | None] = mapped_column(String(16), index=True)
 
     # -- Parallelism topology (invariant 8) ---------------------------------------
     # Reported by the agent from what actually ran. Never parsed back out of the config

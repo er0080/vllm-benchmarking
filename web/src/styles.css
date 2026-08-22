@@ -693,3 +693,12 @@ a.button {
 a.button:hover {
   border-color: var(--accent);
 }
+
+/* Conflict lines are long and full of version specifiers; they need to wrap and to be
+   readable as one item each rather than running together into a paragraph. */
+code.conflict {
+  display: block;
+  margin-top: 0.35rem;
+  font-size: 0.85em;
+  overflow-wrap: anywhere;
+}

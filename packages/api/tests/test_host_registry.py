@@ -94,6 +94,30 @@ class TestRegistration:
         response = await client.post("/api/hosts", json={"name": "mock-3", "agent_url": MOCK_URL})
         assert response.json()["synthetic_source"] == SYNTHETIC_SOURCE
 
+    async def test_records_the_agents_environment_report(self, client: httpx.AsyncClient) -> None:
+        """Protocol 6. The mock reports a consistent environment by default."""
+        response = await client.post("/api/hosts", json={"name": "mock-env", "agent_url": MOCK_URL})
+        body = response.json()
+        assert body["environment_status"] == "ok"
+        assert body["environment_conflicts"] == []
+
+    async def test_records_a_conflicting_environment_and_what_conflicts(
+        self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A broken virtualenv cannot be produced on a laptop, so the mock injects one.
+
+        The conflict text is the real `uv pip check` output from the host that opened #60,
+        so this asserts the path a real GPU host takes rather than a shape invented here.
+        """
+        monkeypatch.setenv("VLLMBENCH_MOCK_ENVIRONMENT", "conflicts")
+        response = await client.post(
+            "/api/hosts", json={"name": "mock-broken", "agent_url": MOCK_URL}
+        )
+        body = response.json()
+        assert body["environment_status"] == "conflicts"
+        assert len(body["environment_conflicts"]) == 1
+        assert "fastapi" in body["environment_conflicts"][0]
+
     async def test_duplicate_name_is_rejected(self, client: httpx.AsyncClient) -> None:
         await client.post("/api/hosts", json={"name": "dup", "agent_url": MOCK_URL})
         second = await client.post("/api/hosts", json={"name": "dup", "agent_url": MOCK_URL})

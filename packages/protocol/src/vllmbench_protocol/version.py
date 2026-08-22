@@ -38,4 +38,11 @@ __version__ = "1.0.0rc3"
 #    cancelled sweep keeps burning GPU time until the current point finishes, and the
 #    only alternative — killing the engine underneath a running client — leaves that
 #    client thrashing against a dead socket.
-PROTOCOL_VERSION = 5
+# 6: HostInfo carries `environment`, the agent's report on whether its own virtualenv
+#    satisfies the constraints everything installed there declares. Additive on the wire
+#    and still a bump, because `_Wire` forbids unknown fields: a 6 agent talking to a 5
+#    control plane would have its whole host-info payload rejected on an extra key, which
+#    is a worse failure than the mismatch being named. It is also a provenance change —
+#    invariant 6 — and a run that cannot say whether it was measured on a coherent
+#    environment is missing something a reader would want.
+PROTOCOL_VERSION = 6

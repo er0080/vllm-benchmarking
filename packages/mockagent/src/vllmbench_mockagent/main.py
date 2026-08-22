@@ -32,6 +32,8 @@ from vllmbench_protocol.wire import (
     BenchResponse,
     CancelResponse,
     EngineSampleWire,
+    EnvironmentCheck,
+    EnvironmentStatus,
     GpuInfo,
     GpuSampleWire,
     HealthResponse,
@@ -64,6 +66,8 @@ MOCK_GPUS = [
 ]
 
 MOCK_VLLM_VERSION = "0.25.1"
+#: A plausible size for a vLLM environment, so the number reads as a real one.
+MOCK_DISTRIBUTIONS = 247
 
 # A model "load" long enough that progress UI has something to show, short enough that
 # development stays fast. Real loads are minutes; pretending to take minutes would make
@@ -97,6 +101,34 @@ def _default_bench_failure() -> str:
 
 def _default_empty_result() -> bool:
     return os.environ.get("VLLMBENCH_MOCK_EMPTY_RESULT", "").lower() in ("1", "true", "yes")
+
+
+def _environment() -> EnvironmentCheck:
+    """The mock's environment report, injectable like every other mock failure.
+
+    A real dependency conflict cannot be produced on a laptop without deliberately
+    breaking a virtualenv, so injection is the only way the control plane's handling of one
+    is reachable in a test — the same argument as the start and bench failure kinds.
+
+    Read per call rather than at import, so a test can change it between requests.
+    """
+    forced = os.environ.get("VLLMBENCH_MOCK_ENVIRONMENT", "").strip().lower()
+    if forced in ("conflicts", "1", "true", "yes"):
+        return EnvironmentCheck(
+            status=EnvironmentStatus.CONFLICTS,
+            # Lifted from the `uv pip check` output that opened #60, so what a developer
+            # sees locally is the shape of what a real GPU host will send.
+            conflicts=[
+                "vllm 0.25.1 requires fastapi[standard]<0.137.0,>=0.133.0, "
+                "but fastapi 0.141.1 is installed"
+            ],
+            distributions=MOCK_DISTRIBUTIONS,
+        )
+    if forced == "unavailable":
+        return EnvironmentCheck(
+            status=EnvironmentStatus.UNAVAILABLE, detail="synthetic: the check was not run"
+        )
+    return EnvironmentCheck(status=EnvironmentStatus.OK, distributions=MOCK_DISTRIBUTIONS)
 
 
 #: What vLLM returns when every request failed, which it reports as a *success*.
@@ -217,6 +249,7 @@ def create_app(
             driver_version=MOCK_DRIVER_VERSION,
             cuda_version=MOCK_CUDA_VERSION,
             gpus=MOCK_GPUS,
+            environment=_environment(),
             synthetic_source=SYNTHETIC_SOURCE,
         )
 

@@ -20,6 +20,17 @@ export interface Host {
    * nothing downstream should be read as if they were.
    */
   synthetic_source: string | null;
+  /**
+   * Whether this host's Python environment satisfies the constraints everything
+   * installed there declares. The agent lives in vLLM's own virtualenv, so the two can
+   * diverge with nothing arbitrating between them.
+   *
+   * `"not_reported"` is a real answer and not a missing one — an agent older than
+   * protocol 6 could not check. Rendering it as "fine" is the mistake this field exists
+   * to prevent.
+   */
+  environment_status: "ok" | "conflicts" | "unavailable" | "not_reported";
+  environment_conflicts: string[];
   last_seen_at: string | null;
   created_at: string;
   devices: GpuDevice[];

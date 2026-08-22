@@ -21,6 +21,7 @@ from fastapi import Depends, FastAPI, HTTPException, status
 
 from vllmbench_agent.auth import token_dependency
 from vllmbench_agent.bench import BenchCancelled, BenchError, BenchRunner
+from vllmbench_agent.environment import log_environment, probe_environment
 from vllmbench_agent.hardware import (
     probe_cuda_version,
     probe_driver_version,
@@ -70,6 +71,10 @@ def create_app(settings: AgentSettings | None = None) -> FastAPI:
             space.path,
             space.free_fraction * 100,
         )
+        # Said once at startup, because the moment somebody can act on a broken
+        # environment is the moment they finish installing into it — not the moment a
+        # sweep produces a number nobody trusts. Never fatal: see environment.py.
+        log_environment(probe_environment())
         try:
             yield
         finally:
@@ -107,7 +112,13 @@ def create_app(settings: AgentSettings | None = None) -> FastAPI:
             log.warning("no NVIDIA devices detected on this host")
 
         vllm_version, probe_detail = probe_vllm_version(settings.vllm_bin)
+        # Recomputed per call rather than cached from startup: installing something into
+        # this virtualenv while the agent runs is exactly how the environment changes, and
+        # a cached answer would keep reporting the world as it was at boot. It costs a few
+        # hundred milliseconds against a run that takes minutes, and it happens before the
+        # engine starts, so it perturbs nothing being measured.
         return HostInfo(
+            environment=probe_environment(),
             protocol_version=PROTOCOL_VERSION,
             agent_version=__version__,
             hostname=socket.gethostname(),

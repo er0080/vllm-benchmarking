@@ -27,6 +27,15 @@ function Fact({ label, value }: { label: string; value: string | number | null }
   );
 }
 
+/** Said in words rather than a colour, because three of the four states are not "bad". */
+const ENVIRONMENT_LABEL: Record<Host["environment_status"], string> = {
+  ok: "consistent",
+  conflicts: "conflicts",
+  unavailable: "could not check",
+  // Not "unknown": the agent is too old to have looked, which is a fact about the agent.
+  not_reported: "agent too old to check",
+};
+
 function HostCard({ host, onChanged }: { host: Host; onChanged: () => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -82,6 +91,21 @@ function HostCard({ host, onChanged }: { host: Host; onChanged: () => void }) {
         </p>
       )}
 
+      {host.environment_status === "conflicts" && (
+        <p className="notice">
+          This host's Python environment does not satisfy its own declared constraints.
+          vLLM may work anyway — it did on the host that turned this up — but runs measured
+          here are recorded as taken on an inconsistent environment, and the next
+          incompatible pair breaks the machine under test.
+          <br />
+          {host.environment_conflicts.map((conflict) => (
+            <code key={conflict} className="conflict">
+              {conflict}
+            </code>
+          ))}
+        </p>
+      )}
+
       <dl className="facts">
         <Fact label="GPUs" value={host.gpu_count} />
         <Fact label="vLLM" value={host.vllm_version} />
@@ -89,6 +113,7 @@ function HostCard({ host, onChanged }: { host: Host; onChanged: () => void }) {
         <Fact label="CUDA" value={host.cuda_version} />
         <Fact label="Agent" value={host.agent_version} />
         <Fact label="Protocol" value={host.protocol_version} />
+        <Fact label="Environment" value={ENVIRONMENT_LABEL[host.environment_status]} />
         <Fact
           label="Last seen"
           value={host.last_seen_at ? new Date(host.last_seen_at).toLocaleString() : null}
