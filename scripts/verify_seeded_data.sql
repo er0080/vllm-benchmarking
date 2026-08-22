@@ -21,6 +21,7 @@ DECLARE
     v_extra jsonb;
     v_engine int;
     v_devices int;
+    v_environment text;
 BEGIN
     -- The run, and its provenance.
     SELECT status INTO v_status FROM run WHERE id = expected;
@@ -68,6 +69,16 @@ BEGIN
         RAISE EXCEPTION
             'gpu_sample now covers % device(s), expected 2. A host-level aggregate '
             'destroys the imbalance signal', v_devices;
+    END IF;
+
+    -- A run measured before the environment check existed must stay NULL, not acquire a
+    -- default. NULL reads back as "the agent did not say"; any non-null value here would
+    -- be this migration inventing a claim about a machine nobody checked.
+    SELECT environment_status INTO v_environment FROM run WHERE id = expected;
+    IF v_environment IS NOT NULL THEN
+        RAISE EXCEPTION
+            'a historical run acquired environment_status %, which asserts something '
+            'about a host that was never checked', v_environment;
     END IF;
 
     RAISE NOTICE 'seeded data survived the migration with every value intact';

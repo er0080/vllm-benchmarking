@@ -26,6 +26,7 @@ from vllmbench_protocol import (
     AgentAuthError,
     AgentClient,
     AgentUnreachable,
+    EnvironmentStatus,
     ProtocolMismatch,
 )
 from vllmbench_protocol.wire import HostInfo
@@ -60,6 +61,14 @@ async def _apply_facts(session: AsyncSession, host: GpuHost, info: HostInfo) -> 
     host.driver_version = info.driver_version
     host.cuda_version = info.cuda_version
     host.gpu_count = info.gpu_count
+    # Protocol 6. An agent that sent nothing is recorded as having said nothing, which is
+    # a different claim from a clean environment and has to stay one — the whole point of
+    # the check is that a silent absence used to pass for fine.
+    environment = info.environment
+    host.environment_status = (
+        environment.status.value if environment else EnvironmentStatus.NOT_REPORTED.value
+    )
+    host.environment_conflicts = list(environment.conflicts) if environment else []
     # Trusted from the producer, never inferred (invariant 7).
     host.synthetic_source = info.synthetic_source
     host.last_seen_at = dt.datetime.now(dt.UTC)

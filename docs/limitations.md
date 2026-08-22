@@ -90,10 +90,17 @@ about, never blocked.
 **Installing the agent into the vLLM environment can move that environment's packages.**
 The agent declares dependency floors and vLLM declares ceilings, and nothing arbitrates
 between them in a shared venv: a resolution that satisfies the agent can leave vLLM outside
-its own declared constraints. `uv pip check` after installing will say so. Tracked in
-[#60](https://github.com/er0080/vllm-benchmarking/issues/60); until it is resolved, check
-after installing, and prefer `VLLMBENCH_VLLM_BIN` with a separate environment on a host
-where that matters.
+its own declared constraints.
+
+This is now *detected* rather than fixed. The agent checks its own environment at startup
+and on every handshake, warns in its log, and reports the result as run provenance — so a
+measurement taken on an inconsistent environment says so instead of looking like any other
+number. It never blocks: refusing to start would put this control plane in the business of
+adjudicating someone's virtualenv, and a false positive would take down a working GPU host
+remotely.
+
+What it does not do is prevent the divergence. If that matters on your host, point
+`VLLMBENCH_VLLM_BIN` at vLLM in a separate environment and install the agent into its own.
 
 **Windows is not supported.** Linux, or macOS with Colima, on the control host; Linux on
 the GPU host.

@@ -36,6 +36,43 @@ class GpuInfo(_Wire):
     vram_bytes: int | None = Field(default=None, ge=0)
 
 
+class EnvironmentStatus(enum.StrEnum):
+    """Three states, because "no conflicts" and "nobody looked" are not the same claim.
+
+    An agent too old to report this leaves the field unset, which reads as NOT_REPORTED
+    downstream. Collapsing that into OK would let a silent absence pass for a clean bill
+    of health — the failure this whole check exists to prevent, reintroduced one layer up.
+    """
+
+    OK = "ok"
+    CONFLICTS = "conflicts"
+    #: The check could not run — malformed metadata, an unreadable environment.
+    UNAVAILABLE = "unavailable"
+    #: Never sent. Recorded by the control plane when an agent said nothing.
+    NOT_REPORTED = "not_reported"
+
+
+class EnvironmentCheck(_Wire):
+    """Whether the agent's Python environment satisfies its own declared constraints.
+
+    The agent lives in vLLM's virtualenv, so its resolution and vLLM's ceilings meet with
+    nothing arbitrating between them. This reports the outcome and never blocks on it —
+    the same treatment the vLLM version policy gives a version mismatch, and for the same
+    reason: a measurement taken on an inconsistent environment is not necessarily wrong,
+    it is unattributable, which is a thing to record.
+    """
+
+    status: EnvironmentStatus
+    #: Human-readable lines, each naming the requirer, the requirement and what is
+    #: installed. Bounded by the agent; a wholly broken environment does not get to send
+    #: pages of them.
+    conflicts: list[str] = Field(default_factory=list)
+    #: How many distributions were examined, so an empty result can be told apart from an
+    #: environment the check could not see into.
+    distributions: int | None = Field(default=None, ge=0)
+    detail: str | None = None
+
+
 class HealthResponse(_Wire):
     """Liveness. Deliberately unauthenticated.
 
@@ -71,6 +108,12 @@ class HostInfo(_Wire):
     cuda_version: str | None = None
 
     gpus: list[GpuInfo] = Field(default_factory=list)
+
+    # Whether the agent's own virtualenv is internally consistent. Protocol 6. Optional
+    # on the model rather than required so that the *shape* survives an agent that could
+    # not run the check — the control plane records the absence as NOT_REPORTED, which is
+    # a different claim from "no conflicts" and must stay one.
+    environment: EnvironmentCheck | None = None
 
     # Set by the producer, never inferred by the consumer (invariant 7). A mock or a
     # CPU-backend agent names itself here, and the control plane marks every run it

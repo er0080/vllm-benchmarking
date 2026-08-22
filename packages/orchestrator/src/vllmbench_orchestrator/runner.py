@@ -39,6 +39,7 @@ from vllmbench_protocol import (
     AgentClient,
     AgentError,
     AgentUnreachable,
+    EnvironmentStatus,
     classify_agent_error,
 )
 from vllmbench_protocol import FailureKind as WireFailureKind
@@ -639,6 +640,12 @@ def _record_provenance(run: Run, info: HostInfo) -> None:
     run.protocol_version = info.protocol_version
     run.driver_version = info.driver_version
     run.cuda_version = info.cuda_version
+    # Whether the machine this was measured on satisfied its own dependency constraints.
+    # Copied onto the run like every other fact here rather than joined from the host,
+    # because the host record moves and this run's claim about it must not.
+    run.environment_status = (
+        info.environment.status.value if info.environment else EnvironmentStatus.NOT_REPORTED.value
+    )
     run.gpu_model = info.gpus[0].name if info.gpus else None
 
     # Re-checked at execution time rather than trusted from creation: a host could have

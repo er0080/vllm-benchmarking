@@ -57,6 +57,46 @@ test -z "$(ls "$VIRTUAL_ENV"/lib/python*/site-packages/_editable_impl_vllmbench_
 
 Both lines should print. The second is the check that catches the trap above.
 
+### Check what the install did to vLLM's environment
+
+You installed the agent into the virtualenv vLLM lives in. That is the documented
+deployment and it is what lets the agent invoke vLLM's own binaries — but it means the
+agent's dependency resolution and vLLM's ceilings met in one place with nothing arbitrating
+between them:
+
+```bash
+uv pip check
+```
+
+On the first real GPU host this said:
+
+```
+The package `vllm` requires `fastapi[standard]>=0.133.0,<0.137.0`,
+but `0.141.1` is installed
+```
+
+vLLM worked anyway, which is luck rather than design. **This is the moment to act on it** —
+the alternative is finding out during a forty-minute sweep, on the machine whose behaviour
+you are trying to hold still.
+
+The agent runs the same check itself, at startup and on every handshake with the control
+plane, so you will also see it in the log:
+
+```
+WARNING this environment does not satisfy its own declared constraints (1 conflict)
+WARNING   vllm 0.25.1 requires fastapi[standard]<0.137.0,>=0.133.0, but fastapi 0.141.1 is installed
+```
+
+It never refuses to start. A conflict is not proof that anything is broken, and an agent
+that exited would take a working GPU host offline over a warning. What it does instead is
+*record* it: every run measured here carries the status, and the host page shows the
+conflict lines, so a number produced on an inconsistent environment can be recognised as
+one later rather than blending in.
+
+If it matters on your host, the way out is not to share the environment: point
+`VLLMBENCH_VLLM_BIN` at vLLM's `vllm` binary and install the agent into a virtualenv of its
+own. Section 3 covers that setting.
+
 ## 3. Configure
 
 The agent reads its settings from the environment, prefixed `VLLMBENCH_`.

@@ -22,7 +22,15 @@ from vllmbench_protocol.failures import (
 )
 from vllmbench_protocol.placeholders import is_placeholder, warn_about_placeholders
 from vllmbench_protocol.version import PROTOCOL_VERSION, __version__
-from vllmbench_protocol.wire import AUTH_HEADER, AUTH_SCHEME, GpuInfo, HealthResponse, HostInfo
+from vllmbench_protocol.wire import (
+    AUTH_HEADER,
+    AUTH_SCHEME,
+    EnvironmentCheck,
+    EnvironmentStatus,
+    GpuInfo,
+    HealthResponse,
+    HostInfo,
+)
 
 __all__ = [
     "AUTH_HEADER",
@@ -33,6 +41,8 @@ __all__ = [
     "AgentClient",
     "AgentError",
     "AgentUnreachable",
+    "EnvironmentCheck",
+    "EnvironmentStatus",
     "FailureKind",
     "GpuInfo",
     "HealthResponse",
