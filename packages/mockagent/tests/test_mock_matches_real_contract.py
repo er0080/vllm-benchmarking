@@ -116,6 +116,14 @@ class TestMockDeclaresItselfSynthetic:
         assert real.synthetic_source is None
         assert mock.synthetic_source is not None
 
+        # Both answer the environment question. It is optional on the wire so that an
+        # agent which could not run the check still produces a valid payload, and that
+        # optionality is exactly what would let the mock quietly stop reporting — leaving
+        # the control plane's handling of a conflicting environment unreachable in every
+        # test, on the one path that has no other way to be exercised.
+        assert real.environment is not None
+        assert mock.environment is not None
+
 
 class TestMockIsMultiGpu:
     async def test_mock_reports_more_than_one_device(self, mock_app) -> None:
