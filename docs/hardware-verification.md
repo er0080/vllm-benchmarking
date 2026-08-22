@@ -140,7 +140,7 @@ on a real host.
 
 ```bash
 # On the GPU host, inside the vLLM environment
-uv pip install "git+https://github.com/er0080/vllm-benchmarking@v1.0.0rc2#subdirectory=packages/agent"
+uv pip install "git+https://github.com/er0080/vllm-benchmarking@v1.0.0rc3#subdirectory=packages/agent"
 VLLMBENCH_TOKEN=... vllmbench-agent
 
 curl -s -H "Authorization: Bearer $VLLMBENCH_TOKEN" http://localhost:9110/host-info | jq

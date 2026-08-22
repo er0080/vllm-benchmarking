@@ -407,6 +407,19 @@ nothing was not tested.
   an "unreachable" message that ended in a bare colon, and a quick start whose agent
   command blocked the terminal it then told you to use. CI now runs the documented install
   and moves the api container underneath it.
+- **v1.0.0rc3** — the MCP surface, driven by an agent that had never read the codebase
+  rather than reviewed by one that had. The one that mattered: `get_pareto` replaced an
+  unrecognised metric key with the default and reported success, so an agent asking for a
+  latency frontier got a throughput frontier with nothing saying so. `mean_ttft_ms` is the
+  input that makes it real — not a typo, just not a key here, and the exact shape of a
+  guess. Refused at the MCP boundary now; the HTTP endpoint keeps the fallback, because a
+  person reads the axis label and an agent has none. Also 45 parameters with no
+  descriptions, closed sets published as bare strings, and no read-only or destructive
+  hints — all of which matter because for an MCP server the schema *is* the documentation,
+  there being no README an agent reads first. Two readings of the surface were wrong in
+  exactly the way a user's would have been: `resources/list` is empty because both
+  resources are templated, and the working feature was reported missing. There is a guide
+  now, and a tier-1 test that fails if the guide and the surface disagree.
 
 ---
 
