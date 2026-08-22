@@ -47,9 +47,7 @@ def upgrade() -> None:
     op.add_column("run", sa.Column("environment_status", sa.String(length=16), nullable=True))
     # Indexed because the question it answers is a filter — "show me the runs measured on
     # a host that was not internally consistent" — over a table that grows without bound.
-    op.create_index(
-        op.f("ix_run_environment_status"), "run", ["environment_status"], unique=False
-    )
+    op.create_index(op.f("ix_run_environment_status"), "run", ["environment_status"], unique=False)
 
 
 def downgrade() -> None:
