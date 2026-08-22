@@ -135,10 +135,38 @@ class TestBehaviouralHints:
         assert _hints(tools["create_config"]).idempotent_hint is True
         assert _hints(tools["create_workload"]).idempotent_hint is True
 
-    def test_the_host_boundary_is_marked_open_world(self, tools: dict[str, Tool]) -> None:
-        """Invariant 1 made visible in the schema: these two reach another machine."""
+    def test_nothing_claims_to_reach_outside_this_control_plane(
+        self, tools: dict[str, Tool]
+    ) -> None:
+        """No tool contacts the GPU host, so none of them is open-world.
+
+        This asserted the opposite once. `validate_config` was marked open-world on the
+        reasoning that checking against a host's vLLM version must mean asking the host;
+        it reads the row that host last wrote. The agent is reached by host registration
+        and by the orchestrator, and neither is a tool.
+
+        A tool that live-probes the agent would be the first true case — and would have to
+        change this test deliberately, which is the point of asserting the whole set rather
+        than each tool.
+        """
         open_world = {name for name, tool in tools.items() if _hints(tool).open_world_hint}
-        assert open_world == {"validate_config", "create_sweep"}
+        assert open_world == set()
+
+
+class TestDescriptionsMatchBehaviour:
+    """Prose, asserted where getting it wrong sends a caller down the wrong path."""
+
+    def test_cancelling_describes_the_handover(self, tools: dict[str, Tool]) -> None:
+        """It used to say the in-flight run "is interrupted", which this call does not do.
+
+        The orchestrator stops it, within about three seconds. An agent that cancels and
+        immediately polls sees that run still active, and a description promising an
+        interruption makes the handover look like a failure — inviting a retry that is not
+        needed.
+        """
+        description = tools["cancel_sweep"].description or ""
+        assert "orchestrator" in description
+        assert "is interrupted" not in description
 
 
 class TestClosedSetsArePublishedAsEnums:

@@ -189,7 +189,13 @@ agents:
   trivially while possibly being worse per device, so both figures travel together and
   comparisons default to per-GPU.
 - **Runs are immutable once terminal.** No tool mutates or deletes a run. `cancel_sweep`
-  moves *queued* runs to cancelled; it does not touch a measurement.
+  moves *queued* runs to cancelled; it does not touch a measurement. A run already in
+  flight is stopped by the orchestrator within a few seconds rather than by the call, so
+  polling immediately afterwards still shows it running.
+- **Nothing here contacts the GPU host.** Every tool answers from this control plane's
+  database and from argument catalogues checked into the repository, which is why none of
+  them advertises `openWorldHint`. The agent is reached by host registration and by the
+  orchestrator, and neither is a tool.
 - **Every write says it came from here.** Rows created through MCP record
   `initiated_by="mcp"` plus the client's identity, so a result can always state which
   interface asked for it.
