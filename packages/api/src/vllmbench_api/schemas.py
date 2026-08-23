@@ -323,6 +323,14 @@ class RunSummaryOut(BaseModel):
     itl_ms_p99: float | None = None
     itl_ms_std: float | None = None
 
+    # Null when the engine was not speculating, which is a different statement from an
+    # acceptance rate of zero. The config says which.
+    spec_acceptance_rate: float | None = None
+    spec_acceptance_length: float | None = None
+    spec_num_drafts: int | None = None
+    spec_draft_tokens: int | None = None
+    spec_accepted_tokens: int | None = None
+
 
 class RunOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)

@@ -24,10 +24,24 @@ from vllmbench_protocol.bench_result import (
 
 FIXTURE = Path(__file__).parent / "fixtures" / "bench_serve_v0.25.1.json"
 
+#: A payload from an engine that was speculating — Qwen3.8-27B-FP8 with MTP at depth 3 on
+#: 2x RTX 3090. Captured, not written: the speculative block only appears when speculation
+#: is on, so the ordinary fixture cannot prove anything about it.
+SPECULATIVE_FIXTURE = Path(__file__).parent / "fixtures" / "bench_serve_speculative_v0.25.1.json"
+
+#: Sources that exist only when the engine speculates. Everything else in the map must be
+#: present in every payload.
+SPECULATIVE_SOURCES = frozenset(k for k in SUMMARY_FIELD_MAP if k.startswith("spec_decode_"))
+
 
 @pytest.fixture
 def payload() -> dict[str, Any]:
     return json.loads(FIXTURE.read_text())
+
+
+@pytest.fixture
+def speculative_payload() -> dict[str, Any]:
+    return json.loads(SPECULATIVE_FIXTURE.read_text())
 
 
 class TestFieldMapMatchesReality:
@@ -42,7 +56,19 @@ class TestFieldMapMatchesReality:
         reporting success.
         """
         missing = set(SUMMARY_FIELD_MAP) - payload.keys()
-        assert not missing, f"mapped fields absent from a real payload: {sorted(missing)}"
+        # Asserted as an equality rather than a subset. The speculative block is absent
+        # from this payload legitimately, but anything *else* going missing is the failure
+        # this test exists for, and a `<=` would swallow it.
+        assert missing == set(SPECULATIVE_SOURCES), (
+            f"mapped fields absent from a real payload: {sorted(missing - SPECULATIVE_SOURCES)}"
+        )
+
+    def test_the_speculative_block_exists_when_speculating(
+        self, speculative_payload: dict[str, Any]
+    ) -> None:
+        """The other half: those fields are real, not invented from the docs."""
+        missing = set(SUMMARY_FIELD_MAP) - speculative_payload.keys()
+        assert not missing, f"mapped fields absent from a speculative payload: {sorted(missing)}"
 
     def test_required_fields_are_a_subset_of_the_map(self) -> None:
         assert REQUIRED_FIELDS <= set(SUMMARY_FIELD_MAP)
@@ -238,3 +264,62 @@ class TestBenchmarksThatMeasuredNothing:
             flatten_bench_result(
                 {"duration": 1.0, "total_input_tokens": 1, "total_output_tokens": 1}
             )
+
+
+class TestSpeculativeDecoding:
+    """The metric that explains a speculative result, rather than restating it.
+
+    Throughput and TPOT say speculation helped or hurt. Acceptance rate says why, and it is
+    the figure that transfers to a different workload — which is why it belongs in a column
+    and not only in the log text it used to live in.
+    """
+
+    def test_the_scalars_land_on_columns(self, speculative_payload: dict[str, Any]) -> None:
+        flat = flatten_bench_result(speculative_payload)
+        # Verbatim from the captured run: 2723 of 3780 drafted tokens kept.
+        assert flat["spec_acceptance_rate"] == pytest.approx(72.037, rel=1e-4)
+        assert flat["spec_acceptance_length"] == pytest.approx(3.1611, rel=1e-4)
+        assert flat["spec_num_drafts"] == 1260
+        assert flat["spec_draft_tokens"] == 3780
+        assert flat["spec_accepted_tokens"] == 2723
+
+    def test_the_rate_agrees_with_the_counts(self, speculative_payload: dict[str, Any]) -> None:
+        """Counters and the rate derived from them must tell the same story.
+
+        Counters can be differenced across any window; a rate sampled at an instant cannot
+        be recovered. If upstream ever changes what the rate is a percentage *of*, this
+        fails rather than quietly redefining the axis of every chart.
+        """
+        flat = flatten_bench_result(speculative_payload)
+        derived = 100.0 * flat["spec_accepted_tokens"] / flat["spec_draft_tokens"]
+        assert derived == pytest.approx(flat["spec_acceptance_rate"], rel=1e-6)
+
+    def test_per_position_rates_stay_whole(self, speculative_payload: dict[str, Any]) -> None:
+        """An array as long as the speculation depth is not a scalar and not comparable.
+
+        Spreading it across fixed columns would invent a width the data does not have —
+        depth 1 and depth 3 would disagree about what column three means.
+        """
+        flat = flatten_bench_result(speculative_payload)
+        assert flat["extra"]["spec_decode_per_position_acceptance_rates"] == [
+            0.85,
+            pytest.approx(0.7167, rel=1e-3),
+            pytest.approx(0.5944, rel=1e-3),
+        ]
+        assert not any(key.startswith("spec_decode_per_position") for key in flat)
+
+    def test_a_non_speculative_run_leaves_them_absent(self, payload: dict[str, Any]) -> None:
+        """Absent, not zero.
+
+        NULL says the engine was not speculating. Zero would say it drafted and had
+        everything rejected. Those are opposite findings, and defaulting to zero here would
+        put the second one in the database every time somebody benchmarked without MTP.
+        """
+        flat = flatten_bench_result(payload)
+        for column in ("spec_acceptance_rate", "spec_acceptance_length", "spec_num_drafts"):
+            assert column not in flat or flat[column] is None
+
+    def test_a_non_speculative_payload_still_flattens(self, payload: dict[str, Any]) -> None:
+        """The block is optional, so its absence must not look like a broken result."""
+        flat = flatten_bench_result(payload)
+        assert flat["successful_requests"] == 8
