@@ -295,6 +295,16 @@ reports a protocol version on connect and the control plane refuses to run again
 mismatch, with an explicit message naming both versions. A stale agent must fail loudly at
 connect time rather than produce subtly wrong data mid-sweep.
 
+**`VERSION` moves in its own `chore:` pull request, never inside a feature.** Bundling the
+bump into a `feat:` breaks `changelog-check` on `main` *after* the merge while leaving it
+green on the branch — the safe-looking direction again. `scripts/generate_changelog.py`
+titles the post-tag section from `VERSION` when that version is not yet tagged, and squash
+merge only assigns `(#N)` at the moment of merging, so a feature commit inside that section
+renders one way on the branch and another way on `main` minutes later. A release chore
+commit is a `chore:` and therefore filtered from the output, which is precisely what makes
+the pending section stable. Bump, then tag; do not carry an untagged `VERSION` through
+ordinary development.
+
 ---
 
 ## Testing
