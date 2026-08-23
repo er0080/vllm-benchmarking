@@ -46,7 +46,10 @@ const LOAD_AXES: { key: LoadAxis; label: string; unit: string }[] = [
 /** Latency pairs drawn together: the median and the tail it hides. */
 const LATENCY_PAIRS: { label: string; median: string; p99: string }[] = [
   { label: "Time to first token", median: "ttft_ms_median", p99: "ttft_ms_p99" },
-  { label: "Inter-token latency", median: "itl_ms_median", p99: "itl_ms_p99" },
+  // The wait between emissions, not between tokens. Under speculative decoding one
+  // emission carries several accepted tokens, so this rises with drafting depth even
+  // as generation speeds up — see the group warning on a mixed comparison.
+  { label: "Emission gap", median: "itl_ms_median", p99: "itl_ms_p99" },
   { label: "Time per output token", median: "tpot_ms_mean", p99: "tpot_ms_p99" },
 ];
 

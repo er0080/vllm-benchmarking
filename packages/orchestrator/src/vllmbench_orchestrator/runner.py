@@ -388,6 +388,14 @@ async def execute_run(
             run.device_indices = status.device_indices
             run.gpu_count = max(1, len(status.device_indices))
 
+        # What the engine resolved for speculation, from its own /server_info. Recorded
+        # here as well as after the benchmark so that a run which fails mid-flight still
+        # says what it was measuring. `None` stays NULL: an engine that would not answer
+        # must not be recorded as one that denied speculating.
+        if status.speculative_method is not None:
+            run.speculative_method = status.speculative_method
+            run.speculative_tokens = status.speculative_tokens
+
         run.status = RunStatus.BENCHMARKING
         await session.commit()
 
@@ -423,6 +431,14 @@ async def execute_run(
             run.gpu_count = max(1, len(response.device_indices))
         if response.tensor_parallel_size:
             run.tensor_parallel_size = response.tensor_parallel_size
+        if response.speculative_method is not None:
+            run.speculative_method = response.speculative_method
+            run.speculative_tokens = response.speculative_tokens
+
+        # Invariant 6 has required this since the first schema and nothing wrote it until
+        # protocol 7. Only the agent can compute it: `--dataset-path` names a file on the
+        # GPU host, which the control plane cannot see (invariant 1).
+        run.dataset_identity = response.dataset_identity
 
         run.raw_result = response.raw_result
         run.log_excerpt = "\n".join(response.stdout_tail[-40:])

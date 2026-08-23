@@ -365,6 +365,14 @@ class Run(Base):
     tensor_parallel_size: Mapped[int] = mapped_column(Integer, default=1, index=True)
     pipeline_parallel_size: Mapped[int] = mapped_column(Integer, default=1)
 
+    # -- Speculation (same rule as the topology above) ------------------------------
+    # Read from the engine's own /server_info, never from the config text. `"none"` is
+    # the engine saying it is not speculating; NULL is nobody having asked it, which is
+    # every run before protocol 7 and any run against an engine that would not answer.
+    # Indexed because depth is a sweep dimension, a filter and a chart series.
+    speculative_method: Mapped[str | None] = mapped_column(String(32), index=True)
+    speculative_tokens: Mapped[int | None] = mapped_column(Integer, index=True)
+
     # -- Comparability guards ------------------------------------------------------
     bench_client_location: Mapped[BenchClientLocation] = mapped_column(
         _enum(BenchClientLocation, "bench_client_location"),

@@ -238,7 +238,143 @@ with memory within 0.1 GB across the pair.
 `reset caches: none available` was read at the time as expected rather than a fault, on the
 grounds that prefix caching was off in this configuration so there was nothing to carry
 between points. That explanation was true and the conclusion was wrong: the endpoint was
-returning 404 on every configuration, including ones with prefix caching on, because the
-engine was not started with `VLLM_SERVER_DEV_MODE=1`. Measured on this host on 2026-08-23:
-404 without the variable, 200 with it. See issue #87.
+returning 404 on every configuration, including ones with prefix caching on. See
+[Speculative decoding](#verified--2026-08-23-speculative-decoding-and-two-bugs-under-it)
+below, and issue #87.
 
+---
+
+## Verified — 2026-08-23, speculative decoding, and two bugs under it
+
+The first sweep run for a reason other than testing the framework: choosing a serving
+configuration for a Jupyter notebook coding assistant on `Qwen3.8-27B-FP8`. Twenty-four
+runs, four multi-token-prediction depths against two workloads, three replicates each,
+authored entirely through the MCP surface so every run carries `initiated_by: mcp`.
+
+### The question
+
+Qwen3.8-27B-FP8 ships MTP weights — `text_config.mtp_num_hidden_layers = 1` — so
+speculative decoding is available without a separate draft model. Whether to use it, and
+how deep to draft, is a measurement rather than a matter of opinion: acceptance depends on
+how predictable the output is, which depends on the traffic.
+
+Two workloads were built from `blazedit`, split by edit distance, because that is the axis
+that decides how much a coding assistant is *copying* rather than composing:
+
+- **notebook edit — high copy** (distance 0.0–0.2): small edits to existing code, where
+  most of the output already appears in the prompt
+- **notebook author — low copy** (distance 0.6–1.0): substantially new code
+
+Both at `max-num-seqs: 2`, TP=2, 8 prompts, 512 output tokens.
+
+### Results
+
+Medians over replicates. `per user` is 1000 / mean TPOT; `per GPU` is the aggregate
+throughput divided by the two devices the runs held.
+
+**notebook edit — high copy**
+
+| depth | accept % | tokens/step | TPOT ms | per user | per GPU | TTFT ms | emission gap ms |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| off | — | — | 25.24 | 39.6 | 60.8 | 341 | 25.0 |
+| 1 | 88.6 | 1.89 | 18.53 | 54.0 | 81.2 | 364 | 33.9 |
+| 2 | 81.7 | 2.63 | 16.92 | 59.1 | 85.8 | 382 | 42.6 |
+| 3 | 72.0 | 3.16 | 14.43 | 69.3 | 101.0 | 404 | 44.1 |
+
+**notebook author — low copy**
+
+| depth | accept % | tokens/step | TPOT ms | per user | per GPU | TTFT ms | emission gap ms |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| off | — | — | 24.91 | 40.2 | 39.0 | 127 | 25.0 |
+| 1 | 82.1 | 1.82 | 18.59 | 53.8 | 51.4 | 168 | 33.9 |
+| 2 | 71.9 | 2.44 | 17.73 | 56.4 | 57.4 | 189 | 42.6 |
+| 3 | 61.6 | 2.85 | 15.58 | 64.2 | 63.8 | 198 | 44.1 |
+
+**+75% per-user throughput on editing, +60% on authoring**, at depth 3, against no
+speculation. Every adjacent pair's replicate ranges are disjoint — at depth 2 the edit
+workload spans 57.0–61.3 tok/s and at depth 3 it spans 68.3–74.4 — so the ordering is a
+result rather than a spread. Depth 3 is the only point on the Pareto frontier.
+
+(The depth-3 edit point carries four replicates rather than three: an earlier single-run
+sweep measured the same configuration against the same workload, and content addressing
+correctly pools it with the other three rather than treating it as a separate point.)
+
+### Acceptance rate falls with depth, and it does not matter
+
+The tempting summary is "depth 1 has the best acceptance rate, 88.6%". Depth 1 is the
+worst-performing speculative arm in every column that describes speed.
+
+Acceptance *rate* is per drafted token and necessarily decays with depth — each additional
+position is conditioned on the last one having been right. Acceptance *length*, the tokens
+gained per drafting step, rises anyway: 1.89 → 2.63 → 3.16. That is the figure the speed-up
+is proportional to, and the two move in opposite directions.
+
+This is why both are stored as columns. A framework recording only the rate would have
+pointed at the worst arm and looked well-calibrated doing it.
+
+### The payoff had not turned over at depth 3
+
+Marginal gain per additional draft token, on editing: +14.4 tok/s, then +5.1, then +10.2.
+Decelerating but not reversing, and the third step is larger than the second. Depths 4–6
+are not measured, so the point at which drafting stops paying for itself on this model and
+these cards is unknown — an open question rather than a conclusion.
+
+### The high-copy workload benefits more, as predicted, and TTFT does not follow
+
+Editing accepts more than authoring at every depth (88.6% vs 82.1% at depth 1; 72.0% vs
+61.6% at depth 3), which is what "the output is already in the prompt" should produce.
+
+TTFT moves the other way and by more than speculation explains: 341 ms editing against
+127 ms authoring at baseline. That is the prompt length, not the drafter — the high-copy
+prompts are longer. Speculation adds roughly 60 ms of TTFT at every depth in both
+workloads, which is the drafter's fixed cost and is flat.
+
+### Two bugs, both found by using the framework rather than reading it
+
+**Inter-token latency measures a different quantity under speculation** (issue #86). The
+emission-gap column above rises 25.0 → 44.1 ms across the same arms whose per-user
+throughput rises 39.6 → 69.3 tok/s. Both are correct: 44.1 ms divided by 3.16 accepted
+tokens is 14.0 ms per token, which is that arm's measured TPOT of 14.4. A chart with both
+on one ITL axis shows the fastest configuration as 76% worse and says nothing about why.
+
+Not fixed by dropping the metric — chunked delivery of three tokens every 44 ms is a real
+property of a streaming UI, and for an interactive assistant it is worth measuring. Fixed by
+naming it *emission gap*, and by warning when a comparison group mixes speculation settings.
+
+**Cache resets between sweep points had never happened** (issue #87). `/reset_prefix_cache`
+is gated behind `VLLM_SERVER_DEV_MODE`, which the agent did not set, so every reset returned
+404 — and the supervisor treated a 404 as "this vLLM version does not have that endpoint".
+Measured on this host: 404 without the variable, 200 with it.
+
+It cost this sweep nothing, and the database is what says so rather than hope.
+`prefix_cache_hits_total` is 0 across all 8091 queries in it: the prompts are long and
+distinct and `max-num-seqs` is 2, so nothing was ever reusable. A sweep over a dataset with
+shared prefixes — a system prompt, a repeated notebook preamble — would have had its later
+points inflated by its earlier ones, and the ordering of the matrix would have chosen the
+winner. Storing counters rather than a sampled hit rate is what made that answerable at all.
+
+### Speculation was not recorded as provenance, and now is
+
+Grouping these results by depth required regexing the *name* of each configuration, which
+is precisely what invariant 8 forbids for parallelism topology and forbids here for the
+same reason: a config saying `num_speculative_tokens: 3` is not proof the engine drafted
+three tokens. If the MTP head had failed to load and vLLM had carried on without it, the
+configuration would still say 3.
+
+From protocol 7 the agent reads `speculative_method` and `speculative_tokens` from the
+engine's own `/server_info` — an endpoint behind the same `VLLM_SERVER_DEV_MODE` gate as the
+cache resets, so one fix opened both. Verified on this host across both states: speculating
+reports `{"method": "ngram", "num_speculative_tokens": 3}`, and not speculating reports the
+key present and `null`, which is what keeps "the engine says no" distinct from "nobody
+asked".
+
+### What this says about the framework
+
+Three of the four defects this sweep produced sat at a seam between layers that each worked
+correctly and were each tested. The reset call was correct and the endpoint was absent; ITL
+was flattened correctly and meant something else; the config recorded speculation and the
+run did not. None would have been found by more unit tests of the parts.
+
+The argument for tier 2 is that a fake can only confirm our own assumptions. This is the
+argument for using the thing: an integration test can only confirm the assumptions somebody
+thought to write down.

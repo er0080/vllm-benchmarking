@@ -129,6 +129,25 @@ HostIdArg = Annotated[
     ),
 ]
 
+SpeculativeTokensArg = Annotated[
+    int | None,
+    Field(
+        description=(
+            "Only runs the engine drafted this many tokens ahead on. 0 selects runs it "
+            "said were not speculating. Omit for all runs; runs recorded before the "
+            "framework asked the engine have no value here and match neither."
+        )
+    ),
+]
+SpeculativeMethodArg = Annotated[
+    str | None,
+    Field(
+        description=(
+            'Only runs using this drafting method, as the engine named it — "ngram", '
+            '"mtp", "eagle3", or "none" for runs it said were not speculating.'
+        )
+    ),
+]
 SweepIdFilterArg = Annotated[
     str | None,
     Field(description="Restrict to one sweep, by the id from list_sweeps. Null means every run."),
@@ -445,10 +464,23 @@ def build_mcp_server(sessions: async_sessionmaker[Any], settings: ApiSettings) -
     # -- Runs --------------------------------------------------------------------
 
     @tool()
-    async def query_runs(limit: LimitArg = None) -> list[dict[str, Any]]:
-        """Recent runs with their headline metrics and the provenance behind them."""
+    async def query_runs(
+        limit: LimitArg = None,
+        speculative_tokens: SpeculativeTokensArg = None,
+        speculative_method: SpeculativeMethodArg = None,
+    ) -> list[dict[str, Any]]:
+        """Recent runs with their headline metrics and the provenance behind them.
+
+        The speculation filters make drafting depth a query rather than something to be
+        recovered from a configuration's name.
+        """
         async with sessions() as session:
-            found = await run_routes.list_runs(session, limit=_page(limit))
+            found = await run_routes.list_runs(
+                session,
+                limit=_page(limit),
+                speculative_tokens=speculative_tokens,
+                speculative_method=speculative_method,
+            )
             return [
                 {
                     "id": str(run.id),
@@ -459,6 +491,11 @@ def build_mcp_server(sessions: async_sessionmaker[Any], settings: ApiSettings) -
                     "gpu_model": run.gpu_model,
                     "gpu_count": run.gpu_count,
                     "tensor_parallel_size": run.tensor_parallel_size,
+                    # "none" is the engine stating it was not speculating; null is nobody
+                    # having asked it, which is every run recorded before protocol 7.
+                    "speculative_method": run.speculative_method,
+                    "speculative_tokens": run.speculative_tokens,
+                    "dataset_identity": run.dataset_identity,
                     "is_synthetic": run.is_synthetic,
                     "synthetic_source": run.synthetic_source,
                     "finished_at": run.finished_at.isoformat() if run.finished_at else None,

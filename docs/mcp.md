@@ -132,7 +132,7 @@ reading this table.
 
 | Tool | |
 | --- | --- |
-| `query_runs` | Recent runs with their headline metrics and the provenance behind them. |
+| `query_runs` | Recent runs with their headline metrics and the provenance behind them. Filterable by `speculative_tokens` and `speculative_method`. |
 | `get_run` | One run in full, including every flattened metric. |
 | `get_pareto` | Measurement points, partitioned into sets that may honestly be compared. |
 | `compare_runs` | Two measurement points side by side, with a diff of their configurations. |
@@ -155,6 +155,28 @@ List pages default to 25 rows and are capped at 100 however large a `limit` is p
 agent asking for everything is usually defaulting rather than choosing, and a list that
 grows without bound is how a long session spends its context on its least interesting
 data.
+
+### Speculative decoding
+
+Runs carry `speculative_method` and `speculative_tokens`, read from the engine's own
+`/server_info` rather than parsed out of the configuration text. Three values, and the
+difference between the last two matters:
+
+- a method name and a depth (`"mtp"` at 3, `"ngram"` at 3, `"eagle3"` at 5, …) — the engine
+  was drafting, this way, this far ahead
+- `"none"` at depth 0 — the engine said it was not speculating
+- both `null` — nobody asked the engine, which is every run recorded before protocol 7
+
+A configuration whose drafter failed to load looks exactly like one that never asked for a
+drafter, in its YAML. It does not look the same here, which is the point of reading the
+engine.
+
+**Inter-token latency is not comparable across that boundary.** It measures the wait
+between *emissions*, and a speculative emission carries every token the target accepted —
+so it rises with drafting depth while generation gets faster. `get_pareto` warns when a
+group mixes speculation settings, and the metric is labelled `Emission gap` rather than
+`ITL` for the same reason. Compare speed with `tpot_ms_mean` or `per_user_output_tok_s`;
+read the emission gap as a measure of how smoothly output is delivered.
 
 ---
 

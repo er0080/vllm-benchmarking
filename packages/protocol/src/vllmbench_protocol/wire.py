@@ -190,6 +190,19 @@ class ServerStatus(_Wire):
     tensor_parallel_size: int | None = None
     pipeline_parallel_size: int | None = None
 
+    # What the engine resolved for speculative decoding, read from its own /server_info
+    # rather than from the config text. Invariant 8 says parallelism topology is never
+    # inferred from the YAML after the fact; speculation is the same kind of fact and
+    # gets the same treatment. The YAML can say `num_speculative_tokens: 3` while the
+    # engine runs without a drafter, and only the engine can say which happened.
+    #
+    # None on both means "the engine did not say" — a version without /server_info, or a
+    # reachability failure. NOT the same as `speculative_method="none"`, which is the
+    # engine stating it is not speculating. Silence and a clean answer are different
+    # facts, for the same reason EnvironmentStatus.NOT_REPORTED is not OK.
+    speculative_method: str | None = None
+    speculative_tokens: int | None = None
+
 
 # ---------------------------------------------------------------------------
 # Benchmark execution
@@ -316,6 +329,16 @@ class BenchResponse(_Wire):
     tensor_parallel_size: int | None = None
     pipeline_parallel_size: int | None = None
     device_indices: list[int] | None = None
+
+    # Echoed from the same place, for the same reason. A run has to be able to say
+    # whether it was speculating without anyone reading its config text.
+    speculative_method: str | None = None
+    speculative_tokens: int | None = None
+
+    # What the benchmark actually read, computed on the GPU host because that is the
+    # only host that can see it (invariant 1). See `vllmbench_agent.dataset` for the
+    # forms this takes; the control plane stores the string and never parses it.
+    dataset_identity: str | None = None
 
     # Telemetry sampled across the benchmark window, returned with the result rather
     # than streamed. One round trip, nothing to reconcile, and no partial series left

@@ -36,6 +36,7 @@ from vllmbench_agent.hardware import (
 )
 from vllmbench_agent.reaper import TERM_GRACE_SECONDS, ProcessRegistry
 from vllmbench_protocol.failures import FailureKind, classify_engine_output
+from vllmbench_protocol.server_info import Speculation, parse_speculation
 from vllmbench_protocol.wire import ServerState, ServerStatus
 
 log = logging.getLogger(__name__)
@@ -82,11 +83,11 @@ class ServerError(RuntimeError):
 #: `VLLM_SERVER_DEV_MODE=1` for `_reset_caches`". Invariant 4 says we orchestrate upstream's
 #: benchmark rather than reimplement it; this is part of what upstream does around it.
 #:
-#: It also attaches ``/server_info``, ``/sleep``, ``/rlhf/*`` and ``/rpc/*``, which nothing
-#: here calls today. vLLM logs a security warning when they go up. A config binding
-#: ``0.0.0.0`` puts them on the LAN — documented in README under the GPU host's
-#: prerequisites, because it is a property of the host an operator chose rather than
-#: something the agent can decide for them.
+#: It also attaches ``/server_info``, which is where speculation provenance comes from, and
+#: ``/sleep``, ``/rlhf/*`` and ``/rpc/*``, which nothing here calls. vLLM logs a security
+#: warning when they go up. A config binding ``0.0.0.0`` puts them on the LAN — documented in
+#: README under the GPU host's prerequisites, because it is a property of the host an
+#: operator chose, not something the agent can decide for them.
 ENGINE_ENV = {"VLLM_SERVER_DEV_MODE": "1"}
 
 #: Upstream's list, verbatim, from ``ServerProcess.VLLM_RESET_CACHE_ENDPOINTS``.
@@ -167,6 +168,7 @@ class VllmServer:
         self._device_indices: list[int] | None = None
         self._declared_tp: int | None = None
         self._declared_pp: int | None = None
+        self._speculation: Speculation | None = None
 
     # -- introspection -------------------------------------------------------------
 
@@ -189,6 +191,8 @@ class VllmServer:
             device_indices=self._device_indices,
             tensor_parallel_size=self._declared_tp,
             pipeline_parallel_size=self._declared_pp,
+            speculative_method=self._speculation.method if self._speculation else None,
+            speculative_tokens=self._speculation.tokens if self._speculation else None,
         )
 
     def base_url(self) -> str:
@@ -471,6 +475,8 @@ class VllmServer:
             if response.status_code == 200:
                 self._engine_version = response.json().get("version")
 
+        self._speculation = await self._read_speculation(client, url)
+
         devices = await asyncio.to_thread(devices_for_process, pid)
         self._device_indices = devices or None
 
@@ -484,6 +490,34 @@ class VllmServer:
                 len(devices),
                 devices,
             )
+
+    @staticmethod
+    async def _read_speculation(client: httpx.AsyncClient, url: str) -> Speculation | None:
+        """Ask the engine what it resolved for speculative decoding.
+
+        Two scalars are lifted out and the response is dropped. That is not tidiness:
+        ``/server_info`` dumps the whole ``VllmConfig``, and ``ModelConfig.hf_token`` is
+        typed ``bool | str | None`` and serialized verbatim — so on a host that sets a
+        HuggingFace token this payload contains it. It is never logged, never returned and
+        never stored. See :mod:`vllmbench_protocol.server_info`.
+
+        ``None`` on any failure, and that stays distinct from the engine answering "not
+        speculating": a run measured against an engine we could not ask must not claim the
+        engine denied it.
+        """
+        with contextlib.suppress(httpx.HTTPError, ValueError):
+            response = await client.get(f"{url}/server_info", params={"config_format": "json"})
+            if response.status_code == 200:
+                speculation = parse_speculation(response.json())
+                if speculation is not None:
+                    return speculation
+                log.warning("/server_info did not describe speculation in a shape we know")
+                return None
+            log.warning(
+                "/server_info answered %d; this run cannot state whether it speculated",
+                response.status_code,
+            )
+        return None
 
     async def reset_caches(self) -> list[str]:
         """Clear the engine's caches, as upstream does between benchmark points.

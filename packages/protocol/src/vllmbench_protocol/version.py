@@ -45,4 +45,18 @@ __version__ = "1.0.0rc4"
 #    is a worse failure than the mismatch being named. It is also a provenance change —
 #    invariant 6 — and a run that cannot say whether it was measured on a coherent
 #    environment is missing something a reader would want.
-PROTOCOL_VERSION = 6
+# 7: three provenance facts a run could not previously state about itself, all of them
+#    only knowable on the GPU host (invariant 1), so all of them arriving on the wire.
+#    `BenchResponse` and `ServerStatus` carry `speculative_method` and
+#    `speculative_tokens`, read from the engine's own `/server_info` rather than parsed
+#    back out of the config YAML — invariant 8's rule for parallelism topology, applied
+#    to speculation for the same reason: the YAML can say `num_speculative_tokens: 3`
+#    while the engine runs without a drafter. `BenchResponse` also carries
+#    `dataset_identity`, which invariant 6 has required since the first schema and which
+#    was NULL on every run this project had produced.
+#
+#    Additive again, and a bump again, for the reason 6 was: `_Wire` forbids unknown
+#    fields, so a 7 agent talking to a 6 control plane has its whole benchmark result
+#    rejected on an extra key. Losing a forty-minute run to a version mismatch that was
+#    never named is exactly what this number exists to prevent.
+PROTOCOL_VERSION = 7

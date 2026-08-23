@@ -34,6 +34,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from vllmbench_db.enums import ReplicateOrder
+from vllmbench_protocol import NO_SPECULATION
 
 
 class RunSource(enum.StrEnum):
@@ -64,6 +65,12 @@ class MetricSpec:
     #: True when this figure is already normalized by device count, and so may be
     #: compared across tensor-parallel sizes without further work (invariant 8).
     per_gpu: bool = False
+    #: True when this figure counts the gaps between *emissions* rather than between
+    #: tokens. Speculative decoding delivers several accepted tokens in one emission, so
+    #: an emission-based figure grows with drafting depth while the tokens arrive faster.
+    #: Both readings are correct; putting them on one axis is what is not. See
+    #: :func:`group_warnings`.
+    emission_based: bool = False
     description: str = ""
 
     def orient(self, value: float) -> float:
@@ -134,8 +141,38 @@ METRICS: tuple[MetricSpec, ...] = (
     MetricSpec(key="ttft_ms_p99", label="TTFT p99", unit="ms", better="lower"),
     MetricSpec(key="tpot_ms_mean", label="TPOT mean", unit="ms", better="lower"),
     MetricSpec(key="tpot_ms_p99", label="TPOT p99", unit="ms", better="lower"),
-    MetricSpec(key="itl_ms_median", label="ITL median", unit="ms", better="lower"),
-    MetricSpec(key="itl_ms_p99", label="ITL p99", unit="ms", better="lower"),
+    # Inter-token latency, which is a slight misnomer that upstream's field names fix in
+    # place. It is the wait between *emissions*, and only equals the wait between tokens
+    # when each emission carries one. Under speculation an emission carries however many
+    # drafted tokens the target accepted, so this rises with depth while generation gets
+    # faster: measured across the MTP sweep, median ITL went 25.0 → 44.1 ms while per-user
+    # throughput went 39.6 → 69.4 tok/s. 44.1 ms / 3.16 accepted tokens ≈ 14.0 ms, which is
+    # that run's measured TPOT. Neither figure is wrong; they answer different questions.
+    #
+    # Kept, charted, and labelled — not dropped. Three tokens arriving every 44 ms reads
+    # differently in a streaming UI from one every 25 ms, and for an interactive assistant
+    # that is worth measuring. What must not happen is the two being averaged together.
+    MetricSpec(
+        key="itl_ms_median",
+        label="Emission gap median",
+        unit="ms",
+        better="lower",
+        emission_based=True,
+        description=(
+            "Median wait between streamed emissions. One emission is one token without "
+            "speculative decoding, and as many tokens as were accepted with it — so this "
+            "is a measure of delivery smoothness, not of generation speed. Use TPOT or "
+            "per-user output rate to compare speed across speculation settings."
+        ),
+    ),
+    MetricSpec(
+        key="itl_ms_p99",
+        label="Emission gap p99",
+        unit="ms",
+        better="lower",
+        emission_based=True,
+        description="The wait the slowest percentile of emissions sees. See the median.",
+    ),
     # Speculative decoding. NULL on a run that was not speculating, which is why these
     # are last: a comparison that includes a non-speculative arm will show them empty on
     # that side, and that is the correct reading rather than a gap in the data.
@@ -240,6 +277,13 @@ class RunRecord:
     pipeline_parallel_size: int = 1
     device_indices: tuple[int, ...] = ()
 
+    #: What the engine resolved for speculation, from the same source and under the same
+    #: rule. ``"none"`` is the engine stating it was not speculating; ``None`` is nobody
+    #: having asked — every run before protocol 7 — and the two must not be merged, or a
+    #: chart claims a comparison it has no evidence for.
+    speculative_method: str | None = None
+    speculative_tokens: int | None = None
+
     # Workload axes worth plotting against
     max_concurrency: int | None = None
     request_rate: float | None = None
@@ -312,6 +356,62 @@ def comparability_key(record: RunRecord) -> ComparabilityKey:
     )
 
 
+#: Metrics whose value changes meaning across the speculation boundary, by name, so the
+#: warning below names them from the metric table rather than from a second hardcoded list
+#: that can drift away from it.
+EMISSION_BASED_METRICS: tuple[str, ...] = tuple(m.key for m in METRICS if m.emission_based)
+
+
+def _speculation_label(record: RunRecord) -> str | None:
+    """How this run speculated, as a phrase, or None if nobody asked the engine."""
+    method = record.speculative_method
+    if method is None:
+        return None
+    if method == NO_SPECULATION:
+        return "no speculation"
+    return f"{method} depth {record.speculative_tokens}"
+
+
+def speculation_warning(records: Sequence[RunRecord]) -> str | None:
+    """Say so when a group's emission-based metrics are not measuring one quantity.
+
+    Speculation is *not* a :class:`ComparabilityKey` field, and that is deliberate.
+    Comparing speculation settings is the reason someone runs this sweep — partitioning
+    them into separate charts would break the tool's headline use, the same way
+    partitioning on config hash would. Almost every metric compares fine across the
+    boundary: TPOT, TTFT, throughput and acceptance rate all mean one thing throughout.
+
+    Emission-based metrics do not, and they do not fail loudly. A speculating run's
+    emission gap is larger than a non-speculating one's *because it is faster*, so the
+    chart draws the winner as the loser and nothing marks the bars as different
+    quantities. This is the same class of problem as overlaying two vLLM versions, which
+    this framework partitions rather than permits silently — and the same remedy applies
+    at a lower grade, because here the reader asked for the comparison.
+
+    Depth counts too: three tokens per emission and one token per emission are as
+    different from each other as speculating and not.
+    """
+    states = {_speculation_label(r) for r in records}
+    if len(states) < 2:
+        return None
+
+    metrics = ", ".join(METRICS_BY_KEY[k].label for k in EMISSION_BASED_METRICS)
+    if None in states:
+        known = sorted(state for state in states if state is not None)
+        return (
+            f"{metrics} may not be comparable here: "
+            f"{sum(1 for r in records if r.speculative_method is None)} run(s) predate "
+            "speculation being recorded, so whether they were speculating is unknown"
+            + (f" (the rest: {', '.join(known)})" if known else "")
+        )
+    return (
+        f"mixes {', '.join(sorted(s for s in states if s))}; "
+        f"{metrics} count the wait between emissions, and a speculative emission carries "
+        "several tokens — so those figures rise with depth even as generation gets faster. "
+        "Compare speed with TPOT or per-user output rate."
+    )
+
+
 def group_warnings(records: Sequence[RunRecord]) -> list[str]:
     """Differences that are worth stating but not worth splitting a chart over."""
     warnings: list[str] = []
@@ -357,6 +457,10 @@ def group_warnings(records: Sequence[RunRecord]) -> list[str]:
             "throughput is divided by the whole benchmark duration, so those points "
             "understate the configuration rather than describe it"
         )
+
+    speculation = speculation_warning(records)
+    if speculation:
+        warnings.append(speculation)
 
     return warnings
 
@@ -478,6 +582,13 @@ class Point:
     request_rate: float | None
     num_prompts: int
 
+    #: How this point's runs speculated, when they agree. ``None`` when they do not, or
+    #: when nobody asked the engine — a point whose replicates disagree about whether they
+    #: were speculating cannot be plotted as one speculation setting, and saying so beats
+    #: picking one of them.
+    speculative_method: str | None
+    speculative_tokens: int | None
+
     run_ids: tuple[uuid.UUID, ...]
     sweep_ids: tuple[uuid.UUID, ...]
     basis: SpreadBasis
@@ -508,6 +619,21 @@ def _topology_of(records: Sequence[RunRecord]) -> tuple[int, int, int]:
     )
 
 
+def _speculation_of(records: Sequence[RunRecord]) -> tuple[str | None, int | None]:
+    """How this point speculated, if its replicates agree.
+
+    Unlike topology, disagreement here is not resolved by taking the largest. A point whose
+    replicates disagree is one where the drafter loaded for some runs and not others, and
+    the honest summary of "three runs, one of which was not speculating" is not a
+    speculation setting at all. Reporting NULL routes it into the mixed-group warning
+    rather than into a series it only half belongs to.
+    """
+    states = {(r.speculative_method, r.speculative_tokens) for r in records}
+    if len(states) != 1:
+        return None, None
+    return states.pop()
+
+
 def build_point(records: Sequence[RunRecord]) -> Point:
     if not records:  # pragma: no cover - guarded by the caller's grouping
         raise ValueError("a point needs at least one run")
@@ -515,6 +641,7 @@ def build_point(records: Sequence[RunRecord]) -> Point:
     ordered = sorted(records, key=lambda r: (r.finished_at or unfinished, r.replicate_idx))
     head = ordered[0]
     tp, pp, gpus = _topology_of(ordered)
+    spec_method, spec_tokens = _speculation_of(ordered)
 
     metrics: dict[str, Spread] = {}
     for spec in METRICS:
@@ -537,6 +664,8 @@ def build_point(records: Sequence[RunRecord]) -> Point:
         max_concurrency=head.max_concurrency,
         request_rate=head.request_rate,
         num_prompts=head.num_prompts,
+        speculative_method=spec_method,
+        speculative_tokens=spec_tokens,
         run_ids=tuple(r.run_id for r in ordered),
         sweep_ids=tuple(sorted({r.sweep_id for r in ordered if r.sweep_id}, key=str)),
         basis=spread_basis(ordered),

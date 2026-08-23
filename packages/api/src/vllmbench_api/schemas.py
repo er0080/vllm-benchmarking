@@ -368,6 +368,16 @@ class RunOut(BaseModel):
     pipeline_parallel_size: int
     device_indices: list[int] | None = None
 
+    # What the engine resolved for speculation, read from its own /server_info. `"none"`
+    # is the engine saying it was not speculating; null is nobody having asked it, which
+    # is every run recorded before protocol 7.
+    speculative_method: str | None = None
+    speculative_tokens: int | None = None
+
+    # What data this was measured against — a content hash for a local corpus, a repo and
+    # revision for a HuggingFace one. Invariant 6 has required it since the first schema.
+    dataset_identity: str | None = None
+
     bench_client_location: str
     is_synthetic: bool
     synthetic_source: str | None = None
@@ -671,6 +681,11 @@ class PointOut(BaseModel):
     max_concurrency: int | None = None
     request_rate: float | None = None
     num_prompts: int = 0
+
+    # So depth is a filter and a series rather than a substring of whatever the
+    # configuration was named. Null when this point's replicates disagree about it.
+    speculative_method: str | None = None
+    speculative_tokens: int | None = None
 
     replicates: int
     run_ids: list[uuid.UUID] = Field(default_factory=list)
