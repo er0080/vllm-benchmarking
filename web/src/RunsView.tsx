@@ -34,7 +34,10 @@ function RunRow({ run, onSelect }: { run: Run; onSelect: (id: string) => void })
       <td>
         TP{run.tensor_parallel_size}
         {run.speculative_method && run.speculative_method !== "none" ? (
-          <span className="badge">
+          <span
+            className="badge badge-spec"
+            title={`The engine reported drafting ${run.speculative_tokens} token(s) ahead with ${run.speculative_method}. Read from the engine, not from the configuration text.`}
+          >
             {run.speculative_method}×{run.speculative_tokens}
           </span>
         ) : null}
