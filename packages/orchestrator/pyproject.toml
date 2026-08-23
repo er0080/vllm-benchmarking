@@ -1,6 +1,6 @@
 [project]
 name = "vllmbench-orchestrator"
-version = "1.0.0rc6"
+version = "1.0.0"
 description = "Sweep execution state machine"
 license = "Apache-2.0"
 requires-python = ">=3.11,<3.14"

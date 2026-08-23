@@ -17,7 +17,7 @@ Install into the **vLLM environment**, from git:
 
 ```bash
 source /path/to/vllm-env/.venv/bin/activate
-uv pip install "git+https://github.com/er0080/vllm-benchmarking@v1.0.0rc6#subdirectory=packages/agent"
+uv pip install "git+https://github.com/er0080/vllm-benchmarking@v1.0.0#subdirectory=packages/agent"
 ```
 
 Pinned to a tag, so the host is on a known commit — `pip show` and `direct_url.json`
@@ -236,7 +236,7 @@ systemctl --user stop vllmbench-agent
 source /path/to/vllm-env/.venv/bin/activate
 uv pip install \
   --reinstall-package vllmbench-agent --reinstall-package vllmbench-protocol \
-  "git+https://github.com/er0080/vllm-benchmarking@v1.0.0rc6#subdirectory=packages/agent"
+  "git+https://github.com/er0080/vllm-benchmarking@v1.0.0#subdirectory=packages/agent"
 systemctl --user start vllmbench-agent
 ```
 
