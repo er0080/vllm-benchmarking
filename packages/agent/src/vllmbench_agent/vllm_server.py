@@ -69,11 +69,38 @@ class ServerError(RuntimeError):
         self.kind = kind
 
 
+#: Environment the engine is launched with, on top of the agent's own.
+#:
+#: The two endpoints this framework depends on between sweep points — ``/reset_prefix_cache``
+#: and ``/reset_mm_cache`` — are attached by vLLM's ``register_vllm_dev_api_routers``, which
+#: ``api_server.py`` calls only under this variable. Without it they return 404, and a 404 to
+#: a cache reset is indistinguishable from a version that does not have the endpoint. Every
+#: sweep before this was set carried its prefix cache across every point (issue #87).
+#:
+#: This is not our invention. ``vllm/benchmarks/sweep/server.py`` launches its server with
+#: ``env=os.environ | {"VLLM_SERVER_DEV_MODE": "1"}`` and the comment "Need
+#: `VLLM_SERVER_DEV_MODE=1` for `_reset_caches`". Invariant 4 says we orchestrate upstream's
+#: benchmark rather than reimplement it; this is part of what upstream does around it.
+#:
+#: It also attaches ``/server_info``, ``/sleep``, ``/rlhf/*`` and ``/rpc/*``, which nothing
+#: here calls today. vLLM logs a security warning when they go up. A config binding
+#: ``0.0.0.0`` puts them on the LAN — documented in README under the GPU host's
+#: prerequisites, because it is a property of the host an operator chose rather than
+#: something the agent can decide for them.
+ENGINE_ENV = {"VLLM_SERVER_DEV_MODE": "1"}
+
+#: Upstream's list, verbatim, from ``ServerProcess.VLLM_RESET_CACHE_ENDPOINTS``.
+RESET_ENDPOINTS = ("/reset_prefix_cache", "/reset_mm_cache", "/reset_encoder_cache")
+
+
 def _spawn(argv: list[str]) -> subprocess.Popen[str]:
     """Launch vLLM in its own process group, in the environment it expects.
 
     ``start_new_session`` is what makes teardown reliable: vLLM forks a worker per
     device, and signalling only the parent leaves those workers alive holding VRAM.
+
+    ``VLLM_SERVER_DEV_MODE`` is set for the same reason upstream's own sweep runner sets
+    it — see :data:`ENGINE_ENV`.
     """
     return subprocess.Popen(  # noqa: S603 - argv is built from a resolved executable
         argv,
@@ -82,7 +109,7 @@ def _spawn(argv: list[str]) -> subprocess.Popen[str]:
         text=True,
         bufsize=1,
         start_new_session=True,
-        env=child_environment(argv[0]),
+        env=child_environment(argv[0]) | ENGINE_ENV,
     )
 
 
@@ -459,20 +486,46 @@ class VllmServer:
             )
 
     async def reset_caches(self) -> list[str]:
-        """Call every ``/reset_*_cache`` endpoint the server exposes.
+        """Clear the engine's caches, as upstream does between benchmark points.
 
-        Upstream does this between benchmark runs. Skipping it lets a warm prefix cache
-        carry across sweep points, which inflates the later ones and makes the ordering
-        of a matrix silently affect its results.
+        A warm prefix cache carried across sweep points inflates the later ones, which
+        makes the *ordering* of a matrix decide its winner. Nothing about the resulting
+        chart looks wrong.
 
-        Endpoints vary by version, so a 404 is a normal answer rather than an error.
+        The endpoint list is upstream's, from ``vllm/benchmarks/sweep/server.py``:
+        ``/reset_encoder_cache`` is on it and used to be missing here.
+
+        This used to treat a 404 as "this version does not have that endpoint" and carry
+        on. It is really "the engine was not started in dev mode", which was true of every
+        engine this agent ever started, so every sweep silently skipped the reset (issue
+        #87). :data:`ENGINE_ENV` fixes the cause; raising fixes the class of bug, because a
+        reset the caller asked for and did not get changes what the next benchmark measures
+        and must not be reported as a run that went to plan.
         """
         reset: list[str] = []
+        refused: list[str] = []
         async with httpx.AsyncClient(timeout=30.0) as client:
-            for endpoint in ("/reset_prefix_cache", "/reset_mm_cache"):
-                with contextlib.suppress(httpx.HTTPError):
+            for endpoint in RESET_ENDPOINTS:
+                try:
                     response = await client.post(f"{self.base_url()}{endpoint}")
-                    if response.status_code < 400:
-                        reset.append(endpoint)
-        log.info("reset caches: %s", reset or "none available")
+                except httpx.HTTPError as exc:
+                    refused.append(f"{endpoint} ({exc.__class__.__name__})")
+                    continue
+                if response.status_code < 400:
+                    reset.append(endpoint)
+                else:
+                    refused.append(f"{endpoint} (HTTP {response.status_code})")
+
+        if refused:
+            raise ServerError(
+                "the engine refused a cache reset: "
+                + ", ".join(refused)
+                + ". A benchmark run after a reset that did not happen measures a warm "
+                "cache from the previous point. Check that the engine was started by this "
+                "agent, which sets VLLM_SERVER_DEV_MODE=1 — the reset endpoints 404 "
+                "without it.",
+                FailureKind.ENGINE_NOT_READY,
+            )
+
+        log.info("reset caches: %s", ", ".join(reset))
         return reset
