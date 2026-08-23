@@ -16,6 +16,12 @@ Behaviour is driven by FAKE_VLLM_MODE:
     never_ready    stay alive, answer /health, never register a model
     ignore_sigterm refuse to die politely, forcing the SIGKILL escalation path
     hang           serve nothing at all
+    no_dev_mode    serve normally but 404 the endpoints VLLM_SERVER_DEV_MODE gates
+
+`no_dev_mode` reproduces issue #87 exactly: a healthy engine that answers /health and
+/v1/models, and 404s /reset_prefix_cache and /server_info because it was launched without
+that variable. It is the shape of a year of silently skipped cache resets, and the only way
+to hold the supervisor to noticing.
 """
 
 from __future__ import annotations
@@ -31,6 +37,13 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 MODE = os.environ.get("FAKE_VLLM_MODE", "ready")
 LOAD_SECONDS = float(os.environ.get("FAKE_VLLM_LOAD_SECONDS", "0.5"))
 MODEL = os.environ.get("FAKE_VLLM_MODEL", "facebook/opt-125m")
+#: Whether the endpoints VLLM_SERVER_DEV_MODE gates are attached.
+#:
+#: Read from the real variable, not from MODE, so that this shim fails the same way a real
+#: vLLM would if the agent ever stopped setting it. A shim that faked dev mode into being
+#: always-on could not have caught issue #87 and could not catch its return.
+#: `no_dev_mode` then forces it off, to reproduce an engine somebody else started.
+DEV_MODE = MODE != "no_dev_mode" and os.environ.get("VLLM_SERVER_DEV_MODE") == "1"
 
 _model_registered = False
 
@@ -62,6 +75,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         if self.path.startswith("/reset_"):
+            if not DEV_MODE:
+                self._send(404, {"detail": "not found"})
+                return
             self._send(200, {"reset": self.path})
         else:
             self._send(404, {"detail": "not found"})

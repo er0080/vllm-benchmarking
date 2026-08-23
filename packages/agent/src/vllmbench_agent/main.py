@@ -195,7 +195,17 @@ def create_app(settings: AgentSettings | None = None) -> FastAPI:
             ) from exc
 
         if request.reset_caches_first:
-            await server.reset_caches()
+            try:
+                await server.reset_caches()
+            except ServerError as exc:
+                # Refusing before measuring, not after. The alternative is a run that
+                # completes, looks fine, and quietly reports a warm cache from the
+                # previous sweep point as this configuration's number.
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=str(exc),
+                    headers={FAILURE_KIND_HEADER: exc.kind.value},
+                ) from exc
 
         # Started after the cache reset and stopped after the client exits, so the
         # window the telemetry covers is the window the benchmark measured. Sampling

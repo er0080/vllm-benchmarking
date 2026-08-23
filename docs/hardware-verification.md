@@ -235,5 +235,10 @@ interleaved. VRAM returned to 36 MiB between the two engines, and no `vllm serve
 survived the sweep. Per-device utilization within the TP=2 group was balanced to 1–3%,
 with memory within 0.1 GB across the pair.
 
-`reset caches: none available` is expected here rather than a fault: prefix caching is off
-in this configuration, so there is no prefix cache to carry between points.
+`reset caches: none available` was read at the time as expected rather than a fault, on the
+grounds that prefix caching was off in this configuration so there was nothing to carry
+between points. That explanation was true and the conclusion was wrong: the endpoint was
+returning 404 on every configuration, including ones with prefix caching on, because the
+engine was not started with `VLLM_SERVER_DEV_MODE=1`. Measured on this host on 2026-08-23:
+404 without the variable, 200 with it. See issue #87.
+

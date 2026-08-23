@@ -139,6 +139,22 @@ Single-host multi-GPU is supported, and **tensor parallel size is a first-class 
 dimension** — "is TP=2 on two GPUs better than two independent TP=1 servers" is a question
 this framework exists to answer. Multi-node deployments are out of scope for 1.0.0.
 
+#### The agent starts vLLM with `VLLM_SERVER_DEV_MODE=1`
+
+Worth knowing before you point it at a host, because it changes what that host exposes.
+
+The framework depends on the `/reset_*_cache` endpoints vLLM puts behind that variable.
+They clear the prefix cache between sweep points — without them a warm cache carries from
+one configuration to the next and the *order* of a matrix decides its winner.
+
+This is what upstream's own `vllm bench sweep serve` does, for the same reason.
+
+The same variable also attaches `/server_info`, `/sleep`, `/rlhf/*` and `/rpc/*`, which
+nothing here calls today, and vLLM logs `SECURITY WARNING: Development endpoints are
+enabled!` at startup when it does. Those routes reach whatever your server config's `host:` binds to — so a config
+binding `0.0.0.0` puts them on your LAN, and one binding `127.0.0.1` does not. The agent
+does not override that choice.
+
 ---
 
 ## Quick start
