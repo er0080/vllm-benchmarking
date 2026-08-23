@@ -224,7 +224,15 @@ class Workload(Base):
     input_len: Mapped[int | None] = mapped_column(Integer)
     output_len: Mapped[int | None] = mapped_column(Integer)
 
-    extra_args: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    # Verbatim argv appended to `vllm bench serve`, for flags this build predates. A
+    # list, because argv is a list and the agent splices it straight in — the earlier
+    # `dict` default was never exercised, which is how it survived being wrong.
+    #
+    # Rows written before that fix hold `{}`, including the one in
+    # scripts/seed_previous_schema.sql. Reading coerces anything that is not a list to
+    # empty rather than migrating: both mean "no extra flags", and rewriting stored JSON
+    # to say the same thing differently is churn against a table holding results.
+    extra_args: Mapped[list[str]] = mapped_column(JSONB, default=list)
     created_at: Mapped[dt.datetime] = created_at_column()
 
 

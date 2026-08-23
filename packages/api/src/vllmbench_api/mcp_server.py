@@ -907,12 +907,44 @@ def build_mcp_server(sessions: async_sessionmaker[Any], settings: ApiSettings) -
         output_len: Annotated[
             int | None, Field(description="Tokens to generate per request, for synthetic datasets.")
         ] = None,
+        dataset_path: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Where the dataset comes from — a HuggingFace repo id such as "
+                    "'vdaita/edit_5k_char', or a path on the GPU host. Required by every "
+                    "dataset except the synthetic ones."
+                )
+            ),
+        ] = None,
+        hf_name: Annotated[
+            str | None,
+            Field(description="Subset name, for HuggingFace datasets that have more than one."),
+        ] = None,
+        extra_args: Annotated[
+            list[str] | None,
+            Field(
+                description=(
+                    "Flags appended verbatim to `vllm bench serve`, as separate items: "
+                    "['--blazedit-min-distance', '0.0']. The escape hatch for dataset "
+                    "options this control plane has no field for. Part of the workload's "
+                    "identity, so two workloads passing different flags are two workloads. "
+                    "Flags this framework sets itself are refused."
+                )
+            ),
+        ] = None,
     ) -> dict[str, Any]:
         """Define the traffic a run is measured under.
 
         Leave `max_concurrency` or `request_rate` null for unbounded — that is genuinely
         the absence of a limit, and is not the same as zero. Workloads are
         content-addressed on what they send, not on their name.
+
+        Real datasets are reachable, not only the synthetic ones: pass `dataset_name` with
+        `dataset_path` — for example 'blazedit' with 'vdaita/edit_5k_char' for code edits,
+        or 'sharegpt' with a file on the host. Dataset-specific options that have no field
+        here go through `extra_args`. What a dataset is called and what options it takes
+        come from the vLLM on the target host, not from this control plane.
         """
         async with sessions() as session:
             workload = await run_routes.create_workload(
@@ -924,6 +956,9 @@ def build_mcp_server(sessions: async_sessionmaker[Any], settings: ApiSettings) -
                     request_rate=request_rate,
                     input_len=input_len,
                     output_len=output_len,
+                    dataset_path=dataset_path,
+                    hf_name=hf_name,
+                    extra_args=extra_args or [],
                 ),
                 session,
             )
