@@ -392,13 +392,30 @@ async def create_run(payload: RunCreate, session: SessionDep) -> Run:
 
 
 @router.get("/runs", response_model=list[RunOut])
-async def list_runs(session: SessionDep, limit: int = 50) -> list[Run]:
-    result = await session.execute(
-        select(Run)
-        .options(selectinload(Run.summary))
-        .order_by(Run.queued_at.desc())
-        .limit(min(limit, 200))
-    )
+async def list_runs(
+    session: SessionDep,
+    limit: int = 50,
+    speculative_tokens: int | None = None,
+    speculative_method: str | None = None,
+) -> list[Run]:
+    """Recent runs, optionally narrowed to one speculation setting.
+
+    The filters exist so that drafting depth is a query rather than a substring of
+    whatever somebody named the configuration. Grouping a speculative sweep by regexing
+    config names is what issue #86 was filed about, and leaving the column unqueryable
+    would have left the workaround as the only option.
+
+    ``speculative_method="none"`` selects runs the engine said were not speculating. It
+    does not select runs that predate protocol 7, whose column is NULL because nobody
+    asked — those are excluded from both sides of the filter, which is the honest
+    treatment of a fact nothing recorded.
+    """
+    query = select(Run).options(selectinload(Run.summary))
+    if speculative_tokens is not None:
+        query = query.where(Run.speculative_tokens == speculative_tokens)
+    if speculative_method is not None:
+        query = query.where(Run.speculative_method == speculative_method)
+    result = await session.execute(query.order_by(Run.queued_at.desc()).limit(min(limit, 200)))
     return list(result.scalars())
 
 

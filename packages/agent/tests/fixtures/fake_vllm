@@ -22,6 +22,12 @@ Behaviour is driven by FAKE_VLLM_MODE:
 /v1/models, and 404s /reset_prefix_cache and /server_info because it was launched without
 that variable. It is the shape of a year of silently skipped cache resets, and the only way
 to hold the supervisor to noticing.
+
+FAKE_VLLM_SPECULATIVE controls what /server_info reports, mirroring the three states a real
+engine can be in:
+
+    (unset)        speculative_config: null  -- the engine says it is not speculating
+    <method>:<n>   speculating, e.g. `ngram:3`
 """
 
 from __future__ import annotations
@@ -37,6 +43,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 MODE = os.environ.get("FAKE_VLLM_MODE", "ready")
 LOAD_SECONDS = float(os.environ.get("FAKE_VLLM_LOAD_SECONDS", "0.5"))
 MODEL = os.environ.get("FAKE_VLLM_MODEL", "facebook/opt-125m")
+SPECULATIVE = os.environ.get("FAKE_VLLM_SPECULATIVE", "")
 #: Whether the endpoints VLLM_SERVER_DEV_MODE gates are attached.
 #:
 #: Read from the real variable, not from MODE, so that this shim fails the same way a real
@@ -70,6 +77,17 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, {"data": data})
         elif self.path == "/metrics":
             self._send(200, {})
+        elif self.path.startswith("/server_info"):
+            if not DEV_MODE:
+                self._send(404, {"detail": "not found"})
+                return
+            # Shaped like the captured payload, down to the key being present and null
+            # when nothing is speculating. See the fixtures in packages/protocol.
+            speculative = None
+            if SPECULATIVE:
+                method, _, tokens = SPECULATIVE.partition(":")
+                speculative = {"method": method, "num_speculative_tokens": int(tokens)}
+            self._send(200, {"vllm_config": {"speculative_config": speculative}})
         else:
             self._send(404, {"detail": "not found"})
 

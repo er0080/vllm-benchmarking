@@ -31,7 +31,14 @@ function RunRow({ run, onSelect }: { run: Run; onSelect: (id: string) => void })
       </td>
       <td>{new Date(run.queued_at).toLocaleTimeString()}</td>
       <td>{run.config_hash.slice(0, 8)}</td>
-      <td>TP{run.tensor_parallel_size}</td>
+      <td>
+        TP{run.tensor_parallel_size}
+        {run.speculative_method && run.speculative_method !== "none" ? (
+          <span className="badge">
+            {run.speculative_method}×{run.speculative_tokens}
+          </span>
+        ) : null}
+      </td>
       {/* Per-GPU, not aggregate: aggregate throughput is not comparable across
           different parallelism topologies. */}
       <td>{fmt(s?.output_token_throughput_per_gpu, 0)}</td>
@@ -126,8 +133,14 @@ function RunDetail({ run, onClose }: { run: Run; onClose: () => void }) {
                   <td>{fmt(s.tpot_ms_p99, 2)}</td>
                   <td>{fmt(s.tpot_ms_std, 2)}</td>
                 </tr>
+                {/* Not "ITL". It is the wait between emissions, and a speculative
+                    emission carries every token the target accepted — so this rises with
+                    drafting depth while generation gets faster. Naming it after what it
+                    counts is what stops it being read as a latency regression. */}
                 <tr>
-                  <td>ITL (ms)</td>
+                  <td title="Wait between streamed emissions. One emission is one token without speculative decoding, and as many tokens as were accepted with it.">
+                    Emission gap (ms)
+                  </td>
                   <td>{fmt(s.itl_ms_mean, 2)}</td>
                   <td>{fmt(s.itl_ms_median, 2)}</td>
                   <td>{fmt(s.itl_ms_p99, 2)}</td>
@@ -397,7 +410,7 @@ export function RunsView() {
                   <th>Topology</th>
                   <th>Tok/s per GPU</th>
                   <th>p99 TTFT (ms)</th>
-                  <th>Median ITL (ms)</th>
+                  <th>Median emission gap (ms)</th>
                   <th />
                 </tr>
               </thead>

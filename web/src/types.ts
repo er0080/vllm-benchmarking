@@ -169,6 +169,12 @@ export interface Run {
   gpu_count: number;
   tensor_parallel_size: number;
   pipeline_parallel_size: number;
+  /** What the engine resolved for speculation, from its own /server_info.
+   * "none" is the engine saying it was not; null is nobody having asked it. */
+  speculative_method: string | null;
+  speculative_tokens: number | null;
+  /** What data this was measured against — a content hash, or a repo and revision. */
+  dataset_identity: string | null;
   device_indices: number[] | null;
   bench_client_location: string;
   is_synthetic: boolean;

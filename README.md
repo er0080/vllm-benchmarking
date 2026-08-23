@@ -143,15 +143,17 @@ this framework exists to answer. Multi-node deployments are out of scope for 1.0
 
 Worth knowing before you point it at a host, because it changes what that host exposes.
 
-The framework depends on the `/reset_*_cache` endpoints vLLM puts behind that variable.
-They clear the prefix cache between sweep points — without them a warm cache carries from
-one configuration to the next and the *order* of a matrix decides its winner.
+The framework depends on two endpoints vLLM puts behind that variable. `/reset_prefix_cache`
+clears the prefix cache between sweep points — without it a warm cache carries from one
+configuration to the next and the *order* of a matrix decides its winner. `/server_info`
+reports what the engine actually resolved for speculative decoding, which is how a run can
+say it was speculating without anyone taking the configuration file's word for it.
 
-This is what upstream's own `vllm bench sweep serve` does, for the same reason.
+This is what upstream's own `vllm bench sweep serve` does, for the same first reason.
 
-The same variable also attaches `/server_info`, `/sleep`, `/rlhf/*` and `/rpc/*`, which
-nothing here calls today, and vLLM logs `SECURITY WARNING: Development endpoints are
-enabled!` at startup when it does. Those routes reach whatever your server config's `host:` binds to — so a config
+The same variable also attaches `/sleep`, `/rlhf/*` and `/rpc/*`, which nothing here calls,
+and vLLM logs `SECURITY WARNING: Development endpoints are enabled!` at startup when it
+does. Those routes reach whatever your server config's `host:` binds to — so a config
 binding `0.0.0.0` puts them on your LAN, and one binding `127.0.0.1` does not. The agent
 does not override that choice.
 

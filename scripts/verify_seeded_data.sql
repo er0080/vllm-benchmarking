@@ -22,6 +22,8 @@ DECLARE
     v_engine int;
     v_devices int;
     v_environment text;
+    v_speculative text;
+    v_dataset text;
 BEGIN
     -- The run, and its provenance.
     SELECT status INTO v_status FROM run WHERE id = expected;
@@ -79,6 +81,28 @@ BEGIN
         RAISE EXCEPTION
             'a historical run acquired environment_status %, which asserts something '
             'about a host that was never checked', v_environment;
+    END IF;
+
+    -- The same argument, for the same reason, one release later. A run measured before
+    -- the framework asked the engine about speculation has no answer, and NULL is that
+    -- answer. Defaulting it to 'none' would file every historical run in the
+    -- non-speculative arm of a comparison it was never part of — and unlike a wrong
+    -- number, nothing about it would look wrong.
+    SELECT speculative_method INTO v_speculative FROM run WHERE id = expected;
+    IF v_speculative IS NOT NULL THEN
+        RAISE EXCEPTION
+            'a historical run acquired speculative_method %, which claims the engine was '
+            'asked something it was never asked', v_speculative;
+    END IF;
+
+    -- Likewise the dataset. This column has existed since the initial schema and was
+    -- NULL on every row until protocol 7 filled it in going forward; a backfill would be
+    -- inventing a corpus identity for data nobody hashed.
+    SELECT dataset_identity INTO v_dataset FROM run WHERE id = expected;
+    IF v_dataset IS NOT NULL THEN
+        RAISE EXCEPTION
+            'a historical run acquired dataset_identity %, which describes bytes nobody '
+            'read', v_dataset;
     END IF;
 
     RAISE NOTICE 'seeded data survived the migration with every value intact';

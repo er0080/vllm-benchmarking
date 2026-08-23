@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import os
 import time
@@ -24,8 +25,9 @@ from typing import Any
 from fastapi import Depends, FastAPI, HTTPException, status
 
 from vllmbench_agent.auth import token_dependency
+from vllmbench_agent.dataset import identify_dataset
 from vllmbench_mockagent.synthetic import synthesize_bench_result, synthesize_telemetry
-from vllmbench_protocol import PROTOCOL_VERSION, __version__
+from vllmbench_protocol import NO_SPECULATION, PROTOCOL_VERSION, __version__
 from vllmbench_protocol.failures import FAILURE_KIND_HEADER, FailureKind
 from vllmbench_protocol.wire import (
     BenchRequest,
@@ -268,6 +270,12 @@ def create_app(
             else None,
             tensor_parallel_size=_tp_from_config(state["config_yaml"]),  # type: ignore[arg-type]
             pipeline_parallel_size=1,
+            speculative_method=_speculation_from_config(state["config_yaml"])[0]  # type: ignore[arg-type]
+            if state["state"] is ServerState.READY
+            else None,
+            speculative_tokens=_speculation_from_config(state["config_yaml"])[1]  # type: ignore[arg-type]
+            if state["state"] is ServerState.READY
+            else None,
             # Mirrors the real agent: devices are the ones "observed" to be in use, and
             # the mock pretends the request was honoured up to its two-GPU inventory.
             device_indices=list(
@@ -362,6 +370,7 @@ def create_app(
             tensor_parallel_size=tp,
         )
 
+        method, tokens = _speculation_from_config(state["config_yaml"])  # type: ignore[arg-type]
         return BenchResponse(
             raw_result=raw,
             duration_seconds=MOCK_BENCH_SECONDS,
@@ -369,6 +378,9 @@ def create_app(
             tensor_parallel_size=tp,
             pipeline_parallel_size=1,
             device_indices=devices,
+            speculative_method=method,
+            speculative_tokens=tokens,
+            dataset_identity=identify_dataset(request),
             engine_samples=[EngineSampleWire(**s) for s in engine_samples],
             gpu_samples=[GpuSampleWire(**s) for s in gpu_samples],
             telemetry_interval_seconds=interval,
@@ -406,6 +418,38 @@ def _served_name_from_config(config_yaml: str | None) -> str | None:
             if cleaned:
                 found[name] = cleaned
     return found.get("served_model_name") or found.get("model")
+
+
+def _speculation_from_config(config_yaml: str | None) -> tuple[str, int]:
+    """Echo the speculative settings the caller's config asked for.
+
+    Reading this out of the YAML is exactly what invariant 8 forbids the *real* agent from
+    doing, and the reason is that the YAML states an intention while the engine states an
+    outcome. The mock has no engine, so it has no outcome to report and nothing better to
+    echo — and every run it produces is quarantined under invariant 7 anyway. That is the
+    whole difference: this is a fake being transparently a fake, not a shortcut that would
+    let a real measurement claim a topology nothing ran.
+
+    Matching `speculative-config: {"method": "mtp", "num_speculative_tokens": 3}`, the
+    single-line JSON form vLLM's own config files use.
+    """
+    if not config_yaml:
+        return NO_SPECULATION, 0
+    for line in config_yaml.splitlines():
+        key, _, value = line.partition(":")
+        if key.strip() not in ("speculative_config", "speculative-config"):
+            continue
+        try:
+            parsed = json.loads(value.strip())
+            method = str(parsed["method"])
+            tokens = int(parsed["num_speculative_tokens"])
+        except (ValueError, KeyError, TypeError):
+            # A config we cannot read is not a config that says "off". The real agent
+            # would answer None here; the mock has to answer something, and answering
+            # "not speculating" would be inventing a fact.
+            return NO_SPECULATION, 0
+        return method, max(1, tokens)
+    return NO_SPECULATION, 0
 
 
 def _tp_from_config(config_yaml: str | None) -> int:

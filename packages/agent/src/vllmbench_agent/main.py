@@ -21,6 +21,7 @@ from fastapi import Depends, FastAPI, HTTPException, status
 
 from vllmbench_agent.auth import token_dependency
 from vllmbench_agent.bench import BenchCancelled, BenchError, BenchRunner
+from vllmbench_agent.dataset import identify_dataset
 from vllmbench_agent.environment import log_environment, probe_environment
 from vllmbench_agent.hardware import (
     probe_cuda_version,
@@ -207,6 +208,11 @@ def create_app(settings: AgentSettings | None = None) -> FastAPI:
                     headers={FAILURE_KIND_HEADER: exc.kind.value},
                 ) from exc
 
+        # Computed here rather than in the runner: it describes the request, so it is
+        # recorded even for a benchmark that goes on to fail, and it costs one stat and a
+        # read of a file the benchmark is about to read anyway.
+        dataset_identity = identify_dataset(request)
+
         # Started after the cache reset and stopped after the client exits, so the
         # window the telemetry covers is the window the benchmark measured. Sampling
         # across the reset would put a KV-cache cliff in the series that belongs to
@@ -236,12 +242,18 @@ def create_app(settings: AgentSettings | None = None) -> FastAPI:
             # the engine that the next one is about to measure.
             await sampler.stop()
 
+        status_now = server.status()
         return response.model_copy(
             update={
                 "engine_samples": sampler.engine_samples,
                 "gpu_samples": sampler.gpu_samples,
                 "telemetry_decimated": sampler.decimated,
                 "telemetry_interval_seconds": sampler.effective_interval_seconds,
+                # Read from the engine that just served this benchmark, so the run
+                # records what ran rather than what its YAML asked for.
+                "speculative_method": status_now.speculative_method,
+                "speculative_tokens": status_now.speculative_tokens,
+                "dataset_identity": dataset_identity,
             }
         )
 

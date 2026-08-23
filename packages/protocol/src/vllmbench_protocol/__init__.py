@@ -21,6 +21,7 @@ from vllmbench_protocol.failures import (
     classify_engine_output,
 )
 from vllmbench_protocol.placeholders import is_placeholder, warn_about_placeholders
+from vllmbench_protocol.server_info import NO_SPECULATION, Speculation, parse_speculation
 from vllmbench_protocol.version import PROTOCOL_VERSION, __version__
 from vllmbench_protocol.wire import (
     AUTH_HEADER,
@@ -35,6 +36,7 @@ from vllmbench_protocol.wire import (
 __all__ = [
     "AUTH_HEADER",
     "AUTH_SCHEME",
+    "NO_SPECULATION",
     "PROTOCOL_VERSION",
     "TRANSIENT_KINDS",
     "AgentAuthError",
@@ -48,9 +50,11 @@ __all__ = [
     "HealthResponse",
     "HostInfo",
     "ProtocolMismatch",
+    "Speculation",
     "__version__",
     "classify_agent_error",
     "classify_engine_output",
     "is_placeholder",
+    "parse_speculation",
     "warn_about_placeholders",
 ]
