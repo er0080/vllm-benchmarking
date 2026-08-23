@@ -33,7 +33,7 @@ Scaffolding only. Nothing measures anything yet.
 - [x] `pre-commit` with ruff, pyright, tsc
 - [x] CI tier 1 (lint, types, unit) and tier 2 (postgres, mock agent, real vLLM on the CPU
       backend, image builds)
-- [x] Branch protection on `main` requiring green — all eight CI jobs required
+- [x] Branch protection on `main` requiring green — every job CI runs gates the merge
 - [x] `VLLM_REFERENCE_VERSION` pinned at the repo root
 - [x] Verified on macOS/Colima `aarch64` locally, including the `vllm-openai-cpu`
       container; native Linux `x86_64` is covered by CI on ubuntu-latest

@@ -438,6 +438,23 @@ GitHub Actions. Workflows mirror the test tiers:
   `workflow_dispatch` runs the whole thing with publishing switched off so it can be
   rehearsed without spending a tag.
 
+**Every job CI runs is required for merge, and that is not automatic.** The job list lives
+in `ci.yml`; the required list lives in repository settings, and adding to one has never
+implied the other. Adding a job means adding its name to branch protection in the same
+change — otherwise it is advisory, which fails in the safe-looking direction: pull requests
+merge green anyway and the gap is invisible until somebody counts. It had drifted to 8
+required against 11 running, and the three that were not gating were `agent-install`,
+`compose-source` and `compose-released` — two of which exist *because* an install was
+silently wrong once.
+
+**Renaming a job is the sharper version of the same trap.** Protection matches on the
+displayed name, so a rename silently drops the check from the required list rather than
+erroring. Rename a job and update protection in the same change.
+
+Reading branch protection needs admin scope, which `GITHUB_TOKEN` does not have, so this is
+not enforced from CI — guarding a once-a-year mistake is not worth an admin-scoped personal
+access token living in repository secrets.
+
 ### Releases
 
 Pre-1.0 there are no published artifacts. Compose builds images locally; the agent is
