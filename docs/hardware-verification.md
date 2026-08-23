@@ -536,3 +536,36 @@ advice to check `VLLM_SERVER_DEV_MODE` — on a host where dev mode was working 
 and filed under `engine_not_ready`, the kind that means the engine never came up. Three
 wrong answers from one conflation of "does not answer" with "answers no". Fixed, with the
 crash log above as the classifier's fixture.
+
+---
+
+## Verified — 2026-08-23, the published images on a fresh amd64 host
+
+The last part of 1.0.0 definition-of-done criterion 7 — "runs with equal fidelity on native
+Linux and on macOS with Colima" — that no person had confirmed. Everything before this was
+arm64 by hand or amd64 in CI; neither is a stranger's machine.
+
+`v1.0.0rc6` stood up from GHCR on a clean amd64 host with no source build and no
+credentials. Reported as flawless, first attempt.
+
+| Check | Result |
+| --- | --- |
+| Anonymous pull of all five images | ✅ no `docker login` anywhere in the path |
+| `docker compose up -d --wait` | ✅ every service healthy |
+| Architecture selected from the manifest list | ✅ `linux/amd64` |
+| Schema applied by the pinned `migrate` | ✅ |
+
+Taken with the arm64 bring-up on macOS/Colima the same day — where the same tag resolved to
+`linux/arm64` off the same manifest list, on a database holding 69 real runs that came
+through unchanged — both halves of criterion 7 are now confirmed against published
+artifacts rather than against a local build.
+
+### The one trap, and it expires
+
+`git checkout v1.0.0rc6` gives a `compose.yaml` that **builds from source**. The switch to
+pinned images landed after that tag, so only `main` pulls. Anyone reproducing the above
+against the tag rather than the branch will find themselves compiling and wondering why.
+
+It is specific to rc6 and disappears at 1.0.0, whose tag carries the pull-based compose.
+Recorded because the failure is confusing rather than loud: the build succeeds, the stack
+comes up, and nothing says the images were never used.

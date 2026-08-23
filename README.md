@@ -120,11 +120,25 @@ configuration better instead of merely different.
 ## Prerequisites
 
 ### Control host
-- Docker and Docker Compose v2 — native Linux or macOS with [Colima](https://github.com/abiosoft/colima)
+- Docker and Docker Compose v2.17 or newer — native Linux or macOS with
+  [Colima](https://github.com/abiosoft/colima)
+- About 2 GB of disk for the images
 - No GPU required
 
-On macOS, Colima's defaults are too small to run the stack alongside the CPU-backend test
-container. Start it with more headroom:
+**Nothing is compiled here and no credentials are needed.** The control-plane images are
+published to GHCR for `linux/amd64` and `linux/arm64`, so `docker compose up` downloads
+them and Apple Silicon runs natively rather than emulated. A build toolchain is only needed
+if you intend to change the code, which is what `make up` is for.
+
+On macOS, Colima's defaults (2 CPU / 2 GB) cannot run Postgres alongside the rest. To run
+the stack:
+
+```bash
+colima start --cpu 2 --memory 4 --disk 20
+```
+
+To also run the vLLM CPU-backend container that tier 2 uses — which you need only if you
+are running the test suite, not to take measurements:
 
 ```bash
 colima start --cpu 4 --memory 8 --disk 60
@@ -182,18 +196,19 @@ Everything else has a working default. The GPU host's address is not set here �
 to the host and is entered when you register it in step 3.
 
 ```bash
-docker compose up -d
+docker compose up -d --wait
 ```
 
-That pulls the published images, applies the schema, and starts Postgres, the API, the
-orchestrator and the web UI. Budget about a minute, mostly download. The images are built
-for `linux/amd64` and `linux/arm64`, so Apple Silicon under Colima runs natively rather
-than emulated.
+`--wait` blocks until every service reports healthy, so the check below means something
+rather than racing the stack. This is the exact command CI runs in the job named "the
+documented install" — the two are kept character for character identical, because a job
+proving a *nearly* documented install proves something adjacent.
 
-Nothing is compiled and no credentials are needed. If you would rather run your own build
-of the source you just cloned — which is what you want if you intend to change anything —
-use `make up` instead, and see [CLAUDE.md](CLAUDE.md) for why the two are separate
-commands rather than one clever one.
+That pulls the published images, applies the schema, and starts Postgres, the API, the
+orchestrator and the web UI. Budget about a minute, mostly download.
+
+If you would rather run your own build of the source you just cloned — which is what you
+want if you intend to change anything — use `make up` instead.
 
 ```bash
 curl -s localhost:8080/api/health   # {"status":"ok", ... "schema":{"ok":true, ...}}
@@ -278,11 +293,19 @@ analysis tabs chart the results. What each chart means and what to change next i
 
 ### Without a GPU
 
-The stack is fully developable on a laptop. `make dev` — or
-`docker compose --profile dev up -d` — adds a mock agent that implements the agent's HTTP
-contract and returns synthetic but realistic results and telemetry, with configurable
-failure injection. Everything it produces is marked synthetic at the moment of creation and
-can never be charted beside a real measurement.
+The stack is fully developable on a laptop. The `dev` profile adds a mock agent that
+implements the agent's HTTP contract and returns synthetic but realistic results and
+telemetry, with configurable failure injection. Everything it produces is marked synthetic
+at the moment of creation and can never be charted beside a real measurement.
+
+```bash
+docker compose --profile dev up -d --wait   # the published mock agent
+make dev                                    # built from your working tree
+```
+
+Those are not alternatives. The first pulls, the second builds — which matters the moment
+you change the mock agent and wonder why nothing happened. See
+[CLAUDE.md](CLAUDE.md) for why the two paths are deliberately separate commands.
 
 ### Stopping, starting, and what deletes results
 
@@ -301,10 +324,12 @@ including `make check` for everything CI runs.
 
 ## Documentation
 
+- [CHANGELOG.md](CHANGELOG.md) — what shipped in each release, generated from the commit history
 - [ROADMAP.md](ROADMAP.md) — milestones, scope, and definition of done for 1.0.0
 - [CLAUDE.md](CLAUDE.md) — architecture invariants and development conventions
 - [docs/agent-installation.md](docs/agent-installation.md) — installing, running and upgrading the agent on a GPU host
 - [docs/tuning-playbook.md](docs/tuning-playbook.md) — how to read each chart and what to change next
+- [docs/benchmark-procedure.md](docs/benchmark-procedure.md) — the repeatable procedure for taking a measurement
 - [docs/upgrading.md](docs/upgrading.md) — moving a running deployment forward, and what cannot be rolled back
 - [docs/limitations.md](docs/limitations.md) — what this release does not do
 - [docs/mcp.md](docs/mcp.md) — enabling the MCP surface and pointing an agent at it
