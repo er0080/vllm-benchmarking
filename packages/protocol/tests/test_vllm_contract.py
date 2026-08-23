@@ -20,6 +20,10 @@ import pytest
 from vllmbench_protocol.bench_result import SUMMARY_FIELD_MAP, flatten_bench_result
 from vllmbench_protocol.metrics import ALL_METRICS
 
+#: Emitted only when the engine is drafting. The CPU backend this tier runs against is
+#: not speculating, so their absence here is correct rather than a broken contract.
+SPECULATIVE_SOURCES = frozenset(k for k in SUMMARY_FIELD_MAP if k.startswith("spec_decode_"))
+
 pytestmark = pytest.mark.vllm_cpu
 
 BASE_URL = os.environ.get("VLLM_CPU_BASE_URL", "http://localhost:8100")
@@ -93,10 +97,36 @@ class TestBenchResultContract:
     def test_all_mapped_fields_are_present_in_live_output(
         self, live_payload: dict[str, object]
     ) -> None:
+        """Every non-conditional mapped field must still come out of a live server.
+
+        Asserted as an equality against the speculative set rather than as a subset. The
+        speculative fields are legitimately absent — this backend is not drafting — but a
+        subset check would also swallow `p99_ttft_ms` disappearing, which is the rename
+        this tier exists to catch.
+
+        **The speculative field names are therefore not covered here**, only by the captured
+        fixture, which does not move when upstream does. Tracked separately; covering them
+        needs this tier to run a second, speculating server.
+        """
         missing = set(SUMMARY_FIELD_MAP) - live_payload.keys()
-        assert not missing, (
-            f"this vLLM version no longer emits: {sorted(missing)}. "
+        assert missing == set(SPECULATIVE_SOURCES), (
+            f"this vLLM version no longer emits: {sorted(missing - SPECULATIVE_SOURCES)}. "
             "SUMMARY_FIELD_MAP is now wrong and would write NULLs."
+        )
+
+    def test_the_live_payload_is_not_secretly_speculating(
+        self, live_payload: dict[str, object]
+    ) -> None:
+        """If this backend ever starts drafting, the test above becomes wrong silently.
+
+        It would then be asserting that fields which *are* present are absent, and would
+        fail confusingly. This says why first.
+        """
+        present = set(SPECULATIVE_SOURCES) & live_payload.keys()
+        assert not present, (
+            f"this backend is now speculating and emits {sorted(present)} — "
+            "the contract test above needs updating to assert their names, which is "
+            "the coverage it currently documents as missing"
         )
 
     def test_live_output_flattens_without_error(self, live_payload: dict[str, object]) -> None:
