@@ -180,6 +180,7 @@ def _to_record(
         bench_client_location=str(run.bench_client_location),
         driver_version=run.driver_version,
         cuda_version=run.cuda_version,
+        peer_access=run.peer_access,
         imported_from=run.imported_from,
         failed_requests=summary.failed_requests,
         successful_requests=summary.successful_requests,

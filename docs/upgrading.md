@@ -20,6 +20,16 @@ without upgrading the agents takes every GPU host offline until you do.
 | **1.0.0rc5** | **7** | Runs record what the engine resolved for speculative decoding, and what data they were measured against. |
 | 1.0.0rc6 | 7 | — publishing only; **no agent upgrade required** |
 | 1.0.0 | 7 | — **no agent upgrade required**; an rc6 agent serves a 1.0.0 control plane |
+| **1.1.0** | **8** | Runs record the interconnect they were measured over. |
+
+1.1.0 is the case this table exists for, and it is worth stating why a field nobody asked
+for is a mandatory upgrade. Peer-to-peer DMA between consumer GPUs is enabled by rebuilding
+the *same driver version* from patched sources, so the driver keeps reporting the version
+it was patched from. Every provenance field a run carried before 1.1.0 — driver, CUDA, GPU
+model, vLLM version, parallelism topology, device indices — is identical across that
+change, while what a tensor-parallel run measures is not. An agent that cannot report
+`peer_access` produces runs that are indistinguishable from runs measured over a different
+interconnect, which is the failure invariant 6 exists to prevent.
 
 rc6 is the first candidate since rc3 that leaves the protocol alone. A GPU host running
 the rc5 agent keeps working against an rc6 control plane, and its runs record

@@ -16,7 +16,7 @@ import subprocess
 import sysconfig
 from pathlib import Path
 
-from vllmbench_protocol.wire import GpuInfo
+from vllmbench_protocol.wire import GpuInfo, PeerAccessStatus
 
 log = logging.getLogger(__name__)
 
@@ -174,6 +174,101 @@ def probe_driver_version() -> str | None:
             pynvml.nvmlShutdown()
     except Exception:
         return None
+
+
+def _p2p_status_names(pynvml: object) -> dict[int, str]:
+    """NVML's P2P status codes, by value, lowercased for a detail line."""
+    names: dict[int, str] = {}
+    for attr in dir(pynvml):
+        if attr.startswith("NVML_P2P_STATUS_"):
+            value = getattr(pynvml, attr)
+            if isinstance(value, int):
+                names.setdefault(value, attr.removeprefix("NVML_P2P_STATUS_").lower())
+    return names
+
+
+def _p2p_caps_index(pynvml: object, name: str) -> int | None:
+    """One of NVML's ``NVML_P2P_CAPS_INDEX_*`` constants, normalised to an int.
+
+    ``nvidia-ml-py`` 13.610.43 defines ``NVML_P2P_CAPS_INDEX_READ`` as ``(0,)`` — a stray
+    trailing comma upstream — and passing that tuple straight through raises
+    ``ArgumentError`` from ctypes on every host. Unwrapping a one-tuple rather than
+    hardcoding ``0`` keeps this working when upstream fixes it.
+    """
+    value = getattr(pynvml, f"NVML_P2P_CAPS_INDEX_{name}", None)
+    if isinstance(value, tuple) and len(value) == 1:
+        value = value[0]
+    return value if isinstance(value, int) else None
+
+
+def probe_peer_access(
+    indices: list[int] | None = None,
+) -> tuple[PeerAccessStatus, list[str]]:
+    """Whether the given devices can reach each other's memory directly.
+
+    Asked of NVML rather than of CUDA. ``cudaDeviceCanAccessPeer`` is the more direct
+    question, but reaching it means importing torch and initialising a CUDA context on
+    every device — inside the agent, on the machine under test, potentially while a
+    benchmark is running. Telemetry that perturbs the thing it measures is the one thing
+    the agent may not do.
+
+    Pass ``indices`` to scope the answer to the devices a particular run used. Omit it for
+    the host-wide view. Both directions of both read and write must be OK before this
+    says so: partial peer access is not a weaker "yes", because the engine falls back for
+    the whole group and one broken pair changes what everything measures.
+    """
+    try:
+        import pynvml
+    except ImportError:
+        return PeerAccessStatus.UNAVAILABLE, ["pynvml is not importable on this host"]
+
+    try:
+        pynvml.nvmlInit()
+    except Exception as exc:
+        return PeerAccessStatus.UNAVAILABLE, [f"NVML unavailable: {exc}"]
+
+    try:
+        if indices is None:
+            indices = list(range(pynvml.nvmlDeviceGetCount()))
+        indices = sorted(set(indices))
+        if len(indices) < 2:
+            return PeerAccessStatus.SINGLE_DEVICE, []
+
+        caps = {name: _p2p_caps_index(pynvml, name) for name in ("READ", "WRITE")}
+        missing = [name for name, index in caps.items() if index is None]
+        if missing:
+            return PeerAccessStatus.UNAVAILABLE, [
+                f"NVML has no usable P2P caps index for {', '.join(sorted(missing))}"
+            ]
+
+        status_names = _p2p_status_names(pynvml)
+        ok_status = pynvml.NVML_P2P_STATUS_OK
+        handles = {i: pynvml.nvmlDeviceGetHandleByIndex(i) for i in indices}
+
+        problems: list[str] = []
+        for a in indices:
+            for b in indices:
+                if a == b:
+                    continue
+                for name, index in caps.items():
+                    try:
+                        status = pynvml.nvmlDeviceGetP2PStatus(handles[a], handles[b], index)
+                    except Exception as exc:
+                        return PeerAccessStatus.UNAVAILABLE, [
+                            f"NVML refused a P2P {name.lower()} query for {a}->{b}: {exc}"
+                        ]
+                    if status != ok_status:
+                        label = status_names.get(status, f"status {status}")
+                        problems.append(f"{a}->{b} {name.lower()}: {label}")
+
+        if problems:
+            return PeerAccessStatus.UNSUPPORTED, problems
+        return PeerAccessStatus.OK, []
+    finally:
+        try:
+            pynvml.nvmlShutdown()
+        except Exception:  # noqa: S110
+            pass
 
 
 def probe_cuda_version() -> str | None:

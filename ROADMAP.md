@@ -569,6 +569,35 @@ publishing it.
 
 ---
 
+## 1.1.0 — Interconnect provenance
+
+Opened by wanting to measure something the framework could not describe.
+
+`ubuntu-llm`'s two 3090s sit on CPU root ports with peer-to-peer DMA refused by the driver,
+and there is a community patch that enables it. Whether that patch is worth having is a
+straightforward A/B question. Recording the answer was not: the patch is a rebuild of the
+*same driver version*, so a run measured over a direct GPU-to-GPU path and one staging
+through host memory agree on driver version, CUDA version, GPU model, vLLM version,
+parallelism topology and device indices — every provenance field a run had. The deployment
+already held 69 runs, all TP=2, all measured without P2P, and the boundary existed only in
+somebody's memory of which week it was.
+
+- [x] `peer_access` on the wire and on the run, observed over the devices a run actually
+      used rather than the host's full complement, so a TP=1 control stays one series
+      across a change only a multi-device run can feel (#117, protocol 8)
+- [ ] Which driver *build* produced that state, for the case where two builds agree on
+      peer access and differ in other ways (#119)
+- [ ] The A/B itself, and whatever it says
+
+The first of those found a live upstream typo — `nvidia-ml-py` 13.610.43 defines
+`NVML_P2P_CAPS_INDEX_READ` as `(0,)` — which would have made the field uniformly blank
+while looking implemented. Caught by capturing a payload from the real host before writing
+the probe. The second was implemented as `srcversion` and removed before merge when a real
+patched build reported a hash identical to the stock module's; what was tried is recorded
+in #119 so it is not tried again.
+
+---
+
 ## Explicitly out of scope for 1.0.0
 
 Deferred, not rejected. Each is a post-1.0 candidate.

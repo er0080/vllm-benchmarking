@@ -27,6 +27,7 @@ from vllmbench_agent.hardware import (
     probe_cuda_version,
     probe_driver_version,
     probe_gpus,
+    probe_peer_access,
     probe_vllm_version,
 )
 from vllmbench_agent.settings import AgentSettings
@@ -112,6 +113,10 @@ def create_app(settings: AgentSettings | None = None) -> FastAPI:
             # control plane decides what to do with a host that reports no devices.
             log.warning("no NVIDIA devices detected on this host")
 
+        # Host-wide, across every device. What a run records is narrower and is computed
+        # when the benchmark finishes, over the devices the engine actually used.
+        peer_access, peer_access_detail = probe_peer_access()
+
         vllm_version, probe_detail = probe_vllm_version(settings.vllm_bin)
         # Recomputed per call rather than cached from startup: installing something into
         # this virtualenv while the agent runs is exactly how the environment changes, and
@@ -127,6 +132,8 @@ def create_app(settings: AgentSettings | None = None) -> FastAPI:
             vllm_probe_detail=probe_detail,
             driver_version=probe_driver_version(),
             cuda_version=probe_cuda_version(),
+            peer_access=peer_access,
+            peer_access_detail=peer_access_detail,
             gpus=gpus,
             # The real agent is never synthetic. The mock overrides this, and the
             # control plane trusts the producer rather than inferring (invariant 7).
@@ -254,6 +261,11 @@ def create_app(settings: AgentSettings | None = None) -> FastAPI:
                 "speculative_method": status_now.speculative_method,
                 "speculative_tokens": status_now.speculative_tokens,
                 "dataset_identity": dataset_identity,
+                # Scoped to the devices this engine actually ran on, not to the host's.
+                # A single-device run reports SINGLE_DEVICE even where the host's other
+                # pairs are fine, so a TP=1 control keeps comparing against itself across
+                # a change to the interconnect.
+                "peer_access": probe_peer_access(status_now.device_indices)[0],
             }
         )
 

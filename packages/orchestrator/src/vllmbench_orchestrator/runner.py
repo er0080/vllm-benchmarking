@@ -431,6 +431,8 @@ async def execute_run(
             run.gpu_count = max(1, len(response.device_indices))
         if response.tensor_parallel_size:
             run.tensor_parallel_size = response.tensor_parallel_size
+        if response.peer_access is not None:
+            run.peer_access = response.peer_access.value
         if response.speculative_method is not None:
             run.speculative_method = response.speculative_method
             run.speculative_tokens = response.speculative_tokens

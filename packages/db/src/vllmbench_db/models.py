@@ -84,6 +84,14 @@ class GpuHost(Base):
     gpu_count: Mapped[int] = mapped_column(Integer, default=0)
     last_seen_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
 
+    # Whether this host's devices can reach each other's memory directly. Protocol 8.
+    #: Host-wide, across every device. What a run carries is narrower — see Run.
+    #: NULL means an agent older than protocol 8, which could not say.
+    peer_access: Mapped[str | None] = mapped_column(String(16))
+    #: One line per pair that is not OK, current as of the last handshake. Kept here
+    #: rather than on every run for the reason `environment_conflicts` is.
+    peer_access_detail: Mapped[list[str] | None] = mapped_column(JSONB)
+
     # Whether this host's Python environment satisfies the constraints everything
     # installed there declares. The agent installs into vLLM's own virtualenv, so the two
     # can diverge with nothing arbitrating between them (issue #60).
@@ -364,6 +372,16 @@ class Run(Base):
     device_indices: Mapped[list[int] | None] = mapped_column(ARRAY(Integer))
     tensor_parallel_size: Mapped[int] = mapped_column(Integer, default=1, index=True)
     pipeline_parallel_size: Mapped[int] = mapped_column(Integer, default=1)
+
+    #: Whether the devices above could reach each other's memory directly, observed over
+    #: `device_indices` rather than over the host's full complement — so a single-device
+    #: run reads SINGLE_DEVICE on a host where every pair is fine, and a TP=1 control
+    #: stays one series across a change that only a multi-device run can feel.
+    #:
+    #: Indexed because the question this exists to answer is "these runs against those",
+    #: which is a filter and a chart series. NULL is nobody having asked, which is every
+    #: run before protocol 8 and is not a synonym for "peer access was unavailable".
+    peer_access: Mapped[str | None] = mapped_column(String(16), index=True)
 
     # -- Speculation (same rule as the topology above) ------------------------------
     # Read from the engine's own /server_info, never from the config text. `"none"` is

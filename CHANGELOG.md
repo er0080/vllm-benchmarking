@@ -8,6 +8,16 @@ file is that history grouped by release. The reasoning behind a change lives in
 its pull request body; [ROADMAP.md](https://github.com/er0080/vllm-benchmarking/blob/main/ROADMAP.md) narrates what
 each release candidate was for and what it caught.
 
+## 1.1.0 — 2026-08-23
+
+### Features
+
+- record the interconnect a run was measured over
+
+### Fixes
+
+- **ci:** a release sorts after its own release candidates ([#115](https://github.com/er0080/vllm-benchmarking/pull/115))
+
 ## 1.0.0 — 2026-08-23
 
 ### Features

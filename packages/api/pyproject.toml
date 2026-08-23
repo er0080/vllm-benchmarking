@@ -1,6 +1,6 @@
 [project]
 name = "vllmbench-api"
-version = "1.0.0"
+version = "1.1.0"
 description = "FastAPI control plane"
 license = "Apache-2.0"
 requires-python = ">=3.11,<3.14"

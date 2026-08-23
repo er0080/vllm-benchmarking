@@ -124,6 +124,14 @@ class TestMockDeclaresItselfSynthetic:
         assert real.environment is not None
         assert mock.environment is not None
 
+        # And both answer the interconnect question, for the same reason. `peer_access` is
+        # optional on the wire so a protocol-8 payload stays valid from an agent that could
+        # not look — which is precisely the shape that would let the mock fall silent and
+        # leave the comparability guard untested. A real agent with no NVML answers
+        # UNAVAILABLE; what neither may do is decline to answer.
+        assert real.peer_access is not None
+        assert mock.peer_access is not None
+
 
 class TestMockIsMultiGpu:
     async def test_mock_reports_more_than_one_device(self, mock_app) -> None:

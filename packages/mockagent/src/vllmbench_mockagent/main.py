@@ -27,7 +27,12 @@ from fastapi import Depends, FastAPI, HTTPException, status
 from vllmbench_agent.auth import token_dependency
 from vllmbench_agent.dataset import identify_dataset
 from vllmbench_mockagent.synthetic import synthesize_bench_result, synthesize_telemetry
-from vllmbench_protocol import NO_SPECULATION, PROTOCOL_VERSION, __version__
+from vllmbench_protocol import (
+    NO_SPECULATION,
+    PROTOCOL_VERSION,
+    PeerAccessStatus,
+    __version__,
+)
 from vllmbench_protocol.failures import FAILURE_KIND_HEADER, FailureKind
 from vllmbench_protocol.wire import (
     BenchRequest,
@@ -78,6 +83,10 @@ MOCK_LOAD_SECONDS = float(os.environ.get("VLLMBENCH_MOCK_LOAD_SECONDS", "2.0"))
 MOCK_BENCH_SECONDS = float(os.environ.get("VLLMBENCH_MOCK_BENCH_SECONDS", "3.0"))
 MOCK_DRIVER_VERSION = "550.54.15"
 MOCK_CUDA_VERSION = "12.4"
+# Overridable so an integration test can exercise both sides of the comparability guard
+# without needing two machines. Anything not a PeerAccessStatus value is a test asking for
+# a state the schema has not heard of, which is a case the run must still record.
+MOCK_PEER_ACCESS = os.environ.get("VLLMBENCH_MOCK_PEER_ACCESS", PeerAccessStatus.OK.value)
 
 
 # Failure injection. Set to a FailureKind value to make the next server start, or the
@@ -182,6 +191,20 @@ def _injected(kind: str, status_code: int) -> HTTPException:
     )
 
 
+def _mock_peer_access(device_count: int) -> PeerAccessStatus:
+    """Whatever the mock was told to report, narrowed by how many devices are in play.
+
+    Single-device wins over the configured value, because that is the real agent's rule:
+    a run on one GPU has no peer access to report no matter what the host can do.
+    """
+    if device_count < 2:
+        return PeerAccessStatus.SINGLE_DEVICE
+    try:
+        return PeerAccessStatus(MOCK_PEER_ACCESS)
+    except ValueError:
+        return PeerAccessStatus.UNAVAILABLE
+
+
 def create_app(
     token: str | None = None,
     protocol_version: int = PROTOCOL_VERSION,
@@ -250,6 +273,8 @@ def create_app(
             vllm_probe_detail="synthetic: no vLLM is installed for the mock agent",
             driver_version=MOCK_DRIVER_VERSION,
             cuda_version=MOCK_CUDA_VERSION,
+            peer_access=_mock_peer_access(len(MOCK_GPUS)),
+            peer_access_detail=[],
             gpus=MOCK_GPUS,
             environment=_environment(),
             synthetic_source=SYNTHETIC_SOURCE,
@@ -380,6 +405,10 @@ def create_app(
             device_indices=devices,
             speculative_method=method,
             speculative_tokens=tokens,
+            # Scoped to the devices this synthetic run claims to have used, the way the
+            # real agent scopes it — so a mock-backed TP=1 point reads single_device and
+            # exercises the branch a control run depends on.
+            peer_access=_mock_peer_access(len(devices or ())),
             dataset_identity=identify_dataset(request),
             engine_samples=[EngineSampleWire(**s) for s in engine_samples],
             gpu_samples=[GpuSampleWire(**s) for s in gpu_samples],

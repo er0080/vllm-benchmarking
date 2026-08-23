@@ -52,6 +52,37 @@ class EnvironmentStatus(enum.StrEnum):
     NOT_REPORTED = "not_reported"
 
 
+class PeerAccessStatus(enum.StrEnum):
+    """Whether the devices a run used could reach each other's memory directly.
+
+    Peer-to-peer DMA is the difference between an all-reduce that crosses the link once
+    and one that stages through host memory, and on consumer hardware whether it is
+    available is a property of the *driver build* rather than of the driver version — a
+    patched module reports the version it was patched from. So two runs can agree on
+    every provenance field a run has ever carried and still have been measured over
+    different interconnects. This is what records that they were.
+
+    Five states, for the same reason :class:`EnvironmentStatus` has four. The one this
+    adds is SINGLE_DEVICE: a run that used one GPU has no peer access to report, and
+    calling that "unsupported" would put a TP=1 run on one side of a boundary it cannot
+    be on either side of — which matters most precisely when a single-device run is being
+    used as the control for a change to the interconnect.
+    """
+
+    #: Every pair of devices this run used can reach every other, both directions.
+    OK = "ok"
+    #: At least one pair cannot. Partial peer access is not a weaker "ok": the engine
+    #: falls back for the whole group, so one broken pair changes what everything measures.
+    UNSUPPORTED = "unsupported"
+    #: Fewer than two devices. Nothing to report, and nothing that could differ.
+    SINGLE_DEVICE = "single_device"
+    #: NVML was there but would not answer. Distinct from UNSUPPORTED, which is an answer.
+    UNAVAILABLE = "unavailable"
+    #: Never sent. Recorded by the control plane when an agent said nothing — every run
+    #: measured before protocol 8, and any run by an agent that could not look.
+    NOT_REPORTED = "not_reported"
+
+
 class EnvironmentCheck(_Wire):
     """Whether the agent's Python environment satisfies its own declared constraints.
 
@@ -106,6 +137,16 @@ class HostInfo(_Wire):
     vllm_probe_detail: str | None = None
     driver_version: str | None = None
     cuda_version: str | None = None
+
+    # Host-wide peer-access state, across every pair of devices. The value a run carries
+    # is narrower — scoped to the devices that run actually used — and travels on
+    # BenchResponse. This one is what an operator looks at when deciding whether the host
+    # is set up the way they think it is.
+    peer_access: PeerAccessStatus | None = None
+    #: The pairwise detail behind that summary, one line per pair that is not OK. Kept on
+    #: the host rather than on every run for the reason `environment_conflicts` is: it is
+    #: long, identical across a sweep, and only useful while somebody is fixing the host.
+    peer_access_detail: list[str] = Field(default_factory=list)
 
     gpus: list[GpuInfo] = Field(default_factory=list)
 
@@ -334,6 +375,12 @@ class BenchResponse(_Wire):
     # whether it was speculating without anyone reading its config text.
     speculative_method: str | None = None
     speculative_tokens: int | None = None
+
+    # Observed over `device_indices` above — the devices this benchmark actually ran on,
+    # not the ones the host happens to have. A single-device run reports SINGLE_DEVICE
+    # even on a host where every other pair is fine, so that a TP=1 control stays one
+    # series across a change to the interconnect. Protocol 8.
+    peer_access: PeerAccessStatus | None = None
 
     # What the benchmark actually read, computed on the GPU host because that is the
     # only host that can see it (invariant 1). See `vllmbench_agent.dataset` for the
