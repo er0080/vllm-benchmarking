@@ -327,6 +327,88 @@ jobs:
           if-no-files-found: error
 
   # ------------------------------------------------------------------------------
+  # Look at what was just published the way someone with no account does.
+  #
+  # A GHCR package's visibility is not the repository's, there is no REST endpoint that
+  # sets it, and the default for a newly created package is private. So the one thing
+  # standing between a public repo and a quick start that fails on its first command is
+  # a checkbox somebody has to remember, once, per package.
+  #
+  # It fails silently for exactly the people it matters to. The workflow is
+  # authenticated, CI is authenticated, and every `docker pull` a maintainer runs is
+  # authenticated — so the only person who sees `denied` is the new user following the
+  # README, which is definition-of-done criterion 1.
+  #
+  # A red run here does not mean the release is broken; the images and the Release are
+  # already published and are fine. It means nobody outside can pull them yet. Flip the
+  # five packages to public and re-run this job.
+
+  pullable:
+    name: A stranger can pull it
+    runs-on: ubuntu-latest
+    needs: [guard, manifest]
+    if: needs.guard.outputs.publish == 'true'
+    timeout-minutes: 10
+    # No `packages: read`, and deliberately no login step. Credentials of any kind would
+    # make this job pass while the thing it exists to detect is still true.
+    permissions: {}
+    steps:
+      - name: Every image pulls, and carries both architectures, with no credentials
+        env:
+          PREFIX: ${{ needs.guard.outputs.prefix }}
+          VERSION: ${{ needs.guard.outputs.version }}
+        run: |
+          set -euo pipefail
+          path="${PREFIX#ghcr.io/}"
+          accept='application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json'
+          failed=""
+
+          for image in db api orchestrator mockagent web; do
+            repo="${path}/${image}"
+
+            # No -f, deliberately. GHCR answers this with 403 for a package that does
+            # not exist or is not visible, and a hard curl failure under `set -e` would
+            # kill the loop before the actionable message below ever prints — turning a
+            # named checkbox into a bare exit code. An empty token is fine: the manifest
+            # request then returns 401 and is reported like any other refusal.
+            token=$(curl -sS "https://ghcr.io/token?service=ghcr.io&scope=repository:${repo}:pull" \
+                    | jq -r '.token // empty' || true)
+
+            body=$(mktemp)
+            code=$(curl -s -o "${body}" -w '%{http_code}' \
+                     -H "Authorization: Bearer ${token}" -H "Accept: ${accept}" \
+                     "https://ghcr.io/v2/${repo}/manifests/${VERSION}")
+
+            if [ "${code}" != "200" ]; then
+              echo "::error::${repo}:${VERSION} returned HTTP ${code} to an anonymous pull"
+              failed="${failed} ${image}"
+              continue
+            fi
+
+            arches=$(jq -r '.manifests[].platform | select(.os != "unknown")
+                            | .os + "/" + .architecture' "${body}" | sort -u | tr '\n' ' ')
+            case "${arches}" in
+              *linux/amd64*) ;;
+              *) echo "::error::${repo}:${VERSION} has no linux/amd64"; failed="${failed} ${image}" ;;
+            esac
+            case "${arches}" in
+              *linux/arm64*) ;;
+              *) echo "::error::${repo}:${VERSION} has no linux/arm64"; failed="${failed} ${image}" ;;
+            esac
+
+            echo "ok: ${image} — ${arches}"
+          done
+
+          if [ -n "${failed}" ]; then
+            echo "::error::not anonymously pullable:${failed}"
+            echo "Set each package to public once, at" \
+                 "https://github.com/users/${GITHUB_REPOSITORY_OWNER}/packages," \
+                 "then re-run this job. There is no API for this setting."
+            exit 1
+          fi
+          echo "all five images are public and dual-arch"
+
+  # ------------------------------------------------------------------------------
   # Last, so the Release only ever points at artifacts that exist and were checked.
 
   release:
