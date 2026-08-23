@@ -19,6 +19,7 @@ without upgrading the agents takes every GPU host offline until you do.
 | **1.0.0rc4** | **6** | The agent reports whether its virtualenv satisfies its own constraints. |
 | **1.0.0rc5** | **7** | Runs record what the engine resolved for speculative decoding, and what data they were measured against. |
 | 1.0.0rc6 | 7 | — publishing only; **no agent upgrade required** |
+| 1.0.0 | 7 | — **no agent upgrade required**; an rc6 agent serves a 1.0.0 control plane |
 
 rc6 is the first candidate since rc3 that leaves the protocol alone. A GPU host running
 the rc5 agent keeps working against an rc6 control plane, and its runs record

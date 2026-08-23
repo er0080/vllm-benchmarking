@@ -552,6 +552,21 @@ the agent is installed from a git tag.
 9. An agent harness connected over MCP can complete a full tuning loop — author a config,
    run a sweep, read the results — without touching the UI.
 
+**Released 2026-08-23.** All nine definition-of-done criteria met, and the last one that
+needed a person rather than CI — equal fidelity on native Linux and macOS with Colima — was
+confirmed against the published `v1.0.0rc6` images on both architectures rather than against
+a local build.
+
+The release candidates did what they were for. rc2 found an nginx cache that broke the UI on
+the documented upgrade. rc3 found `get_pareto` silently substituting a metric an agent asked
+for. rc4 found no licence and an agent that could not see its own environment drift. rc5
+found that cache resets had never happened, that ITL was measuring emissions rather than
+tokens, and that no run could say whether it had been speculating. rc6 found an agent wheel
+that could not have been installed, and the dependency-confusion hazard behind it.
+
+None of those were found by testing. They were found by using the thing, and then by
+publishing it.
+
 ---
 
 ## Explicitly out of scope for 1.0.0

@@ -8,6 +8,19 @@ file is that history grouped by release. The reasoning behind a change lives in
 its pull request body; [ROADMAP.md](https://github.com/er0080/vllm-benchmarking/blob/main/ROADMAP.md) narrates what
 each release candidate was for and what it caught.
 
+## 1.0.0 — 2026-08-23
+
+### Features
+
+- **ci:** generate CHANGELOG.md from the commit history ([#107](https://github.com/er0080/vllm-benchmarking/pull/107))
+- **compose:** pull pinned published images instead of building ([#106](https://github.com/er0080/vllm-benchmarking/pull/106))
+
+### Documentation
+
+- the README describes standing up the stack from images ([#111](https://github.com/er0080/vllm-benchmarking/pull/111))
+- every CI job gates the merge, and adding one is two changes ([#109](https://github.com/er0080/vllm-benchmarking/pull/109))
+- record what the rc6 publish did ([#105](https://github.com/er0080/vllm-benchmarking/pull/105))
+
 ## 1.0.0rc6 — 2026-08-23
 
 ### Features
