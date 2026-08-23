@@ -13,7 +13,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from vllmbench_db.enums import InitiatedBy, ReplicateOrder
-from vllmbench_protocol import EnvironmentStatus
+from vllmbench_protocol import EnvironmentStatus, PeerAccessStatus
 
 
 class GpuDeviceOut(BaseModel):
@@ -46,6 +46,17 @@ def _reported_status(value: str | None) -> str:
     return value or EnvironmentStatus.NOT_REPORTED.value
 
 
+def _reported_peer_access(value: str | None) -> str:
+    """A stored NULL is a run measured before protocol 8, which could not say.
+
+    Same reasoning as :func:`_reported_status`, and the tempting default is worse here.
+    Rounding missing to "unsupported" would be the more natural guess — most hosts do not
+    have peer access — and it would quietly assert that a run predating this column was
+    measured over a link nobody observed.
+    """
+    return value or PeerAccessStatus.NOT_REPORTED.value
+
+
 class HostOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -58,6 +69,9 @@ class HostOut(BaseModel):
     vllm_version: str | None = None
     driver_version: str | None = None
     cuda_version: str | None = None
+    # Host-wide. Never null on the wire, for the reason environment_status is not.
+    peer_access: str = PeerAccessStatus.NOT_REPORTED.value
+    peer_access_detail: list[str] = Field(default_factory=list)
     gpu_count: int = 0
     synthetic_source: str | None = None
     # Never null on the wire: a stored NULL means an agent that could not say, which is
@@ -75,7 +89,12 @@ class HostOut(BaseModel):
     def _status_reported(cls, value: str | None) -> str:
         return _reported_status(value)
 
-    @field_validator("environment_conflicts", mode="before")
+    @field_validator("peer_access", mode="before")
+    @classmethod
+    def _peer_access_reported(cls, value: str | None) -> str:
+        return _reported_peer_access(value)
+
+    @field_validator("environment_conflicts", "peer_access_detail", mode="before")
     @classmethod
     def _conflicts_listed(cls, value: list[str] | None) -> list[str]:
         return value or []
@@ -367,6 +386,16 @@ class RunOut(BaseModel):
     tensor_parallel_size: int
     pipeline_parallel_size: int
     device_indices: list[int] | None = None
+
+    # Observed over `device_indices`, not over the host. A single-device run reads
+    # "single_device" on a host where every pair is fine, so a TP=1 control stays one
+    # series across a change only a multi-device run can feel.
+    peer_access: str = PeerAccessStatus.NOT_REPORTED.value
+
+    @field_validator("peer_access", mode="before")
+    @classmethod
+    def _peer_access_reported(cls, value: str | None) -> str:
+        return _reported_peer_access(value)
 
     # What the engine resolved for speculation, read from its own /server_info. `"none"`
     # is the engine saying it was not speculating; null is nobody having asked it, which

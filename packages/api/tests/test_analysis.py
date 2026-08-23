@@ -14,6 +14,7 @@ import uuid
 import pytest
 
 from vllmbench_api.analysis import (
+    _COMPARED_FIELDS,
     METRICS_BY_KEY,
     PARETO_X,
     PARETO_Y,
@@ -34,6 +35,7 @@ from vllmbench_api.analysis import (
     imbalance,
     metric_delta,
     pareto_frontier,
+    peer_access_warning,
     scaling_curves,
     spread_basis,
     summarize,
@@ -155,6 +157,66 @@ class TestComparability:
         # "unknown" and "different" are not the same claim; an unprobed host must not
         # manufacture a mixed-driver warning.
         assert group_warnings([record(), record(driver_version=None)]) == []
+
+
+class TestPeerAccess:
+    """The guard that stops a patched driver being charted alongside a stock one.
+
+    Peer-to-peer DMA on consumer GPUs is enabled by rebuilding the same driver version, so
+    without `peer_access` two runs measured over different interconnects agree on every
+    other provenance field a run carries.
+    """
+
+    def test_a_single_state_is_not_a_warning(self) -> None:
+        assert peer_access_warning([record(peer_access="ok"), record(peer_access="ok")]) is None
+
+    def test_mixed_observed_states_warn(self) -> None:
+        warning = peer_access_warning([record(peer_access="ok"), record(peer_access="unsupported")])
+        assert warning is not None
+        assert "ok" in warning and "unsupported" in warning
+
+    def test_all_unknown_is_not_a_warning(self) -> None:
+        """Every deployment's history is entirely unknown. That is not a mixed group."""
+        assert peer_access_warning([record(), record()]) is None
+        assert peer_access_warning([record(peer_access=None), record(peer_access=None)]) is None
+
+    def test_unknown_mixed_with_observed_warns_and_counts_them(self) -> None:
+        """The upgrade boundary: runs from before protocol 8 beside runs from after."""
+        warning = peer_access_warning(
+            [record(peer_access=None), record(peer_access=None), record(peer_access="ok")]
+        )
+        assert warning is not None
+        assert "2 run(s)" in warning
+        assert "unknown" in warning
+
+    def test_not_reported_counts_as_unknown_not_as_a_state(self) -> None:
+        """A stored NULL and an explicit not_reported are the same claim."""
+        assert (
+            peer_access_warning([record(peer_access=None), record(peer_access="not_reported")])
+            is None
+        )
+
+    def test_the_difference_does_not_split_the_chart(self) -> None:
+        """Deliberately a warning rather than a comparability key.
+
+        Every run recorded before protocol 8 has NULL here, so keying on it would
+        fragment every existing deployment's history away from everything measured after
+        the upgrade — asserting a difference nobody observed, which is the mirror image of
+        the failure the field prevents.
+        """
+        groups = build_groups([record(peer_access="ok"), record(peer_access="unsupported")])
+        assert len(groups) == 1
+        assert any("interconnect" in w for w in groups[0].warnings)
+
+    def test_it_reaches_a_two_way_comparison_as_invalidating(self) -> None:
+        """A named side-by-side is where the difference is the subject, not a hazard.
+
+        `invalidating` does not refuse the comparison — it says the two cannot be read as
+        one series. Comparing a patched driver against a stock one is the whole reason
+        this field exists, so it has to survive being asked for deliberately.
+        """
+        invalidating = {name: flag for name, _label, flag in _COMPARED_FIELDS}
+        assert invalidating["peer_access"] is True
 
 
 class TestSummarize:

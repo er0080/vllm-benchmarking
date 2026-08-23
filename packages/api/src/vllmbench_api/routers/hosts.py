@@ -61,6 +61,10 @@ async def _apply_facts(session: AsyncSession, host: GpuHost, info: HostInfo) -> 
     host.driver_version = info.driver_version
     host.cuda_version = info.cuda_version
     host.gpu_count = info.gpu_count
+    # Protocol 8. Recorded exactly as sent, including the absence: an agent that could not
+    # look leaves this NULL, which reads as NOT_REPORTED and is not "no peer access".
+    host.peer_access = info.peer_access.value if info.peer_access else None
+    host.peer_access_detail = list(info.peer_access_detail)
     # Protocol 6. An agent that sent nothing is recorded as having said nothing, which is
     # a different claim from a clean environment and has to stay one — the whole point of
     # the check is that a silent absence used to pass for fine.

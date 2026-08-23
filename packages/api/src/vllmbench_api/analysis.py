@@ -34,7 +34,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from vllmbench_db.enums import ReplicateOrder
-from vllmbench_protocol import NO_SPECULATION
+from vllmbench_protocol import NO_SPECULATION, PeerAccessStatus
 
 
 class RunSource(enum.StrEnum):
@@ -253,6 +253,11 @@ class RunRecord:
     bench_client_location: str
     driver_version: str | None = None
     cuda_version: str | None = None
+    #: Whether the devices this run used could reach each other's memory directly. A
+    #: patched driver reports the version it was patched from, so without this a run over
+    #: a direct GPU-to-GPU path and one staging through host memory are identical in every
+    #: field above.
+    peer_access: str | None = None
     #: Set when this run was imported rather than measured here, so its hardware and
     #: vLLM version were *declared by a person* rather than observed by an agent.
     imported_from: str | None = None
@@ -426,6 +431,46 @@ def speculation_warning(records: Sequence[RunRecord]) -> str | None:
     )
 
 
+def peer_access_warning(records: Sequence[RunRecord]) -> str | None:
+    """Say so when a group was not all measured over the same interconnect.
+
+    Structured like :func:`speculation_warning`, and for the same reason: this is a
+    provenance field added after runs already existed, so "nobody asked" is a state the
+    group can be mixed with and is not the same as an observation.
+
+    Splitting the group instead was considered and rejected. Every run recorded before
+    protocol 8 has NULL here, so keying on it would fragment every existing deployment's
+    history away from everything measured after the upgrade — asserting a difference that
+    was never observed, which is the mirror image of the failure this column prevents.
+    """
+    states = {r.peer_access for r in records}
+    if len(states) <= 1:
+        return None
+
+    observed = sorted(s for s in states if s and s != PeerAccessStatus.NOT_REPORTED.value)
+    unknown = sum(
+        1
+        for r in records
+        if not r.peer_access or r.peer_access == PeerAccessStatus.NOT_REPORTED.value
+    )
+
+    if unknown and not observed:
+        return None
+    if unknown:
+        return (
+            f"mixes {', '.join(observed)} with {unknown} run(s) that predate peer access "
+            "being recorded, so the interconnect underneath them is unknown. A "
+            "tensor-parallel run over a direct GPU-to-GPU path and one staging through "
+            "host memory differ in every emission-based metric while agreeing on driver "
+            "version, so these are not safely one series"
+        )
+    return (
+        f"mixes {', '.join(observed)}; these runs were measured over different "
+        "interconnects, which changes what every all-reduce in a tensor-parallel step "
+        "costs. Compare them deliberately rather than reading them as one series"
+    )
+
+
 def group_warnings(records: Sequence[RunRecord]) -> list[str]:
     """Differences that are worth stating but not worth splitting a chart over."""
     warnings: list[str] = []
@@ -490,6 +535,10 @@ def group_warnings(records: Sequence[RunRecord]) -> list[str]:
     speculation = speculation_warning(records)
     if speculation:
         warnings.append(speculation)
+
+    interconnect = peer_access_warning(records)
+    if interconnect:
+        warnings.append(interconnect)
 
     return warnings
 
@@ -1060,6 +1109,10 @@ _COMPARED_FIELDS: tuple[tuple[str, str, bool], ...] = (
     ("bench_client_location", "Benchmark client", True),
     ("driver_version", "Driver version", False),
     ("cuda_version", "CUDA version", False),
+    # Invalidating, alongside GPU model and bench-client location, because it changes the
+    # machine underneath the measurement rather than the configuration being measured. It
+    # does not stop the deliberate side-by-side — that is the comparison it exists for.
+    ("peer_access", "Peer access", True),
     ("workload_name", "Workload", False),
     ("tensor_parallel_size", "Tensor parallel size", False),
     ("gpu_count", "GPU count", False),

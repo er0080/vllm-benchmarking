@@ -31,6 +31,7 @@ from vllmbench_protocol.wire import (
     GpuInfo,
     HealthResponse,
     HostInfo,
+    PeerAccessStatus,
 )
 
 __all__ = [
@@ -49,6 +50,7 @@ __all__ = [
     "GpuInfo",
     "HealthResponse",
     "HostInfo",
+    "PeerAccessStatus",
     "ProtocolMismatch",
     "Speculation",
     "__version__",

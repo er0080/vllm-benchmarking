@@ -24,7 +24,7 @@ from __future__ import annotations
 
 __all__ = ["PROTOCOL_VERSION", "__version__"]
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 # 3: BenchRequest carries `served_model_name` separately from `model`. An agent still on
 #    2 receives only `model` and passes it as `--model`, which is what vLLM loads the
@@ -59,4 +59,22 @@ __version__ = "1.0.0"
 #    fields, so a 7 agent talking to a 6 control plane has its whole benchmark result
 #    rejected on an extra key. Losing a forty-minute run to a version mismatch that was
 #    never named is exactly what this number exists to prevent.
-PROTOCOL_VERSION = 7
+# 8: HostInfo carries a host-wide `peer_access`, and BenchResponse carries one scoped to
+#    the devices the benchmark actually used. Together they answer a question no run could
+#    previously answer about itself: which interconnect was underneath it.
+#
+#    This one is worth stating plainly, because it is the case invariant 6 was written
+#    for and the schema had no room for it. Enabling peer-to-peer DMA on consumer GPUs
+#    is done by replacing the kernel module with a patched build of the *same version*,
+#    so the driver reports 610.43.02 either way. Every provenance field a run carries —
+#    driver, CUDA, GPU model, vLLM version, parallelism topology, device indices — is
+#    byte-identical across that change, while what a tensor-parallel run measures is not.
+#    Two populations, one series, nothing to group or warn on.
+#
+#    Scoped to the run's own devices rather than the host's, because a single-device run
+#    has no peer access to report and saying "unsupported" would split a TP=1 control
+#    across a boundary it cannot be on either side of. The host-wide value stays on
+#    HostInfo, where an operator checking their setup will look for it.
+#
+#    Additive, and a bump, for the reason 6 and 7 were: `_Wire` forbids unknown fields.
+PROTOCOL_VERSION = 8
