@@ -26,6 +26,7 @@ from vllmbench_protocol.errors import (
 )
 from vllmbench_protocol.failures import (
     _ENGINE_PATTERNS,
+    TRANSIENT_KINDS,
     FailureKind,
     classify_agent_error,
     classify_engine_output,
@@ -231,3 +232,51 @@ class TestUnreachableSaysSomething:
         assert "Connection refused" in message
         assert "agent is running" in message
         assert "reach them" in message
+
+
+class TestARuntimeCrashIsNotAStartupFailure:
+    """An engine that dies after serving, which every other engine kind excludes.
+
+    Captured from vLLM 0.25.1 drafting six tokens ahead on Qwen3.8-27B-FP8: the engine
+    loaded, served a benchmark, and was taken down by a CUDA illegal memory access raised
+    from the FlashInfer attention-metadata build. It matters that this is its own kind,
+    because every other engine failure means "the configuration never worked" and this one
+    means "the configuration worked and then the engine died" — opposite conclusions from
+    the same word "failed".
+    """
+
+    FIXTURE = "vllm_serve_mtp_illegal_memory_access_v0.25.1.log"
+
+    def test_it_is_classified_as_a_crash(self) -> None:
+        assert classify_engine_output(_fixture(self.FIXTURE)) is FailureKind.ENGINE_CRASHED
+
+    def test_it_is_not_mistaken_for_running_out_of_memory(self) -> None:
+        """The tempting misread: it says CUDA and it says memory.
+
+        An out-of-memory death is fixed by asking for less; this one is not fixed by
+        anything the operator controls. Sending them to `gpu_memory_utilization` would
+        cost an afternoon.
+        """
+        found = classify_engine_output(_fixture(self.FIXTURE))
+        assert found is not FailureKind.ENGINE_OUT_OF_MEMORY
+        assert found is not FailureKind.ENGINE_CONFIG_REJECTED
+
+    def test_a_real_out_of_memory_still_wins(self) -> None:
+        """Order, asserted. The crash pattern is last precisely so that an OOM — which
+        also kills the engine, and whose log also mentions CUDA — keeps the kind that
+        tells the operator what to change."""
+        oom = _fixture("vllm_serve_no_kv_cache_memory_v0.25.1.log")
+        assert classify_engine_output(oom) is FailureKind.ENGINE_OUT_OF_MEMORY
+
+    def test_the_dead_engine_message_alone_is_enough(self) -> None:
+        """Requests arriving after the crash see only this, never the CUDA fault. A
+        supervisor that read a late tail would otherwise learn nothing."""
+        assert (
+            classify_engine_output("vllm.v1.engine.exceptions.EngineDeadError: EngineCore")
+            is FailureKind.ENGINE_CRASHED
+        )
+
+    def test_a_crash_is_not_retried(self) -> None:
+        """It is deterministic. Retrying a drafting depth that corrupts memory spends
+        another model load to reach the same crash."""
+        assert FailureKind.ENGINE_CRASHED not in TRANSIENT_KINDS

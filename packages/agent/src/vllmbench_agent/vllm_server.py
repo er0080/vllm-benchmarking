@@ -538,17 +538,26 @@ class VllmServer:
         """
         reset: list[str] = []
         refused: list[str] = []
+        unreachable: list[str] = []
         async with httpx.AsyncClient(timeout=30.0) as client:
             for endpoint in RESET_ENDPOINTS:
                 try:
                     response = await client.post(f"{self.base_url()}{endpoint}")
                 except httpx.HTTPError as exc:
-                    refused.append(f"{endpoint} ({exc.__class__.__name__})")
+                    unreachable.append(f"{endpoint} ({exc.__class__.__name__})")
                     continue
                 if response.status_code < 400:
                     reset.append(endpoint)
                 else:
                     refused.append(f"{endpoint} (HTTP {response.status_code})")
+
+        # An engine that does not answer and an engine that answers "no" are different
+        # failures with different fixes, and conflating them is how a crash gets reported
+        # as a configuration problem. This cost a real diagnosis: an engine killed by a
+        # CUDA fault mid-sweep was reported as a refused reset, with advice to go and
+        # check a setting that was working correctly.
+        if unreachable:
+            raise ServerError(self._unreachable_message(unreachable), self._engine_verdict())
 
         if refused:
             raise ServerError(
@@ -563,3 +572,32 @@ class VllmServer:
 
         log.info("reset caches: %s", ", ".join(reset))
         return reset
+
+    def _engine_verdict(self) -> FailureKind:
+        """What killed the engine, according to the engine.
+
+        Read from the output we already captured rather than guessed at. When it says
+        nothing recognisable the answer is still `ENGINE_CRASHED`, because reaching here
+        means it was serving a moment ago and is not answering now — which is a crash
+        whether or not we can name the cause.
+        """
+        return (
+            classify_engine_output("\n".join([*self._root_causes, *self._log]))
+            or FailureKind.ENGINE_CRASHED
+        )
+
+    def _unreachable_message(self, unreachable: list[str]) -> str:
+        """Lead with the engine's own last words, which are the only thing that explains it.
+
+        The tail rather than a summary: an asynchronously reported CUDA fault names a
+        kernel far from where it surfaces, so the useful line is rarely the last one.
+        """
+        tail = [line for line in self._root_causes] or list(self._log)[-12:]
+        detail = "\n".join(tail[-12:])
+        return (
+            "the engine stopped answering before a cache reset: "
+            + ", ".join(unreachable)
+            + ". It was serving a moment ago, so this is the engine going away rather "
+            "than a configuration this agent can fix"
+            + (f". Its last output:\n{detail}" if detail else ".")
+        )

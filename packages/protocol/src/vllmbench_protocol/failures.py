@@ -79,6 +79,13 @@ class FailureKind(StrEnum):
     #: The engine started and stayed alive but never began serving within its budget.
     ENGINE_NOT_READY = "engine_not_ready"
 
+    #: The engine came up, served, and then died. Distinct from every kind above, which
+    #: are all failures to *start*: this one has a configuration that demonstrably works
+    #: for a while, so the fix is never "check the config" and the run before it may be a
+    #: perfectly good measurement. Seen for real on MTP drafting depths of 4 and above,
+    #: where vLLM 0.25.1 corrupts memory and takes the engine down mid-benchmark.
+    ENGINE_CRASHED = "engine_crashed"
+
     #: The GPU host is out of disk. Named separately from every engine failure because
     #: it is not a property of the configuration at all — the same config on the same
     #: card works again once space is freed, so re-running is the right response, and
@@ -137,6 +144,19 @@ _ENGINE_PATTERNS: tuple[tuple[re.Pattern[str], FailureKind, str], ...] = (
         re.compile(r"ValidationError: \d+ validation error for \w*Config", re.M),
         FailureKind.ENGINE_CONFIG_REJECTED,
         "vllm_serve_max_model_len_rejected_v0.25.1.log",
+    ),
+    (
+        # vllm_serve_mtp_illegal_memory_access_v0.25.1.log — the engine had been serving
+        # for a minute before this. Matched last so that an out-of-memory death, which
+        # also kills the engine and also mentions CUDA, keeps its more specific kind: the
+        # fix for one is a smaller batch and for the other is a bug report.
+        #
+        # Two alternatives, because they are two views of the same event. CUDA's wording
+        # is what the worker raises; `EngineDeadError` is what vLLM tells the *next*
+        # request, and on a crashed engine every subsequent request gets only that.
+        re.compile(r"illegal memory access|EngineDeadError", re.I),
+        FailureKind.ENGINE_CRASHED,
+        "vllm_serve_mtp_illegal_memory_access_v0.25.1.log",
     ),
 )
 
