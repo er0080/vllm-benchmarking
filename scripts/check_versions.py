@@ -9,6 +9,10 @@ This is checked rather than derived because the agent is installed separately, i
 user's vLLM environment, from a wheel built independently of the control-plane images. A
 drifting version there is not a cosmetic problem: it is how a GPU host ends up running an
 agent that disagrees with the orchestrator about what a field means.
+
+The agent's own ``vllmbench-protocol==`` pin is held to the same number. Once the wheel is
+something people download rather than something CI builds, that pin is the only thing in
+the artifact that says which protocol it was built against.
 """
 
 from __future__ import annotations
@@ -35,6 +39,17 @@ def pyproject_versions() -> dict[Path, str]:
     return found
 
 
+def agent_protocol_pin() -> tuple[Path, str] | None:
+    """The ``vllmbench-protocol==X`` requirement in the agent's dependency list."""
+    path = ROOT / "packages/agent/pyproject.toml"
+    data = tomllib.loads(path.read_text())
+    for requirement in data.get("project", {}).get("dependencies", []):
+        name, _, spec = requirement.partition("==")
+        if name.strip() == "vllmbench-protocol":
+            return path.relative_to(ROOT), spec.strip()
+    return None
+
+
 def protocol_dunder_version() -> tuple[Path, str] | None:
     path = ROOT / "packages/protocol/src/vllmbench_protocol/version.py"
     match = re.search(r'^__version__ = "([^"]+)"', path.read_text(), re.MULTILINE)
@@ -56,6 +71,15 @@ def main() -> int:
         mismatches.append("  packages/protocol/.../version.py: __version__ not found")
     elif dunder[1] != expected:
         mismatches.append(f"  {dunder[0]}: __version__ = {dunder[1]}")
+
+    pin = agent_protocol_pin()
+    if pin is None:
+        mismatches.append(
+            "  packages/agent/pyproject.toml: no exact vllmbench-protocol== pin. "
+            "The published wheel would resolve that name from an index it is not on."
+        )
+    elif pin[1] != expected:
+        mismatches.append(f"  {pin[0]}: vllmbench-protocol=={pin[1]}")
 
     if mismatches:
         print(f"Version mismatch. VERSION says {expected!r}, but:", file=sys.stderr)

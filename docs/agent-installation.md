@@ -41,6 +41,29 @@ installs both packages normally. CI proves this rather than trusting it: `agent-
 installs from a throwaway clone, deletes it, and fails if anything in the resulting
 environment still points at a directory.
 
+### Or from the release wheels
+
+From 1.0.0 every `v*` release also carries the agent as wheels, which is the path for a
+GPU host that cannot reach GitHub over git — an air-gapped machine, or one behind a proxy
+that allows downloads and not clones. Download both files from the release page and name
+both in one command:
+
+```bash
+uv pip install vllmbench_agent-<version>-py3-none-any.whl \
+               vllmbench_protocol-<version>-py3-none-any.whl
+```
+
+**Both, in one command, is not a convenience.** `vllmbench-protocol` is published only
+alongside the agent and exists on no package index. Naming the file is what satisfies that
+requirement locally, so the name is never looked up anywhere. Install the agent wheel by
+itself and the resolver goes looking for `vllmbench-protocol` on PyPI, where today it
+finds nothing and fails — which is the good outcome, and not one to rely on, because an
+unregistered name is anyone's to register. The agent pins the exact version for the same
+reason.
+
+The git install above does not have this problem: it resolves the workspace inside the
+clone and never consults an index for either package.
+
 If isolation is genuinely required — a shared host, an immutable environment — install the
 agent elsewhere and set `VLLMBENCH_VLLM_BIN` to the absolute path of the `vllm`
 executable. Do **not** solve it by putting the vLLM venv on `PATH`: that is invisible in
