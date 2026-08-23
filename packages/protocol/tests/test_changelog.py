@@ -77,3 +77,28 @@ def test_breaking_changes_are_listed_first_regardless_of_type() -> None:
     )
     body = "\n".join(lines)
     assert body.index("Breaking changes") < body.index("Documentation")
+
+
+def test_a_release_sorts_after_its_own_candidates() -> None:
+    """Git's version sort puts `v1.0.0` before `v1.0.0rc1` unless told otherwise.
+
+    The consequence is not a cosmetic reordering. The oldest tag has no lower bound, so
+    its section is `git log <tag>` rather than `<older>..<tag>` — meaning a misplaced
+    final release absorbs the entire history back to the first commit, and every earlier
+    release's section is emptied into it.
+
+    Invisible until the first non-prerelease tag existed: rc1..rc6 sort correctly among
+    themselves, so the ordering was accidentally right for as long as no release existed.
+    """
+    ordered = changelog.tags()
+    bases = {t.split("rc")[0] for t in ordered if "rc" in t}
+    checked = 0
+    for base in sorted(bases):
+        if base not in ordered:
+            continue
+        candidates = [i for i, t in enumerate(ordered) if t.startswith(f"{base}rc")]
+        assert ordered.index(base) > max(candidates), (
+            f"{base} sorts before its own release candidates: {ordered}"
+        )
+        checked += 1
+    assert checked, f"no release-plus-candidates pair to check in {ordered}"

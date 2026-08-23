@@ -70,13 +70,29 @@ def git(*args: str) -> str:
     ).stdout.strip()
 
 
+# Git's version sort does not know that a release candidate precedes its release. Without
+# these, `v1.0.0` sorts *before* `v1.0.0rc1` — the shorter string wins — and the final
+# release is then treated as the oldest tag in the repository, so its section absorbs the
+# entire history back to the first commit.
+#
+# This was invisible until 1.0.0. Every tag before it was a release candidate, and rc1..rc6
+# happen to sort correctly among themselves, so the ordering was accidentally right for as
+# long as no release existed.
+# `.post` is deliberately absent: a post-release follows its release rather than preceding
+# it, so listing it here would produce the mirror image of the bug this fixes.
+PRERELEASE_SUFFIXES = ("a", "b", "rc", ".dev")
+
+
 def tags() -> list[str]:
     """Tags oldest first. Sorted by version, not by creation date.
 
     Creation date orders by when someone happened to push, which is the same thing right
     up until a patch release is cut from an older branch.
     """
-    out = git("tag", "--list", "v*", "--sort=v:refname")
+    hints: list[str] = []
+    for suffix in PRERELEASE_SUFFIXES:
+        hints += ["-c", f"versionsort.suffix={suffix}"]
+    out = git(*hints, "tag", "--list", "v*", "--sort=v:refname")
     return [t for t in out.splitlines() if t]
 
 
