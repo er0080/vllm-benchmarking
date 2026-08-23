@@ -493,11 +493,26 @@ nothing was not tested.
   install names both files so the lookup never happens, the agent pins the exact version
   behind that, and `scripts/check_versions.py` holds the pin to `VERSION`.
 
-  What this candidate exists to exercise is the part no laptop can rehearse: pushing by
-  digest, merging two digests into one manifest list, and whether a package created by
-  `GITHUB_TOKEN` is pullable by somebody with no account. That last one has no REST
-  endpoint and fails only for strangers — every pull we make is authenticated — so it is
-  checked by a job that runs with `permissions: {}` and no login at all.
+  The publish itself then went clean on the first attempt, which is the unusual outcome
+  here and worth stating plainly rather than quietly. All ten builds pushed by digest,
+  `imagetools create` merged each pair, and every image reported both platforms. A Mac
+  pulling `api:1.0.0rc6` resolved to `linux/arm64` off the manifest list unprompted and
+  ran; the wheels downloaded from the Release installed into an empty virtualenv with
+  nothing pointing at a checkout. `latest` did not move, in either sense — no GHCR
+  `:latest` tag and no "Latest" release on the repository page — which is what a
+  pre-release should do and is only knowable by asking.
+
+  One expectation was wrong in the harmless direction. A GHCR package created by
+  `GITHUB_TOKEN` was predicted to default to private, requiring a manual visibility flip
+  per package before anyone outside could pull; all five came out public and the check
+  passed unattended. The check stays regardless, and its job changed rather than ended: it
+  was written as a reminder for a step someone had to remember, and it is now a regression
+  guard on a setting that has no API, no test of its own, and no symptom visible to anyone
+  holding credentials.
+
+  So what this candidate found, it found during construction rather than at the tag — which
+  is the honest reading of a green release run, not evidence that a release needs no
+  candidate.
 
 ---
 
@@ -506,8 +521,12 @@ nothing was not tested.
 First milestone with published artifacts. Before this, everything is built from source and
 the agent is installed from a git tag.
 
-- [ ] Release workflow: `v*` tag publishes multi-arch (`linux/amd64`, `linux/arm64`)
-      control-plane images to GHCR and attaches the agent wheel to a GitHub Release
+- [x] Release workflow: `v*` tag publishes multi-arch (`linux/amd64`, `linux/arm64`)
+      control-plane images to GHCR and attaches the agent **wheels** to a GitHub Release —
+      plural, because the agent requires `vllmbench-protocol` and a Release carrying one
+      wheel attaches something nobody can install. Verified at `v1.0.0rc6`: five images,
+      both platforms each, anonymously pullable; both wheels installing into an empty
+      virtualenv on a machine with no source tree
 - [ ] Compose switches from local build to pinned published image tags
 - [ ] CHANGELOG generated from Conventional Commits
 
