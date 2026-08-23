@@ -18,6 +18,14 @@ without upgrading the agents takes every GPU host offline until you do.
 | 1.0.0rc1 – rc3 | 5 | — |
 | **1.0.0rc4** | **6** | The agent reports whether its virtualenv satisfies its own constraints. |
 | **1.0.0rc5** | **7** | Runs record what the engine resolved for speculative decoding, and what data they were measured against. |
+| 1.0.0rc6 | 7 | — publishing only; **no agent upgrade required** |
+
+rc6 is the first candidate since rc3 that leaves the protocol alone. A GPU host running
+the rc5 agent keeps working against an rc6 control plane, and its runs record
+`agent_version: 1.0.0rc5` — which is the versioning design behaving as intended rather
+than a gap: `__version__` is provenance and states what actually produced a measurement,
+while `PROTOCOL_VERSION` is compatibility and is the only thing entitled to refuse. Upgrade
+the agents when convenient; nothing is blocked until the protocol moves again.
 
 Additive fields on the wire are still a protocol bump, because the wire schema forbids
 unknown keys: a newer agent talking to an older control plane has its whole payload
