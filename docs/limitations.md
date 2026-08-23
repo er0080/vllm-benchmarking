@@ -62,6 +62,25 @@ or benchmark-client location means different populations. The framework groups a
 rather than overlaying — which is correct, and means some comparisons you might want are
 simply not available.
 
+**The emission gap is not a latency you can compare across speculation settings.** What
+`vllm bench serve` calls inter-token latency is the wait between *emissions*, and a
+speculative emission carries every token the target accepted. Measured across four MTP
+depths on one model, it rose from 25.0 ms to 44.1 ms while per-user throughput rose from
+39.6 to 69.3 tok/s — both correct, describing different things. Charts label it *Emission
+gap* and warn when a group mixes speculation settings, but the number itself cannot be made
+comparable. Compare speed with TPOT or per-user output rate.
+
+**A speculating engine that never drafts is silent about it.** vLLM omits the
+`spec_decode_*` fields from a benchmark result entirely when no drafts happened, rather than
+reporting zeros — so a NULL acceptance rate does not mean speculation was off. That is why
+`run.speculative_method` is read from the engine rather than inferred from the measurement.
+
+**A dataset identity past 2 GiB is a sampled digest, not a full hash.** Large local corpora
+are identified by their first and last 64 MiB plus their length, so an edit in the middle of
+one will not change it. The identity says which it is — `sha256-head-tail:` rather than
+`sha256:` — because reading tens of gigabytes before every benchmark is a real cost on the
+machine under test.
+
 **Imported upstream sweeps carry no provenance.** `vllm bench sweep serve` output has no
 vLLM version, GPU model, driver, host or device count in it. You are asked to declare them,
 and the import is refused without them rather than defaulted. Per-GPU throughput cannot be

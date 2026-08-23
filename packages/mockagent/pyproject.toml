@@ -1,6 +1,6 @@
 [project]
 name = "vllmbench-mockagent"
-version = "1.0.0rc4"
+version = "1.0.0rc5"
 description = "Mock agent implementing the agent contract with synthetic data, for development and tests"
 license = "Apache-2.0"
 requires-python = ">=3.11,<3.14"

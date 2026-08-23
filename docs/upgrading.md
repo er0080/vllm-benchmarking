@@ -6,6 +6,24 @@ refuses a mismatch, naming both versions — a stale agent fails at connect time
 producing subtly wrong data mid-sweep. That refusal is the system working. This document is
 how to avoid triggering it.
 
+## When an agent upgrade is mandatory
+
+Every release moves `__version__`, which is provenance. Only some move
+`PROTOCOL_VERSION`, which is compatibility — and those are the ones where a stale agent is
+refused rather than merely out of date. Upgrading the control plane past one of these
+without upgrading the agents takes every GPU host offline until you do.
+
+| Release | Protocol | What moved it |
+| --- | --- | --- |
+| 1.0.0rc1 – rc3 | 5 | — |
+| **1.0.0rc4** | **6** | The agent reports whether its virtualenv satisfies its own constraints. |
+| **1.0.0rc5** | **7** | Runs record what the engine resolved for speculative decoding, and what data they were measured against. |
+
+Additive fields on the wire are still a protocol bump, because the wire schema forbids
+unknown keys: a newer agent talking to an older control plane has its whole payload
+rejected on the extra key. Being told the versions differ is better than losing a
+forty-minute benchmark to a mismatch nobody named.
+
 ---
 
 ## The order

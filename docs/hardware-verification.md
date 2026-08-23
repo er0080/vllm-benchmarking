@@ -140,7 +140,7 @@ on a real host.
 
 ```bash
 # On the GPU host, inside the vLLM environment
-uv pip install "git+https://github.com/er0080/vllm-benchmarking@v1.0.0rc4#subdirectory=packages/agent"
+uv pip install "git+https://github.com/er0080/vllm-benchmarking@v1.0.0rc5#subdirectory=packages/agent"
 VLLMBENCH_TOKEN=... vllmbench-agent
 
 curl -s -H "Authorization: Bearer $VLLMBENCH_TOKEN" http://localhost:9110/host-info | jq
@@ -326,8 +326,21 @@ Editing accepts more than authoring at every depth (88.6% vs 82.1% at depth 1; 7
 
 TTFT moves the other way and by more than speculation explains: 341 ms editing against
 127 ms authoring at baseline. That is the prompt length, not the drafter — the high-copy
-prompts are longer. Speculation adds roughly 60 ms of TTFT at every depth in both
-workloads, which is the drafter's fixed cost and is flat.
+prompts are longer.
+
+Speculation adds TTFT, and the cost **grows with depth** rather than being a fixed
+overhead paid once:
+
+| depth | edit | author |
+| --- | --- | --- |
+| off | 341 ms | 127 ms |
+| 1 | 364 (+23) | 168 (+41) |
+| 2 | 382 (+41) | 189 (+62) |
+| 3 | 404 (+63) | 198 (+71) |
+
+Roughly 20 ms per additional speculative token on editing. Small against the throughput
+it buys, and worth knowing for an interactive assistant, where the first token is the part
+a person is waiting on: depth 3 is 18% slower to start and 75% faster thereafter.
 
 ### Two bugs, both found by using the framework rather than reading it
 

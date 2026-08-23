@@ -7,7 +7,7 @@ This project wraps the [vLLM Benchmark CLI](https://docs.vllm.ai/en/v0.25.1/benc
 with the things it does not provide: durable result storage, run history, cross-sweep
 comparison, configuration lineage, and a visual interface for parameter tuning.
 
-> **Status:** 1.0.0rc4 — release candidate. See [ROADMAP.md](ROADMAP.md) for what remains.
+> **Status:** 1.0.0rc5 — release candidate. See [ROADMAP.md](ROADMAP.md) for what remains.
 
 ---
 
@@ -206,7 +206,7 @@ Install it **into the vLLM environment**, from git:
 
 ```bash
 source /path/to/vllm-env/.venv/bin/activate
-uv pip install "git+https://github.com/er0080/vllm-benchmarking@v1.0.0rc4#subdirectory=packages/agent"
+uv pip install "git+https://github.com/er0080/vllm-benchmarking@v1.0.0rc5#subdirectory=packages/agent"
 ```
 
 Give it the same token, in a file rather than on a command line where `ps` can read it,

@@ -434,6 +434,48 @@ nothing was not tested.
   promised an interruption the orchestrator performs three seconds later, so an agent that
   cancelled and polled immediately had been told that meant failure.
 
+- **v1.0.0rc5** — three defects found by *using* the framework rather than reading it, all
+  of them at a seam between layers that individually worked and were individually tested.
+  A sweep chose a serving configuration for a notebook coding assistant — four MTP depths,
+  two workloads, 24 runs — and produced its answer (+75% per-user throughput on editing at
+  depth 3) along with the discovery that the framework could not say which of those runs
+  had been speculating. **The second candidate to move `PROTOCOL_VERSION`**, so every GPU
+  host's agent must be upgraded alongside the control plane again.
+
+  Cache resets between sweep points had never happened. `/reset_prefix_cache` sits behind
+  `VLLM_SERVER_DEV_MODE`, the agent did not set it, and the supervisor read the resulting
+  404 as a version that lacked the endpoint — so every sweep this project ever ran carried
+  its prefix cache across every point, and said `reset caches: none available` while doing
+  it. It cost nothing so far, and the database is what says so rather than hope: 8091
+  prefix-cache queries across the MTP sweep and zero hits, because those prompts share
+  nothing. A sweep over a repeated preamble would have had its later points inflated by its
+  earlier ones and the *ordering* of the matrix would have picked the winner. Storing
+  counters rather than a sampled hit rate is what made that answerable at all.
+
+  Speculation is now provenance — method and depth, indexed, read from the engine's own
+  `/server_info` rather than parsed out of config text, on the same rule invariant 8 sets
+  for parallelism topology and for the same reason: a YAML saying `num_speculative_tokens:
+  3` is not proof the engine drafted three tokens. Three states stay distinct, and the
+  third is the one that matters: `"none"` is the engine saying it is not speculating, NULL
+  is nobody having asked it.
+
+  Inter-token latency turned out to be measuring a different quantity on either side of
+  that boundary — the wait between *emissions*, not between tokens — rising 25.0 → 44.1 ms
+  across the same arms whose throughput rose 39.6 → 69.3 tok/s. Both correct. Kept and
+  relabelled *emission gap* rather than dropped, because chunked delivery is a real
+  property of a streaming UI; a group mixing speculation settings now says so.
+
+  `run.dataset_identity` had been NULL on every run this project ever produced, which
+  invariant 6 has required since the first schema. The agent now hashes what it actually
+  read, because `--dataset-path` names a file on a host the control plane cannot see.
+
+  And tier 2 stopped taking the speculative field names on trust: it runs a second,
+  speculating engine and re-derives them from it. That needed two things measured rather
+  than assumed — ngram needs no draft model, so it runs on a CPU backend; and an engine
+  that speculates but never drafts emits none of those fields at all, which is a fact worth
+  knowing on its own, because it means a NULL acceptance rate is not evidence that
+  speculation was off.
+
 ---
 
 ## 1.0.0 — Release
