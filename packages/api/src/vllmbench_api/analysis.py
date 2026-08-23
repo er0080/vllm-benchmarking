@@ -136,6 +136,31 @@ METRICS: tuple[MetricSpec, ...] = (
     MetricSpec(key="tpot_ms_p99", label="TPOT p99", unit="ms", better="lower"),
     MetricSpec(key="itl_ms_median", label="ITL median", unit="ms", better="lower"),
     MetricSpec(key="itl_ms_p99", label="ITL p99", unit="ms", better="lower"),
+    # Speculative decoding. NULL on a run that was not speculating, which is why these
+    # are last: a comparison that includes a non-speculative arm will show them empty on
+    # that side, and that is the correct reading rather than a gap in the data.
+    MetricSpec(
+        key="spec_acceptance_rate",
+        label="Draft acceptance rate",
+        unit="%",
+        better="higher",
+        description=(
+            "Share of drafted tokens the target model kept. The number that explains a "
+            "speculative result rather than restating it, and the one that transfers to a "
+            "different workload."
+        ),
+    ),
+    MetricSpec(
+        key="spec_acceptance_length",
+        label="Accepted tokens per step",
+        unit="tokens",
+        better="higher",
+        description=(
+            "Tokens gained per drafting step, including the one the target produces for "
+            "free. This is the figure the speed-up is proportional to; a high acceptance "
+            "rate at depth 1 is worth less than a lower one at depth 3."
+        ),
+    ),
 )
 
 METRICS_BY_KEY: Mapping[str, MetricSpec] = {m.key: m for m in METRICS}

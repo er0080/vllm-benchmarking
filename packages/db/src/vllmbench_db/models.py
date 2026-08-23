@@ -467,6 +467,25 @@ class RunSummary(Base):
     itl_ms_p99: Mapped[float | None] = mapped_column()
     itl_ms_std: Mapped[float | None] = mapped_column()
 
+    # -- Speculative decoding ------------------------------------------------------
+    # NULL means the engine was not speculating — vLLM emits none of these when it is
+    # off. That is not the same claim as an acceptance rate of zero, which would mean it
+    # speculated and every draft was rejected. Reading NULL as 0 inverts the finding.
+    #
+    # The acceptance *rate* is the fraction of drafted tokens accepted; the acceptance
+    # *length* is how many tokens the engine got per draft step including the free one,
+    # so it is the figure that predicts the speed-up. Both are kept because neither
+    # implies the other once the drafting depth changes.
+    spec_acceptance_rate: Mapped[float | None] = mapped_column()
+    spec_acceptance_length: Mapped[float | None] = mapped_column()
+    spec_num_drafts: Mapped[int | None] = mapped_column(Integer)
+    spec_draft_tokens: Mapped[int | None] = mapped_column(Integer)
+    spec_accepted_tokens: Mapped[int | None] = mapped_column(Integer)
+
+    #: Everything the field map did not claim, verbatim. Includes
+    #: `spec_decode_per_position_acceptance_rates`, an array as long as the speculation
+    #: depth — not a scalar, and not comparable between configs drafting to different
+    #: depths, so it stays whole rather than spread across invented columns.
     extra: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
 
     run: Mapped[Run] = relationship(back_populates="summary", lazy="raise_on_sql")

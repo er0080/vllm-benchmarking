@@ -58,6 +58,19 @@ SUMMARY_FIELD_MAP: dict[str, str] = {
     "median_itl_ms": "itl_ms_median",
     "p99_itl_ms": "itl_ms_p99",
     "std_itl_ms": "itl_ms_std",
+    # Speculative decoding. Absent entirely when the engine is not speculating, so these
+    # columns stay NULL for an ordinary run — which reads as "was not speculating", not as
+    # "speculated and accepted nothing". Those are opposite claims and the difference is
+    # the whole point of recording the rate.
+    #
+    # `spec_decode_per_position_acceptance_rates` is deliberately not here. It is an array
+    # whose length is the speculation depth, so it is neither a scalar nor comparable
+    # across configs that draft to different depths; it stays in `extra`, whole.
+    "spec_decode_acceptance_rate": "spec_acceptance_rate",
+    "spec_decode_acceptance_length": "spec_acceptance_length",
+    "spec_decode_num_drafts": "spec_num_drafts",
+    "spec_decode_draft_tokens": "spec_draft_tokens",
+    "spec_decode_accepted_tokens": "spec_accepted_tokens",
 }
 
 # Fields that describe what was run rather than what was measured. Kept out of
