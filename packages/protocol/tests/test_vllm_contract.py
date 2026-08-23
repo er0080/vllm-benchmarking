@@ -204,7 +204,8 @@ class TestSpeculativeContract:
         so a payload with zero drafts would fail the assertion above for a reason that has
         nothing to do with upstream renaming anything. This says which it is.
         """
-        assert speculative_payload.get("spec_decode_num_drafts", 0) > 0, (
+        drafts = speculative_payload.get("spec_decode_num_drafts")
+        assert isinstance(drafts, int | float) and drafts > 0, (
             "the speculating engine produced no drafts, so this payload cannot pin the "
             "field names. The benchmark needs prompts ngram can match — greedy decoding "
             "is what supplies the repetition here."

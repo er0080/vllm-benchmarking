@@ -47,7 +47,7 @@ def run(method: str | None = NO_SPECULATION, tokens: int | None = 0, **overrides
         "speculative_tokens": tokens,
     }
     fields.update(overrides)
-    return RunRecord(**fields)  # type: ignore[arg-type]
+    return RunRecord(**fields)
 
 
 class TestTheEmissionAxisIsIdentifiedFromTheMetricTable:
