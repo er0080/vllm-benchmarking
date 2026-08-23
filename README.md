@@ -185,9 +185,15 @@ to the host and is entered when you register it in step 3.
 docker compose up -d
 ```
 
-That builds the images, applies the schema, and starts Postgres, the API, the orchestrator
-and the web UI. Budget about a minute, plus however long your connection takes to pull the
-base images the first time.
+That pulls the published images, applies the schema, and starts Postgres, the API, the
+orchestrator and the web UI. Budget about a minute, mostly download. The images are built
+for `linux/amd64` and `linux/arm64`, so Apple Silicon under Colima runs natively rather
+than emulated.
+
+Nothing is compiled and no credentials are needed. If you would rather run your own build
+of the source you just cloned — which is what you want if you intend to change anything —
+use `make up` instead, and see [CLAUDE.md](CLAUDE.md) for why the two are separate
+commands rather than one clever one.
 
 ```bash
 curl -s localhost:8080/api/health   # {"status":"ok", ... "schema":{"ok":true, ...}}

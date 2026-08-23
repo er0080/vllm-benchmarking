@@ -234,7 +234,8 @@ that the control plane and frontend are fully developable on a laptop:
 
 - **Mock agent** — implements the agent's HTTP contract and returns synthetic but
   realistic benchmark JSON and telemetry, with configurable latency and failure injection.
-  Started with `docker compose --profile dev up`. It is also the integration-test fixture.
+  Started with `make dev`, which builds it from your source; `docker compose --profile dev
+  up` pulls the published one. It is also the integration-test fixture.
 
   Failure injection is `VLLMBENCH_MOCK_START_FAILURE` / `VLLMBENCH_MOCK_BENCH_FAILURE`,
   set to a `FailureKind` value. The mock then refuses with the same status code, message
@@ -247,6 +248,37 @@ that the control plane and frontend are fully developable on a laptop:
 
 Both produce runs flagged synthetic per invariant 7. Keep them honest: when the real
 agent's contract changes, the mock changes in the same PR.
+
+### Two ways to start the stack, and why they are not one command
+
+`compose.yaml` pulls pinned published images and never builds. `compose.build.yaml` is an
+override that adds `build:` back, and `make up` / `make dev` layer it. So:
+
+| Command | Runs |
+| --- | --- |
+| `docker compose up -d` | the published release — what the README documents |
+| `make up` | your working tree |
+
+Compose accepts `image:` and `build:` on the same service, and that is exactly what is
+avoided here: which one wins then depends on what is already in the local image cache, so
+the same command builds on one machine and silently runs a published image on another. For
+a repository whose output is measurements, *which code produced this* is not allowed to
+depend on cache state.
+
+The consequence for CI is that the two claims need two jobs. `compose-source` builds this
+branch and keeps the behavioural checks — it is the one that would catch another regression
+like nginx caching the api container's address. `compose-released` pulls the pin and proves
+a stranger can start what we shipped. Before the split there was one job whose name said
+"the documented install" while it built from source; after the switch to images that name
+would have been a lie.
+
+**`VLLMBENCH_VERSION` is not `VERSION`, and must never be wired to it.** `VERSION` names
+what is being built next; the pin names a tag that already exists on GHCR. Between a
+release bump landing on `main` and its tag being pushed, nothing is published under
+`VERSION`'s name — so locking them together would break `docker compose up` on `main`, and
+the documented-install job with it, for the duration of every release. Advancing the pin is
+a separate change made after a release publishes. A test asserts the five services pin the
+same release as each other, which is the drift that actually happens.
 
 ### Pre-commit
 

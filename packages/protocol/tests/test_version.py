@@ -77,3 +77,41 @@ def test_the_agent_pins_protocol_exactly() -> None:
     assert pins == [f"vllmbench-protocol=={(ROOT / 'VERSION').read_text().strip()}"], (
         f"expected one exact pin, found {pins!r}"
     )
+
+
+def test_every_compose_image_pins_the_same_release() -> None:
+    """The five published images must move together, and never partly.
+
+    Five services carry the tag independently, so a bump that misses one leaves a stack
+    running four services from one release and one from another. Nothing errors: compose
+    starts them all, health checks pass, and `migrate` — whichever version it happens to
+    be — applies its own idea of head to the database the others then read.
+    """
+    import re
+
+    text = (ROOT / "compose.yaml").read_text()
+    pins = re.findall(
+        r"image: ghcr\.io/[\w./-]+:\$\{VLLMBENCH_VERSION:-([^}]+)\}",
+        text,
+    )
+    assert len(pins) == 5, f"expected five pinned images, found {len(pins)}: {pins}"
+    assert len(set(pins)) == 1, f"compose.yaml pins disagree: {sorted(set(pins))}"
+
+
+def test_the_compose_pin_is_not_wired_to_version() -> None:
+    """Deliberately unlocked, and worth a test so nobody 'fixes' it into lockstep.
+
+    Every other version string in this repository is held equal to VERSION. This one must
+    not be. VERSION names what is being built next; the pin names a tag that already
+    exists on GHCR, and between a release bump landing on main and its tag being pushed
+    there is nothing published under VERSION's name. Wiring them together would break
+    `docker compose up` on main — and CI's documented-install job with it — for the
+    duration of every release.
+
+    So this asserts only the property that actually matters: the pin is a literal, not a
+    reference to VERSION. It is allowed to equal VERSION (it does, right after a release)
+    and allowed to lag it.
+    """
+    text = (ROOT / "compose.yaml").read_text()
+    assert "${VERSION" not in text
+    assert "$(cat VERSION)" not in text

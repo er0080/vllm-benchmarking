@@ -1,0 +1,55 @@
+# Build override. Layered on top of compose.yaml to run YOUR code instead of a published
+# image:
+#
+#   docker compose -f compose.yaml -f compose.build.yaml up -d --build
+#
+# which is what `make up` and `make dev` do, so a developer with a clone gets their own
+# changes by default and a user following the README gets the artifact.
+#
+# This exists as a separate file rather than as `build:` alongside `image:` in one file.
+# Compose accepts both keys together, but which one wins then depends on what is already
+# in the local image cache — so the same command builds on one machine and silently runs
+# a published image on another. For a repository whose output is measurements, "which
+# code produced this" is not allowed to depend on cache state.
+#
+# The `image:` keys are inherited from compose.yaml, so a build here tags the result with
+# the same name. That is intentional: `docker compose down` and friends keep working, and
+# it means a locally built image can shadow the published one for that tag. Run
+# `docker compose pull` to get the real one back.
+
+name: vllmbench
+
+x-python-build: &python-build
+  context: .
+  dockerfile: docker/python.Dockerfile
+
+services:
+  migrate:
+    build:
+      <<: *python-build
+      args:
+        PACKAGE: vllmbench-db
+
+  api:
+    build:
+      <<: *python-build
+      args:
+        PACKAGE: vllmbench-api
+
+  orchestrator:
+    build:
+      <<: *python-build
+      args:
+        PACKAGE: vllmbench-orchestrator
+
+  web:
+    build:
+      context: .
+      dockerfile: docker/web.Dockerfile
+
+  mockagent:
+    profiles: ["dev"]
+    build:
+      <<: *python-build
+      args:
+        PACKAGE: vllmbench-mockagent

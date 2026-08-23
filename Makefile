@@ -4,6 +4,13 @@ SHELL := /bin/bash
 # Everything here must work identically on native Linux and macOS with Colima.
 # See CLAUDE.md, "Platform support".
 
+# The Makefile is the workshop; `docker compose` on its own is the product. Targets here
+# layer compose.build.yaml so a developer with a clone runs THEIR code, while the bare
+# `docker compose up` the README documents pulls the published images. Without this split
+# `make up` would silently start a released image after a source edit, and nothing would
+# say so.
+COMPOSE_SOURCE := docker compose -f compose.yaml -f compose.build.yaml
+
 .PHONY: help
 help: ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -61,7 +68,7 @@ test-db: ## Create and migrate vllmbench_test, which the integration suite empti
 	docker compose exec -T postgres sh -c \
 		'psql -U "$$POSTGRES_USER" -d postgres -tc "SELECT 1 FROM pg_database WHERE datname = '"'"'vllmbench_test'"'"'" \
 		| grep -q 1 || createdb -U "$$POSTGRES_USER" vllmbench_test'
-	docker compose run --rm migrate sh -c \
+	$(COMPOSE_SOURCE) run --rm migrate sh -c \
 		'DATABASE_URL="$${DATABASE_URL%/*}/vllmbench_test" alembic upgrade head'
 
 # DATABASE_URL is built here rather than left to the code default, which cannot know the
@@ -82,12 +89,20 @@ test-vllm-cpu: ## Run tests against the real vLLM CPU backend container
 # ---------------------------------------------------------------------------
 
 .PHONY: up
-up: ## Start the stack
-	docker compose up -d --build
+up: ## Start the stack from your source (the README's plain `docker compose up` pulls)
+	$(COMPOSE_SOURCE) up -d --build
 
 .PHONY: dev
-dev: ## Start the stack with the mock agent, no GPU host needed
-	docker compose --profile dev up -d --build
+dev: ## Start from source with the mock agent, no GPU host needed
+	$(COMPOSE_SOURCE) --profile dev up -d --build
+
+.PHONY: up-released
+up-released: ## Start from the published images, exactly as the README documents
+	docker compose up -d --wait
+
+.PHONY: pull
+pull: ## Fetch the pinned published images, replacing any local build of that tag
+	docker compose pull
 
 .PHONY: down
 down: ## Stop the stack
@@ -102,5 +117,5 @@ logs: ## Follow stack logs
 	docker compose logs -f
 
 .PHONY: migrate
-migrate: ## Apply database migrations
-	docker compose run --rm migrate
+migrate: ## Apply database migrations from your source
+	$(COMPOSE_SOURCE) run --rm migrate
