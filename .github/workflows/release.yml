@@ -1,0 +1,406 @@
+name: Release
+
+# Publishing, and only publishing. CI proves the code is right; this proves the artifacts
+# somebody else installs are the ones CI proved.
+#
+# Before 1.0.0 everything was built from source by whoever ran it, so architecture was a
+# property of the builder and could not be got wrong. From here it is a property of the
+# artifact, and getting it wrong is silent: an amd64-only image starts fine under Colima,
+# answers every health check, and is merely unusably slow. Nothing fails. So each
+# architecture is built on its own native runner — arm64 runners are free for public
+# repositories, and emulation has already cost this project an afternoon elsewhere — and
+# the merged manifest is inspected for both platforms before a Release exists to point at
+# it.
+#
+# `workflow_dispatch` runs the whole thing with publishing switched off, so the shape of
+# this file can be rehearsed without spending a tag on it.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  UV_VERSION: "0.12.1"
+  REGISTRY: ghcr.io
+
+permissions:
+  contents: read
+
+jobs:
+  # ------------------------------------------------------------------------------
+  # Nothing is built until the tag and VERSION agree. A mislabelled artifact is worse
+  # than no artifact: the agent reports its version to the control plane on connect,
+  # and the whole lockstep refusal is built on that string being true.
+
+  guard:
+    name: The tag and VERSION agree
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+      publish: ${{ steps.check.outputs.publish }}
+      prerelease: ${{ steps.check.outputs.prerelease }}
+      prefix: ${{ steps.check.outputs.prefix }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - id: check
+        run: |
+          set -euo pipefail
+          version="$(tr -d '[:space:]' < VERSION)"
+
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            tagged="${GITHUB_REF_NAME#v}"
+            if [ "${tagged}" != "${version}" ]; then
+              echo "::error::tag ${GITHUB_REF_NAME} does not match VERSION (${version})"
+              exit 1
+            fi
+            publish=true
+          else
+            echo "::notice::manual run — building and verifying, publishing nothing"
+            publish=false
+          fi
+
+          # Anything that is not a bare X.Y.Z is a pre-release, so a version string this
+          # does not understand is treated as one rather than as a stable release.
+          if printf '%s' "${version}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            prerelease=false
+          else
+            prerelease=true
+          fi
+
+          # GHCR requires a lowercase path, and the owner segment is whatever cloned it.
+          prefix="${REGISTRY}/$(printf '%s' "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
+
+          {
+            echo "version=${version}"
+            echo "publish=${publish}"
+            echo "prerelease=${prerelease}"
+            echo "prefix=${prefix}"
+          } >> "${GITHUB_OUTPUT}"
+
+          echo "version=${version} publish=${publish} prerelease=${prerelease}"
+          echo "images under ${prefix}/"
+
+  # ------------------------------------------------------------------------------
+  # One job per image per architecture, each on a runner of that architecture. Images
+  # are pushed by digest with no tag; the tag is attached later, once both halves
+  # exist, so a half-published version is never nameable.
+
+  image:
+    name: ${{ matrix.image.name }} (${{ matrix.platform }})
+    runs-on: ${{ matrix.platform == 'linux/arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    needs: guard
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - { name: db, package: vllmbench-db }
+          - { name: api, package: vllmbench-api }
+          - { name: orchestrator, package: vllmbench-orchestrator }
+          # Published, not just built. The dev profile is how the control plane and UI
+          # stay developable with no GPU host present, and that promise is empty if
+          # using it requires a source checkout and a build.
+          - { name: mockagent, package: vllmbench-mockagent }
+          - { name: web, dockerfile: docker/web.Dockerfile }
+        platform: [linux/amd64, linux/arm64]
+    steps:
+      - uses: actions/checkout@v5
+
+      # One slug, used for both the cache scope and the digest artifact name, so the two
+      # cannot disagree about which half of a manifest a digest belongs to.
+      - name: Name this architecture
+        run: echo "ARCH=${PLATFORM##*/}" >> "${GITHUB_ENV}"
+        env:
+          PLATFORM: ${{ matrix.platform }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        if: needs.guard.outputs.publish == 'true'
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build ${{ matrix.image.name }}
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.image.dockerfile || 'docker/python.Dockerfile' }}
+          build-args: ${{ matrix.image.package && format('PACKAGE={0}', matrix.image.package) || '' }}
+          platforms: ${{ matrix.platform }}
+          # Attestations are deliberately off. They add a second manifest per build, and
+          # merging digests into an index is the step with the least margin for surprise
+          # in this workflow. Worth revisiting once the plain path has shipped once.
+          provenance: false
+          sbom: false
+          outputs: >-
+            ${{ needs.guard.outputs.publish == 'true'
+                && format('type=image,name={0}/{1},push-by-digest=true,name-canonical=true,push=true',
+                          needs.guard.outputs.prefix, matrix.image.name)
+                || 'type=cacheonly' }}
+          cache-from: type=gha,scope=release-${{ matrix.image.name }}-${{ env.ARCH }}
+          cache-to: type=gha,mode=max,scope=release-${{ matrix.image.name }}-${{ env.ARCH }}
+
+      - name: Record the digest
+        if: needs.guard.outputs.publish == 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          test -n "${digest}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload the digest
+        if: needs.guard.outputs.publish == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ matrix.image.name }}-${{ env.ARCH }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # ------------------------------------------------------------------------------
+  # Give the pair a name, then read it back. Reading it back is the point: this is the
+  # only check in the project that can catch a single-arch publish, and a single-arch
+  # publish is invisible from any machine of the arch that got built.
+
+  manifest:
+    name: ${{ matrix.image }} manifest
+    runs-on: ubuntu-latest
+    needs: [guard, image]
+    if: needs.guard.outputs.publish == 'true'
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [db, api, orchestrator, mockagent, web]
+    steps:
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digest-${{ matrix.image }}-*
+          merge-multiple: true
+
+      - name: Tag the manifest list
+        env:
+          IMAGE: ${{ needs.guard.outputs.prefix }}/${{ matrix.image }}
+          VERSION: ${{ needs.guard.outputs.version }}
+        run: |
+          set -euo pipefail
+          cd /tmp/digests
+          ls -1
+
+          tags="--tag ${IMAGE}:${VERSION}"
+          # `latest` only ever means a stable release. A pre-release that moved it would
+          # hand the next `docker compose pull` a release candidate without asking.
+          if [ "${{ needs.guard.outputs.prerelease }}" = "false" ]; then
+            tags="${tags} --tag ${IMAGE}:latest"
+          fi
+
+          # shellcheck disable=SC2046,SC2086
+          docker buildx imagetools create ${tags} $(printf "${IMAGE}@sha256:%s " *)
+
+      - name: Both architectures are present
+        env:
+          IMAGE: ${{ needs.guard.outputs.prefix }}/${{ matrix.image }}
+          VERSION: ${{ needs.guard.outputs.version }}
+        run: |
+          set -euo pipefail
+          docker buildx imagetools inspect "${IMAGE}:${VERSION}" --raw \
+            | jq -r '.manifests[].platform | select(.os != "unknown")
+                     | .os + "/" + .architecture' \
+            | sort -u > /tmp/platforms.txt
+          cat /tmp/platforms.txt
+
+          for want in linux/amd64 linux/arm64; do
+            if ! grep -qx "${want}" /tmp/platforms.txt; then
+              echo "::error::${IMAGE}:${VERSION} has no ${want}; a Mac would run this under emulation"
+              exit 1
+            fi
+          done
+
+  # ------------------------------------------------------------------------------
+  # The agent wheel. Pure Python, so one wheel serves every GPU host — architecture is
+  # not the hazard here. The hazard is that it lands in somebody else's vLLM virtualenv
+  # and has to keep working with no source tree on the machine.
+
+  wheels:
+    name: Agent wheel
+    runs-on: ubuntu-latest
+    needs: guard
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+
+      # Both, always. vllmbench-protocol is a hard dependency of the agent and exists on
+      # no index anywhere, so a Release carrying only the agent wheel would attach an
+      # artifact that cannot be installed.
+      - name: Build the wheels
+        run: |
+          set -euo pipefail
+          uv build --package vllmbench-protocol --out-dir dist
+          uv build --package vllmbench-agent --out-dir dist
+          ls -l dist
+
+      - name: The wheels are the version being released
+        env:
+          VERSION: ${{ needs.guard.outputs.version }}
+        run: |
+          set -euo pipefail
+          for kind in vllmbench_protocol vllmbench_agent; do
+            # PEP 427 normalises the version in the filename, so ask uv what it built
+            # rather than pattern-matching a string that may have been rewritten.
+            found=$(ls dist/${kind}-*.whl)
+            echo "${found}"
+            case "${found}" in
+              *"$(printf '%s' "${VERSION}" | tr -d '[:space:]')"*) ;;
+              *) echo "::error::${found} is not version ${VERSION}"; exit 1 ;;
+            esac
+          done
+
+      # Naming both wheel files is what keeps the install off any index for that name:
+      # the local file satisfies the requirement, so `vllmbench-protocol` is never
+      # looked up. That matters because the name is unregistered on PyPI, and an
+      # unregistered name in a published install instruction is somebody else's to take.
+      - name: The wheels install into a clean venv
+        run: |
+          set -euo pipefail
+          uv venv --python 3.12 /tmp/agent-venv
+          VIRTUAL_ENV=/tmp/agent-venv uv pip install \
+            dist/vllmbench_agent-*.whl dist/vllmbench_protocol-*.whl
+
+      - name: No package may reference a source checkout
+        run: python3 scripts/check_agent_install.py /tmp/agent-venv
+
+      # Importing proves the packages are present; starting proves the dependency list
+      # is complete. Same reasoning as the git-install job in ci.yml — a missing runtime
+      # dependency is invisible to an import check in a venv that happens to have it.
+      - name: The installed agent starts and serves /health
+        run: |
+          set -euo pipefail
+          /tmp/agent-venv/bin/python -c \
+            "import vllmbench_agent, vllmbench_protocol; print(vllmbench_protocol.__version__)"
+          VLLMBENCH_TOKEN=ci-test-token-0123456789 VLLMBENCH_PORT=9110 \
+            /tmp/agent-venv/bin/vllmbench-agent &
+          for _ in $(seq 1 40); do
+            if curl -fsS http://127.0.0.1:9110/health > /tmp/health.json; then
+              cat /tmp/health.json; echo
+              exit 0
+            fi
+            sleep 0.5
+          done
+          echo "::error::agent did not answer /health within 20s"
+          exit 1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels
+          path: dist/*.whl
+          if-no-files-found: error
+
+  # ------------------------------------------------------------------------------
+  # Last, so the Release only ever points at artifacts that exist and were checked.
+
+  release:
+    name: GitHub Release
+    runs-on: ubuntu-latest
+    needs: [guard, manifest, wheels]
+    if: needs.guard.outputs.publish == 'true'
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheels
+          path: dist
+
+      - name: Compose the release body
+        env:
+          VERSION: ${{ needs.guard.outputs.version }}
+          PREFIX: ${{ needs.guard.outputs.prefix }}
+        run: |
+          set -euo pipefail
+          cat > /tmp/notes.md <<EOF
+          ## Control plane
+
+          Images are published for \`linux/amd64\` and \`linux/arm64\`:
+
+          \`\`\`
+          ${PREFIX}/api:${VERSION}
+          ${PREFIX}/db:${VERSION}
+          ${PREFIX}/orchestrator:${VERSION}
+          ${PREFIX}/web:${VERSION}
+          ${PREFIX}/mockagent:${VERSION}
+          \`\`\`
+
+          ## Agent
+
+          Install **both** wheels in one command, into the virtualenv vLLM already lives
+          in. \`vllmbench-protocol\` is published only here, so naming the file is what
+          keeps the install from looking the name up somewhere it does not exist:
+
+          \`\`\`
+          uv pip install vllmbench_agent-${VERSION}-py3-none-any.whl \\
+                         vllmbench_protocol-${VERSION}-py3-none-any.whl
+          \`\`\`
+
+          Installing from the tag still works and is what
+          [docs/agent-installation.md](docs/agent-installation.md) describes in full,
+          including the \`--reinstall-package\` scoping that keeps an upgrade from moving
+          versions in vLLM's own environment.
+
+          **The control plane refuses to run against a mismatched agent**, naming both
+          versions. Upgrade the agent first, then the control plane.
+          EOF
+          cat /tmp/notes.md
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.guard.outputs.version }}
+          PRERELEASE: ${{ needs.guard.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+
+          # --generate-notes prepends nothing; it appends the commit list under the notes
+          # already given, which is where the install instructions want to be.
+          args=(--title "v${VERSION}" --notes-file /tmp/notes.md --generate-notes)
+
+          # A release candidate must not become the repository's "Latest". Somebody
+          # arriving at the releases page and taking the top entry should get a release.
+          if [ "${PRERELEASE}" = "true" ]; then
+            args+=(--prerelease --latest=false)
+          fi
+
+          gh release create "${GITHUB_REF_NAME}" "${args[@]}" dist/*.whl

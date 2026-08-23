@@ -5,7 +5,21 @@ description = "GPU-host agent: vLLM lifecycle, benchmarking and telemetry"
 license = "Apache-2.0"
 requires-python = ">=3.11,<3.14"
 dependencies = [
-    "vllmbench-protocol",
+    # Pinned exactly, not loosely. Two reasons, and the second is the sharp one.
+    #
+    # Lockstep is already the rule (CLAUDE.md, "Versioning"): a GPU host running an agent
+    # that disagrees with the orchestrator about what a field means is how subtly wrong
+    # data gets recorded. An exact pin makes a half-finished upgrade — new agent, old
+    # protocol — fail at install rather than at connect.
+    #
+    # And this name is published nowhere. An unpinned requirement in a wheel we hand
+    # people is an instruction to fetch `vllmbench-protocol` from PyPI, where it does not
+    # exist and is therefore anyone's to register. The install command names both wheel
+    # files so the lookup never happens; the pin is what stands behind that if someone
+    # installs only one of them.
+    #
+    # scripts/check_versions.py keeps this equal to VERSION.
+    "vllmbench-protocol==1.0.0rc5",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
     "httpx>=0.28",

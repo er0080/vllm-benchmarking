@@ -53,3 +53,27 @@ def test_protocol_version_is_a_positive_int() -> None:
     # at all, and increments only on a breaking change to the agent's HTTP API.
     assert isinstance(vllmbench_protocol.PROTOCOL_VERSION, int)
     assert vllmbench_protocol.PROTOCOL_VERSION >= 1
+
+
+def test_the_agent_pins_protocol_exactly() -> None:
+    """The published wheel must not be able to resolve this name from an index.
+
+    ``vllmbench-protocol`` is on no package index. An unpinned requirement inside a wheel
+    people download is an instruction to go and fetch that name from PyPI, where it does
+    not exist — and an unregistered name in a published install instruction belongs to
+    whoever registers it first. The documented install passes both wheel files so the
+    lookup never happens; this pin is what stands behind that when someone installs only
+    one of them, and it also makes a half-finished upgrade fail at install rather than at
+    connect.
+    """
+    import tomllib
+
+    data = tomllib.loads((ROOT / "packages/agent/pyproject.toml").read_text())
+    pins = [
+        dep
+        for dep in data["project"]["dependencies"]
+        if dep.partition("==")[0].strip() == "vllmbench-protocol"
+    ]
+    assert pins == [f"vllmbench-protocol=={(ROOT / 'VERSION').read_text().strip()}"], (
+        f"expected one exact pin, found {pins!r}"
+    )

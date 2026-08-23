@@ -398,9 +398,13 @@ Any change that works on only one of the two platforms is incomplete.
 
 GitHub Actions. Workflows mirror the test tiers:
 
-- `ci.yml` — tiers 1 and 2, on push and PR. Required for merge.
-- `build.yml` — builds control-plane images and the agent wheel on `main` to prove they
-  build. **Does not publish before 1.0.0.**
+- `ci.yml` — tiers 1 and 2, on push and PR. Required for merge. Its `images`, `web-image`
+  and `agent-install` jobs are the "does it build, does it install" half: they push
+  nothing, and they are the only thing that validates the inter-package dependency graph,
+  since `uv sync --all-packages` puts everything in one venv locally.
+- `release.yml` — publishing, on a `v*` tag. Never runs on a branch, and
+  `workflow_dispatch` runs the whole thing with publishing switched off so it can be
+  rehearsed without spending a tag.
 
 ### Releases
 
@@ -417,10 +421,24 @@ This is verified, not trusted: `agent-install` in `ci.yml` installs from a throw
 clone, deletes it, and fails if anything in the resulting environment still points at a
 directory.
 
-From 1.0.0, a `v*` tag triggers publishing control-plane images to GHCR — built for
-`linux/amd64` and `linux/arm64` — and attaching the agent wheel to a GitHub Release. The
-agent wheel itself is pure Python and arch-independent. Do not build the release workflow
-before then; it is roadmap milestone 1.0.0, not scaffolding.
+From 1.0.0, a `v*` tag triggers publishing control-plane images to GHCR and attaching the
+agent wheels to a GitHub Release.
+
+**Both architectures, on their own runners.** Images are built for `linux/amd64` and
+`linux/arm64`, each on a native runner rather than under emulation, pushed by digest, and
+merged into one manifest list that is then read back and checked for both platforms. That
+read-back is the only check anywhere that can catch a single-arch publish, and it exists
+because the failure is silent: an amd64-only image starts fine under Colima, answers every
+health check, and is merely unusably slow. `latest` moves only for a bare `X.Y.Z`, so a
+release candidate never becomes what the next `pull` gets.
+
+**Wheels, plural.** The agent wheel is pure Python and arch-independent, but it depends on
+`vllmbench-protocol`, which is published nowhere else — so a Release carrying only the
+agent wheel would attach an artifact that cannot be installed. Both go up, the documented
+install names both files, and the agent pins the exact version. The pin is not tidiness:
+an unpinned requirement on a name that exists on no index is an instruction to fetch it
+from PyPI, and an unregistered name there belongs to whoever registers it first.
+`scripts/check_versions.py` holds the pin to `VERSION`.
 
 ### Migrations in CI
 
