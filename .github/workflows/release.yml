@@ -465,6 +465,31 @@ jobs:
           **The control plane refuses to run against a mismatched agent**, naming both
           versions. Upgrade the agent first, then the control plane.
           EOF
+
+          # This release's section of CHANGELOG.md, which is itself derived from the
+          # commit history — so the Release body and the changelog cannot come to
+          # disagree about what shipped. Preferred over --generate-notes because that
+          # lists raw commits including the release chore, and because a body assembled
+          # by GitHub is not the same text a reader finds in the repository.
+          section=$(awk -v want="## ${VERSION}" '
+            $0 ~ "^"want" " || $0 == want { inside = 1; next }
+            /^## / { inside = 0 }
+            inside { print }
+          ' CHANGELOG.md)
+
+          if [ -z "${section}" ]; then
+            echo "::error::CHANGELOG.md has no section for ${VERSION}"
+            echo "Run \`make changelog\` on the release commit and re-tag."
+            exit 1
+          fi
+
+          {
+            echo
+            echo "## What changed"
+            echo
+            printf '%s\n' "${section}"
+          } >> /tmp/notes.md
+
           cat /tmp/notes.md
 
       - name: Publish
@@ -475,9 +500,9 @@ jobs:
         run: |
           set -euo pipefail
 
-          # --generate-notes prepends nothing; it appends the commit list under the notes
-          # already given, which is where the install instructions want to be.
-          args=(--title "v${VERSION}" --notes-file /tmp/notes.md --generate-notes)
+          # No --generate-notes: the body already carries this release's changelog
+          # section, and GitHub's own list would repeat it less well.
+          args=(--title "v${VERSION}" --notes-file /tmp/notes.md)
 
           # A release candidate must not become the repository's "Latest". Somebody
           # arriving at the releases page and taking the top entry should get a release.

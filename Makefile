@@ -56,8 +56,16 @@ versions: ## Check package versions match VERSION
 test: ## Run unit tests (no services)
 	uv run pytest -m "not integration and not vllm_cpu"
 
+.PHONY: changelog
+changelog: ## Regenerate CHANGELOG.md from the commit history
+	python3 scripts/generate_changelog.py
+
+.PHONY: changelog-check
+changelog-check: ## Fail if CHANGELOG.md is behind the commit history
+	python3 scripts/generate_changelog.py --check
+
 .PHONY: check
-check: lint types versions test ## Everything CI tier 1 runs
+check: lint types versions changelog-check test ## Everything CI tier 1 runs
 
 # ---------------------------------------------------------------------------
 # Quality — tier 2, requires services
