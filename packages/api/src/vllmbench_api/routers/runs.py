@@ -304,6 +304,11 @@ _WORKLOAD_IDENTITY_FIELDS = (
     "burstiness",
     "input_len",
     "output_len",
+    # Part of the identity, because it is part of what gets sent. Two blazedit workloads
+    # differing only in --blazedit-min-distance are different traffic; leaving this out
+    # made them hash identically, so the second create returned the first and a sweep
+    # across "both" ran one of them twice while reporting a difference between two.
+    "extra_args",
 )
 
 

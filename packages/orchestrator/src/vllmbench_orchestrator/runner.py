@@ -537,6 +537,10 @@ async def client_bench(
             burstiness=workload.burstiness,
             random_input_len=workload.input_len,
             random_output_len=workload.output_len,
+            # Verbatim passthrough for flags this build predates. Coerced because rows
+            # written before this column held a list carry `{}`, which means the same
+            # thing and must not raise on the way to the agent.
+            extra_args=list(workload.extra_args) if isinstance(workload.extra_args, list) else [],
         )
     )
 

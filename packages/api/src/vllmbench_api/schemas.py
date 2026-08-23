@@ -179,6 +179,35 @@ class LineageOut(BaseModel):
     truncated: bool = False
 
 
+#: Flags the framework sets itself. Passing one through ``extra_args`` would win, because
+#: argparse takes the last occurrence — and the damage is not symmetric. Overriding
+#: ``--result-filename`` sends the benchmark's output somewhere nothing reads, producing a
+#: summary row of NULLs that is indistinguishable from a run which legitimately measured
+#: nothing. Refused at the boundary rather than trusted to care.
+FRAMEWORK_OWNED_FLAGS = frozenset(
+    {
+        "--backend",
+        "--base-url",
+        "--model",
+        "--served-model-name",
+        "--dataset-name",
+        "--dataset-path",
+        "--hf-name",
+        "--num-prompts",
+        "--request-rate",
+        "--max-concurrency",
+        "--burstiness",
+        "--save-result",
+        "--result-filename",
+    }
+)
+
+#: An escape hatch, not a scripting language. Bounded so a workload cannot carry a command
+#: line longer than the thing it is describing.
+MAX_EXTRA_ARGS = 32
+MAX_EXTRA_ARG_LENGTH = 256
+
+
 class WorkloadCreate(BaseModel):
     name: str = Field(min_length=1, max_length=128)
     dataset_name: str = "random"
@@ -191,6 +220,37 @@ class WorkloadCreate(BaseModel):
     burstiness: float | None = Field(default=None, gt=0)
     input_len: int | None = Field(default=None, ge=1)
     output_len: int | None = Field(default=None, ge=1)
+    #: Appended verbatim to `vllm bench serve`. Part of the workload's identity: two
+    #: workloads that pass different flags send different traffic and are not the same
+    #: workload, whatever else they share.
+    extra_args: list[str] = Field(default_factory=list)
+
+    @field_validator("extra_args", mode="before")
+    @classmethod
+    def _tolerate_older_rows(cls, value: object) -> object:
+        """Rows written before this was a list hold ``{}``, including the CI seed.
+
+        WorkloadOut inherits this model, so reading one of those rows would otherwise fail
+        validation on a value that means exactly what an empty list means.
+        """
+        return [] if value in (None, {}) else value
+
+    @field_validator("extra_args")
+    @classmethod
+    def _no_framework_flags(cls, value: list[str]) -> list[str]:
+        if len(value) > MAX_EXTRA_ARGS:
+            raise ValueError(f"extra_args takes at most {MAX_EXTRA_ARGS} items, got {len(value)}")
+        for item in value:
+            if len(item) > MAX_EXTRA_ARG_LENGTH:
+                raise ValueError(f"extra_args item longer than {MAX_EXTRA_ARG_LENGTH} characters")
+            # `--flag=value` too, which argparse accepts and which would otherwise slip past.
+            flag = item.split("=", 1)[0]
+            if flag in FRAMEWORK_OWNED_FLAGS:
+                raise ValueError(
+                    f"{flag} is set by this framework; passing it in extra_args would "
+                    "override what the run records about itself"
+                )
+        return value
 
 
 class WorkloadOut(WorkloadCreate):
