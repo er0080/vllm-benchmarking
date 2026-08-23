@@ -391,3 +391,63 @@ run did not. None would have been found by more unit tests of the parts.
 The argument for tier 2 is that a fake can only confirm our own assumptions. This is the
 argument for using the thing: an integration test can only confirm the assumptions somebody
 thought to write down.
+
+---
+
+## Verified — 2026-08-23, 1.0.0rc5 on real hardware
+
+The release that carries the three fixes above, checked on the host that motivated them.
+Agent upgraded rc4 → rc5 with the scoped reinstall (exactly two packages moved; the vLLM
+environment did not), then a two-run sweep — one speculative arm, one baseline, same
+workload — authored through MCP.
+
+| Item | Result |
+| --- | --- |
+| Protocol handshake after the bump | ✅ Agent 1.0.0rc5 / protocol 7, control plane the same, host reports healthy |
+| Cache resets actually happen | ✅ `reset caches: /reset_prefix_cache, /reset_mm_cache, /reset_encoder_cache` on both engine loads, where every previous sweep logged `none available` |
+| Speculation read from the engine | ✅ `mtp` at depth 3 on the speculative arm, `none` at 0 on the baseline |
+| Dataset identity | ✅ `sha256:00f3871d786b…:13350` |
+| Environment status recorded on the run | ✅ `conflicts`, the fastapi ceiling divergence that has been there since the first install |
+| Mixed-speculation warning | ✅ Fired on a comparison spanning the two arms |
+
+### The dataset hash checks itself
+
+The workload's file is `notebook-edit-00f3871d786b.json`, named by its own content hash
+before any of this existed — a workaround for the gap issue #82 was filed about. The agent
+computed `sha256:00f3871d786bd7487ff5e1cb3b9c6b11152f31427c4f2080f1cadda30be8953f:13350`.
+The filename prefix and the recorded identity agree, from two independent sources.
+
+### The cache fix did not move the numbers, exactly as predicted
+
+This is the check worth having done. Fixing a reset that never happened *could* have changed
+every measurement taken before it, which would have invalidated the MTP sweep. Against the
+same configuration and workload as yesterday:
+
+| | MTP sweep, 01:20 UTC | rc5 check, 15:40 UTC |
+| --- | --- | --- |
+| | median of 4 replicates | 1 run |
+| per-user output | 69.3 tok/s | 69.3 |
+| emission gap (median) | 44.1 ms | 44.1 |
+| acceptance length | 3.16 | 3.16 |
+| acceptance rate | 72.0% | 72.0% |
+| baseline emission gap | 25.0 ms | 25.0 |
+
+A single run against a median of four is not a spread comparison, and the agreement to three
+significant figures is partly luck. What it does rule out is a shift large enough to change
+any conclusion drawn from that sweep.
+
+Which is what the analysis in issue #87 said would happen: `prefix_cache_hits_total` was 0
+across all 8091 queries in that sweep, so there was no carryover to remove. Predicted from
+stored counters, then confirmed by measurement rather than assumed.
+
+### The warning earns its place immediately
+
+Asked for a Pareto view with the emission gap on one axis, the two arms come back with
+**both on the frontier** — the baseline "wins" on emission gap, 25.0 ms against 44.1, while
+being 43% slower per user. That is the exact reading the warning exists to prevent, and it
+appeared on the first comparison anyone made:
+
+> mixes mtp depth 3, no speculation; Emission gap median, Emission gap p99 count the wait
+> between emissions, and a speculative emission carries several tokens — so those figures
+> rise with depth even as generation gets faster. Compare speed with TPOT or per-user
+> output rate.

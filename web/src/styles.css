@@ -202,6 +202,16 @@ td {
   color: var(--warn-text);
 }
 
+/* Speculation depth, beside the topology it qualifies. Neutral rather than coloured: it
+   is a fact about the run, not a warning about it, and the status palette is reserved. */
+.badge-spec {
+  background: var(--bg);
+  border-color: var(--border);
+  color: var(--text-muted);
+  margin-left: 0.35rem;
+  font-variant-numeric: tabular-nums;
+}
+
 .notice {
   background: var(--warn-bg);
   border: 1px solid var(--warn-border);
