@@ -62,6 +62,15 @@ or benchmark-client location means different populations. The framework groups a
 rather than overlaying — which is correct, and means some comparisons you might want are
 simply not available.
 
+**Speculative drafting depth is bounded by the engine, not by the economics.** On vLLM
+0.25.1 with a single reused MTP layer, `num_speculative_tokens` of 4 or more raises a CUDA
+illegal memory access from the attention-metadata build and kills the engine mid-benchmark.
+Because CUDA reports the fault asynchronously, the arm degrades rather than failing at
+startup: the first run of a configuration can be clean and the next loses half its requests.
+Measured on Qwen3.8-27B-FP8; whether it generalises to other MTP checkpoints is untested.
+Acceptance length was still climbing at depth 6 (1.89 → 4.64), so where drafting stops
+paying for itself on this model is unknown.
+
 **The emission gap is not a latency you can compare across speculation settings.** What
 `vllm bench serve` calls inter-token latency is the wait between *emissions*, and a
 speculative emission carries every token the target accepted. Measured across four MTP

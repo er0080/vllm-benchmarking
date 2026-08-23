@@ -451,3 +451,82 @@ appeared on the first comparison anyone made:
 > between emissions, and a speculative emission carries several tokens — so those figures
 > rise with depth even as generation gets faster. Compare speed with TPOT or per-user
 > output rate.
+
+---
+
+## Verified — 2026-08-23, MTP depths 4 to 6, and where the engine gives out
+
+The first sweep run for a reason other than testing the framework, extended: the original
+four arms found depth 3 best of {off, 1, 2, 3} with the payoff still rising, so the
+deployed configuration sat at the edge of what had been measured. Seven arms — {off, 1, 2,
+3, 4, 5, 6} — against the same two workloads, three replicates each, 42 runs, authored
+entirely through MCP.
+
+**The answer is that the measurement runs out before the economics do.**
+
+### The clean arms
+
+Medians over three replicates, notebook edit (high copy):
+
+| depth | accept % | tokens/step | per user | range | per GPU |
+| --- | --- | --- | --- | --- | --- |
+| off | — | — | 39.6 | 39.4–39.6 | 60.2 |
+| 1 | 88.9 | 1.89 | 54.5 | 54.0–54.8 | 80.4 |
+| 2 | 78.7 | 2.57 | 59.7 | 58.6–61.0 | 87.7 |
+| 3 | 74.7 | 3.24 | **71.7** | 69.5–72.2 | 101.6 |
+
+**+81% per-user on editing at depth 3, +67% on authoring.** This reproduces the original
+sweep — 71.7 against 69.3, ranges overlapping — on a control plane where the cache resets
+now actually happen, which is a second confirmation that the reset fix did not move these
+numbers.
+
+### The arms that are not measurements
+
+| depth | succeeded | failed | of which partial | requests lost |
+| --- | --- | --- | --- | --- |
+| 0–3 | 24 | 0 | 0 | 0 |
+| 4 | 4 | 2 | 3 | 10 |
+| 5 | 3 | 3 | 2 | 6 |
+| 6 | 3 | 3 | 3 | 11 |
+
+Twenty-four consecutive clean runs through depth 3, and then only 2 of 18 clean from depth
+4 up. The medians those arms produce look plausible and are worthless: depth 6's per-user
+figures span **17.8 to 67.6 tok/s** across two runs.
+
+### Why: vLLM corrupts memory at drafting depth ≥ 4
+
+Reproduced deliberately, with one engine and the same workload:
+
+```
+gpu_model_runner.execute_model → _build_attention_metadata → _build_attn_group_metadata
+  → flashinfer.py:1176 build → backend.py:493 seq_lens_cpu
+torch.AcceleratorError: CUDA error: an illegal memory access was encountered
+```
+
+Both ranks, then `EngineDeadError` for every subsequent request. Not out of memory — an
+illegal access. The checkpoint has `mtp_num_hidden_layers: 1` and no `n_predict`, so vLLM
+runs that single layer once per position and warns that acceptance will suffer; past three
+positions it stops being merely inefficient.
+
+CUDA reports illegal accesses **asynchronously**, so the fault surfaces at an arbitrary
+later synchronisation — `seq_lens_cpu` is just a device-to-host copy that happens to notice.
+That is why the arm degrades rather than failing outright: replicate 0 passes cleanly,
+replicate 1 loses half its requests, replicate 2 finds a dead engine.
+
+An earlier reading blamed a SIGKILLed predecessor — one teardown in the sweep did need
+SIGKILL, immediately before the first depth-4 trouble, and the next load took 178 s against
+70–88 s elsewhere. That was a coincidence. Depth 5 failed the same way with no SIGKILL
+anywhere near it, and the deliberate reproduction needed no predecessor at all.
+
+### What the framework got right, and what it got wrong
+
+Right: the sweep finished all 42 runs, marked itself `failed`, recorded per-run failed
+request counts, left no orphaned process, and returned both cards to 36 MiB and 4 MiB after
+six crashed engines. Nothing published a median over half-empty runs without saying so.
+
+Wrong: the failure was **diagnosed as a configuration problem**. The reset that followed a
+dead engine got a transport error, which the supervisor reported as a refused reset with
+advice to check `VLLM_SERVER_DEV_MODE` — on a host where dev mode was working correctly —
+and filed under `engine_not_ready`, the kind that means the engine never came up. Three
+wrong answers from one conflation of "does not answer" with "answers no". Fixed, with the
+crash log above as the classifier's fixture.

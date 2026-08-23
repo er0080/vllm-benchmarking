@@ -115,6 +115,7 @@ class FailureKind(enum.StrEnum):
     ENGINE_CONFIG_REJECTED = "engine_config_rejected"
     ENGINE_LOAD_FAILED = "engine_load_failed"
     ENGINE_NOT_READY = "engine_not_ready"
+    ENGINE_CRASHED = "engine_crashed"
     HOST_DISK_FULL = "host_disk_full"
     BENCHMARK_TIMEOUT = "benchmark_timeout"
     BENCHMARK_FAILED = "benchmark_failed"

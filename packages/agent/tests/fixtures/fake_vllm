@@ -17,6 +17,13 @@ Behaviour is driven by FAKE_VLLM_MODE:
     ignore_sigterm refuse to die politely, forcing the SIGKILL escalation path
     hang           serve nothing at all
     no_dev_mode    serve normally but 404 the endpoints VLLM_SERVER_DEV_MODE gates
+    die_on_reset   become ready, serve, then vanish mid-request without answering
+
+`die_on_reset` is what a CUDA fault looks like from the supervisor's side: an engine
+that was serving a moment ago and is now not answering at all. It exits without writing a
+response, so the client sees a transport error rather than a status code — which is the
+distinction the supervisor has to get right, because an engine that does not answer and an
+engine that answers "no" have different causes and different fixes.
 
 `no_dev_mode` reproduces issue #87 exactly: a healthy engine that answers /health and
 /v1/models, and 404s /reset_prefix_cache and /server_info because it was launched without
@@ -93,6 +100,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         if self.path.startswith("/reset_"):
+            if MODE == "die_on_reset":
+                # No response, no clean shutdown: the process is simply gone, the way a
+                # worker killed by an illegal memory access takes the engine with it.
+                os._exit(1)
             if not DEV_MODE:
                 self._send(404, {"detail": "not found"})
                 return

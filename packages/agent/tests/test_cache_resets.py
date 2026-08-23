@@ -27,6 +27,7 @@ import pytest
 
 from vllmbench_agent.reaper import ProcessRegistry
 from vllmbench_agent.vllm_server import ENGINE_ENV, RESET_ENDPOINTS, ServerError, VllmServer
+from vllmbench_protocol.failures import FailureKind
 
 FIXTURES = Path(__file__).parent / "fixtures"
 CONFIG = "model: facebook/opt-125m\n"
@@ -122,5 +123,76 @@ class TestResettingCaches:
             with pytest.raises(ServerError) as caught:
                 await server.reset_caches()
             assert caught.value.kind.value == "engine_not_ready"
+        finally:
+            await server.stop()
+
+
+class TestAnEngineThatDiedIsNotAConfigurationProblem:
+    """The distinction this class exists for cost a real diagnosis.
+
+    During a seven-arm drafting sweep an engine was killed mid-benchmark by a CUDA illegal
+    memory access. The reset that followed got a transport error, and the supervisor
+    reported it as a refused reset — advising the operator to check `VLLM_SERVER_DEV_MODE`
+    on a host where dev mode was working perfectly, and filing it under the kind that means
+    "the engine never became ready". Three wrong answers from one conflation.
+
+    An engine that does not answer and an engine that answers "no" fail for opposite
+    reasons: the first was working a moment ago, so nothing about the configuration is at
+    fault; the second never had the endpoint at all.
+    """
+
+    async def test_it_is_reported_as_a_crash(
+        self, tmp_path: Path, fake_vllm_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("FAKE_VLLM_MODE", "die_on_reset")
+        server = await start(tmp_path)
+        try:
+            with pytest.raises(ServerError) as caught:
+                await server.reset_caches()
+            assert caught.value.kind is FailureKind.ENGINE_CRASHED
+        finally:
+            await server.stop()
+
+    async def test_it_does_not_blame_dev_mode(
+        self, tmp_path: Path, fake_vllm_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The specific wrong turn. `VLLM_SERVER_DEV_MODE` is the right advice for a 404
+        and actively misleading for a socket that closed."""
+        monkeypatch.setenv("FAKE_VLLM_MODE", "die_on_reset")
+        server = await start(tmp_path)
+        try:
+            with pytest.raises(ServerError) as caught:
+                await server.reset_caches()
+            assert "VLLM_SERVER_DEV_MODE" not in str(caught.value)
+            assert "stopped answering" in str(caught.value)
+        finally:
+            await server.stop()
+
+    async def test_it_carries_the_engines_own_last_words(
+        self, tmp_path: Path, fake_vllm_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Without them the message says only that something went wrong. With them it
+        says which kernel — which is the difference between a bug report and a shrug."""
+        monkeypatch.setenv("FAKE_VLLM_MODE", "die_on_reset")
+        server = await start(tmp_path)
+        try:
+            with pytest.raises(ServerError) as caught:
+                await server.reset_caches()
+            assert "last output" in str(caught.value)
+        finally:
+            await server.stop()
+
+    async def test_a_refusal_is_still_a_refusal(
+        self, tmp_path: Path, fake_vllm_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The other side of the fork, so that fixing one did not break the other: a 404
+        still means dev mode, still says so, and is still not a crash."""
+        monkeypatch.setenv("FAKE_VLLM_MODE", "no_dev_mode")
+        server = await start(tmp_path)
+        try:
+            with pytest.raises(ServerError) as caught:
+                await server.reset_caches()
+            assert caught.value.kind is FailureKind.ENGINE_NOT_READY
+            assert "VLLM_SERVER_DEV_MODE" in str(caught.value)
         finally:
             await server.stop()
