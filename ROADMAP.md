@@ -476,6 +476,29 @@ nothing was not tested.
   knowing on its own, because it means a NULL acceptance rate is not evidence that
   speculation was off.
 
+- **v1.0.0rc6** — the first candidate that publishes anything, and the first since rc3
+  that leaves `PROTOCOL_VERSION` alone, so no GPU host has to be touched to accept it.
+  Everything before this was built from source by whoever ran it, which meant architecture
+  was a property of the builder and could not be got wrong; from here it is a property of
+  the artifact, and getting it wrong is silent — an amd64-only image starts fine under
+  Colima, answers every health check, and is merely unusably slow.
+
+  Building it found that the artifact the roadmap describes could not have been installed.
+  "Attaches the agent wheel", singular, but the agent requires `vllmbench-protocol`, which
+  is published nowhere; a Release carrying one wheel attaches something nobody can install.
+  Both go up now. The same fact turned out to be a supply-chain hazard rather than an
+  inconvenience: both names are unregistered on PyPI, so an unpinned requirement inside a
+  wheel handed to people is an instruction to fetch a name that belongs to whoever
+  registers it first, landing a stranger's code in the vLLM virtualenv on a GPU host. The
+  install names both files so the lookup never happens, the agent pins the exact version
+  behind that, and `scripts/check_versions.py` holds the pin to `VERSION`.
+
+  What this candidate exists to exercise is the part no laptop can rehearse: pushing by
+  digest, merging two digests into one manifest list, and whether a package created by
+  `GITHUB_TOKEN` is pullable by somebody with no account. That last one has no REST
+  endpoint and fails only for strangers — every pull we make is authenticated — so it is
+  checked by a job that runs with `permissions: {}` and no login at all.
+
 ---
 
 ## 1.0.0 — Release
