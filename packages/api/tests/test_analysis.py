@@ -685,21 +685,84 @@ class TestPartialFailuresAreStated:
     rather than as the absence of one.
     """
 
-    def test_failed_requests_produce_a_warning(self) -> None:
+    def test_an_incomplete_run_produces_a_warning(self) -> None:
         records = [
-            record(failed_requests=0),
-            record(failed_requests=3),
+            record(failed_requests=0, successful_requests=8),
+            record(failed_requests=4, successful_requests=4),
         ]
 
         warnings = group_warnings(records)
 
-        assert any("failed requests" in w for w in warnings)
-        assert any("up to 3" in w for w in warnings)
+        assert any("did not complete every request" in w for w in warnings)
+
+    def test_it_names_the_share_that_finished(self) -> None:
+        """ "4 failed" is unreadable without its denominator: four of eight is a broken
+        run and four of two hundred is a flake."""
+        warnings = group_warnings(
+            [
+                record(failed_requests=0, successful_requests=8),
+                record(failed_requests=4, successful_requests=4),
+            ]
+        )
+        assert any("4 of 8" in w for w in warnings)
+
+    def test_the_worst_run_is_the_one_reported(self) -> None:
+        warnings = group_warnings(
+            [
+                record(failed_requests=1, successful_requests=7),
+                record(failed_requests=6, successful_requests=2),
+            ]
+        )
+        assert any("2 of 8" in w for w in warnings)
+
+    def test_it_claims_no_direction(self) -> None:
+        """The assertion this rewrite exists for.
+
+        The warning used to say partial runs "understate the configuration", on the
+        reasoning that throughput divides by the whole benchmark duration. Measured
+        against a healthy replicate of the same configuration on the same engine, output
+        throughput went *up* in all three partial runs — because a benchmark that loses
+        its requests also stops early, truncating the denominator too. Any wording that
+        tells the reader which way to correct is wrong, whichever way it points.
+        """
+        warnings = " ".join(
+            group_warnings(
+                [
+                    record(failed_requests=0, successful_requests=8),
+                    record(failed_requests=4, successful_requests=4),
+                ]
+            )
+        )
+        for direction in ("understate", "overstate", "inflate", "deflate", "slower", "faster"):
+            assert direction not in warnings.lower(), (
+                f"the warning claims a direction ({direction!r}) the data does not support"
+            )
+
+    def test_it_says_why_they_are_incomparable(self) -> None:
+        """Not merely that they are. The early stop is the mechanism, and without it the
+        reader is left assuming the run is simply a noisier version of the others."""
+        warnings = " ".join(
+            group_warnings(
+                [
+                    record(failed_requests=0, successful_requests=8),
+                    record(failed_requests=4, successful_requests=4),
+                ]
+            )
+        )
+        assert "stops early" in warnings
+
+    def test_an_unknown_denominator_still_warns(self) -> None:
+        """An imported run may carry a failure count and no completion count. Losing the
+        warning entirely because the phrasing got fussier would be a worse trade."""
+        warnings = group_warnings(
+            [record(failed_requests=0), record(failed_requests=3, successful_requests=None)]
+        )
+        assert any("3 failed" in w for w in warnings)
 
     def test_a_clean_group_says_nothing(self) -> None:
         """The warning is worthless if it appears on every chart."""
         assert not [
             w
             for w in group_warnings([record(failed_requests=0), record(failed_requests=None)])
-            if "failed requests" in w
+            if "complete every request" in w
         ]

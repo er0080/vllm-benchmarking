@@ -182,6 +182,7 @@ def _to_record(
         cuda_version=run.cuda_version,
         imported_from=run.imported_from,
         failed_requests=summary.failed_requests,
+        successful_requests=summary.successful_requests,
         config_hash=run.config_hash,
         config_name=config_name,
         config_family=_family_hash(config_yaml),
