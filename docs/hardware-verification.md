@@ -513,6 +513,12 @@ later synchronisation — `seq_lens_cpu` is just a device-to-host copy that happ
 That is why the arm degrades rather than failing outright: replicate 0 passes cleanly,
 replicate 1 loses half its requests, replicate 2 finds a dead engine.
 
+**Deliberately not reported upstream.** These are Ampere-generation RTX 3090s, and a
+speculative-decoding path that misbehaves on hardware two generations old is unlikely to be
+worth anyone's time to chase. Recorded here so the decision is visible and nobody spends an
+afternoon rediscovering the bug and filing it: `VLLM_REFERENCE_VERSION` pins us to 0.25.1,
+so this is a fact about the version we test against rather than a defect awaiting a fix.
+
 An earlier reading blamed a SIGKILLed predecessor — one teardown in the sweep did need
 SIGKILL, immediately before the first depth-4 trouble, and the next load took 178 s against
 70–88 s elsewhere. That was a coincidence. Depth 5 failed the same way with no SIGKILL

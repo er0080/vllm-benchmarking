@@ -256,10 +256,11 @@ class RunRecord:
     #: Set when this run was imported rather than measured here, so its hardware and
     #: vLLM version were *declared by a person* rather than observed by an agent.
     imported_from: str | None = None
-    #: Requests that failed during the benchmark. A run with some completions is a real
-    #: measurement of those completions, but throughput is divided by the whole duration
-    #: — so failures deflate it, and the chart cannot show that on its own.
+    #: Requests that failed during the benchmark, and the ones that did not. Both, so a
+    #: warning can say "4 of 8" — the count that tells a reader whether to look harder or
+    #: move on, which "4 failed" on its own does not.
     failed_requests: int | None = None
+    successful_requests: int | None = None
 
     # Point identity
     config_hash: str = ""
@@ -372,6 +373,19 @@ def _speculation_label(record: RunRecord) -> str | None:
     return f"{method} depth {record.speculative_tokens}"
 
 
+def _completion_ratio(record: RunRecord) -> str:
+    """ "4 of 8", or just the failure count when the total is not known.
+
+    A bare "4 failed" is unreadable without the denominator: four of eight is a broken run
+    and four of two hundred is a flake.
+    """
+    failed = record.failed_requests or 0
+    completed = record.successful_requests
+    if completed is None:
+        return f"{failed} failed"
+    return f"{completed} of {completed + failed}"
+
+
 def speculation_warning(records: Sequence[RunRecord]) -> str | None:
     """Say so when a group's emission-based metrics are not measuring one quantity.
 
@@ -441,21 +455,36 @@ def group_warnings(records: Sequence[RunRecord]) -> list[str]:
                 "person, not observed"
             )
 
-    # Runs where some requests failed. `vllm bench serve` divides throughput by the whole
-    # benchmark duration, so a partially failed run is understated rather than invalid —
-    # a real measurement of fewer requests than were asked for. Nothing about the point
-    # on the chart says so, which is why it is said here.
+    # Runs that did not complete every request. This used to say they "understate the
+    # configuration", on the reasoning that throughput divides by the whole benchmark
+    # duration while the failed requests contribute no tokens. Measured against a healthy
+    # replicate of the same configuration on the same engine, that is not what happens:
+    #
+    #     healthy   8 of 8   42.8s    94.4 output tok/s   53.2 tok/s per user
+    #     partial   5 of 8   16.4s   117.7                45.2
+    #     partial   4 of 8   10.3s   125.8                65.8
+    #     partial   5 of 8   15.9s   121.4                45.2
+    #
+    # Throughput rose in every one. The assumption the old wording rested on is that the
+    # benchmark still ran its full course — but a run that loses its requests also stops,
+    # at 10.3s against 42.8s, so the denominator is truncated along with the numerator and
+    # which shrinks further depends on when the engine died. Latency moved both ways too.
+    #
+    # So no direction is claimed. These points measure a shorter benchmark under changing
+    # conditions, which is a different thing from this configuration measured badly.
     #
     # A run where *every* request failed never reaches this: it is refused at the
     # flattening layer, because its zeros would read as the fastest result on the chart
     # rather than as the absence of one.
     partial = [r for r in records if r.failed_requests]
     if partial:
-        worst = max(r.failed_requests or 0 for r in partial)
+        worst = min(_completion_ratio(r) for r in partial)
         warnings.append(
-            f"{len(partial)} run(s) had failed requests (up to {worst} in one run); "
-            "throughput is divided by the whole benchmark duration, so those points "
-            "understate the configuration rather than describe it"
+            f"{len(partial)} run(s) did not complete every request (as few as {worst}); "
+            "a benchmark that loses requests also stops early, so both what was counted "
+            "and the window it was divided by are cut short. Those points describe a "
+            "shorter benchmark under changing conditions, not a degraded measurement of "
+            "this configuration, and they lean no predictable way"
         )
 
     speculation = speculation_warning(records)
