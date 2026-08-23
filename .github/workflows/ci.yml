@@ -493,20 +493,28 @@ jobs:
           cache-from: type=gha,scope=web
           cache-to: type=gha,mode=max,scope=web
 
-  compose-stack:
-    name: Tier 2 — the documented install
+  # This job used to be "the documented install", back when the documented install built
+  # from source. Compose now pulls published images, so that claim moved to
+  # `compose-released` below and this one kept the behavioural checks — which have to run
+  # against THIS pull request's code, not against whatever was last released. Splitting
+  # them is the whole point: one job proves the code still works in the compose topology,
+  # the other proves a stranger can start the thing we shipped.
+
+  compose-source:
+    name: Tier 2 — the stack, built from this branch
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      COMPOSE: docker compose -f compose.yaml -f compose.build.yaml
     steps:
       - uses: actions/checkout@v5
 
-      # The README's step 1, run literally. Anything that only works because a developer
-      # already had images built, a volume with a schema in it, or a service left running
-      # is a step this job does not have.
-      - name: Bring the stack up the way the README says to
+      # Nothing here may depend on a developer already having images built, a volume with
+      # a schema in it, or a service left running.
+      - name: Bring the stack up from source
         run: |
           cp .env.example .env
-          docker compose up -d --wait
+          ${COMPOSE} up -d --wait --build
 
       - name: The UI is served, and its API calls reach the API
         run: |
@@ -522,7 +530,7 @@ jobs:
           net=vllmbench_default
           before=$(docker inspect vllmbench-api-1 \
             --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}')
-          docker compose stop api
+          ${COMPOSE} stop api
 
           # Force api onto a different address by occupying the one it just released.
           # Without this a recreate usually hands the same address straight back and the
@@ -541,7 +549,7 @@ jobs:
             [ "${got}" = "${before}" ] && break
           done
 
-          docker compose up -d --wait api
+          ${COMPOSE} up -d --wait api
           after=$(docker inspect vllmbench-api-1 \
             --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}')
           docker rm -f ${squatters} > /dev/null
@@ -552,6 +560,62 @@ jobs:
           fi
           echo "api moved ${before} -> ${after}"
           curl -fsS localhost:8080/api/health | grep -q '"status":"ok"'
+
+      - name: Logs on failure
+        if: failure()
+        run: ${COMPOSE} logs --tail 50
+
+  # ------------------------------------------------------------------------------
+  # The documented install, which is now a pull rather than a build. This is the only
+  # job that exercises what a new user actually runs, and the only one that would notice
+  # the pin naming a tag that does not exist, or an image published for one architecture.
+
+  compose-released:
+    name: Tier 2 — the documented install
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      # The README's first two commands, run literally and with no credentials — the
+      # images have to be pullable by someone who has never authenticated to GHCR, which
+      # is the only condition under which the quick start is true.
+      - name: Bring the stack up the way the README says to
+        run: |
+          cp .env.example .env
+          docker compose up -d --wait
+
+      - name: The UI is served, and its API calls reach the API
+        run: |
+          curl -fsS localhost:8080/ > /dev/null
+          curl -fsS localhost:8080/api/health | tee /dev/stderr | grep -q '"status":"ok"'
+
+      # A pinned stack whose services disagree about the release is the failure this
+      # catches: four containers from one tag and one from another start perfectly, and
+      # `migrate` quietly applies whichever head it happens to carry.
+      # Compose saying which tag it pinned is not evidence of what is running. This asks
+      # the container, and it is the check that catches a stack assembled from more than
+      # one release — four services on one tag and `migrate` on another start perfectly,
+      # health checks pass, and the odd one out quietly applies its own idea of head.
+      - name: The running stack is one release, and it is the pinned one
+        run: |
+          set -euo pipefail
+          pinned=$(docker compose config \
+                   | grep -oE 'ghcr\.io/[^ ]*vllm-benchmarking/[a-z]+:[^ ]+' \
+                   | cut -d: -f2 | sort -u)
+          count=$(printf '%s\n' "${pinned}" | grep -c .)
+          echo "compose pinned: ${pinned} (${count} distinct)"
+          if [ "${count}" -ne 1 ]; then
+            echo "::error::compose resolved ${count} different tags: ${pinned}"
+            exit 1
+          fi
+
+          reported=$(curl -fsS localhost:8080/api/health | jq -er '.version')
+          echo "the running api reports: ${reported}"
+          if [ "${reported}" != "${pinned}" ]; then
+            echo "::error::api is running ${reported} but compose pinned ${pinned}"
+            exit 1
+          fi
 
       - name: Logs on failure
         if: failure()

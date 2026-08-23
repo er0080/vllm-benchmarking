@@ -46,14 +46,27 @@ forty-minute benchmark to a mismatch nobody named.
    docker compose exec -T postgres pg_dump -U vllmbench -Fc vllmbench > vllmbench-$(date +%F).dump
    ```
 
-3. **Upgrade the control plane.** The `migrate` service runs to completion before the API
-   and orchestrator start, so this applies the schema and brings the services up in one
-   command.
+3. **Upgrade the control plane** by moving the image tag. The `migrate` service runs to
+   completion before the API and orchestrator start, so this applies the schema and
+   brings the services up in one command.
 
    ```bash
-   git pull
-   docker compose up -d --build
+   git pull                        # picks up the new default pin in compose.yaml
+   docker compose pull
+   docker compose up -d --wait
    ```
+
+   **Moving that tag is performing a migration.** `migrate` runs from the same pinned
+   image as everything else, so the release you pin decides which schema your database is
+   brought to — and forward-only means step 2's backup is the only way back. This is the
+   one command in this document that changes data rather than code.
+
+   If `.env` sets `VLLMBENCH_VERSION`, that wins over the default in `compose.yaml` and
+   `git pull` will not move it. Edit it there instead, which is also how you pin a
+   deployment to a release and leave it there.
+
+   To upgrade a source checkout you are working on rather than a pinned release, use
+   `make up`, which builds from `compose.build.yaml`.
 
 4. **Upgrade every agent**, with `--reinstall-package` for each of `vllmbench-agent` and
    `vllmbench-protocol`. Without a reinstall flag `uv` does nothing when the version is
@@ -81,25 +94,29 @@ survived — not row counts, which would miss a migration that rewrote a through
 dropped one device's telemetry while keeping its peer.
 
 Verified again on the way to this release: a deployment two revisions behind, holding 83
-runs, 56 summaries and 7,569 GPU samples, was upgraded with `docker compose up -d --build`.
-Both migrations applied and all three counts were unchanged.
+runs, 56 summaries and 7,569 GPU samples, was upgraded with `docker compose up -d --build`
+— the build-from-source path, which is what the documented upgrade was at the time. Both
+migrations applied and all three counts were unchanged. The mechanism did not change when
+the stack moved to pinned images: `migrate` still runs to completion before anything else
+starts, and still applies the same Alembic revisions. What changed is which artifact it
+runs from.
 
 ## Rolling back
 
 **Code rolls back. Schema does not.**
 
-Checking out an older tag and rebuilding leaves the database at the newer revision. The API
+Pinning an older tag leaves the database at the newer revision. The API
 notices — it compares the applied revision against the head its build ships and reports
 `status: degraded` with both revisions on `/api/health` — because the failure it prevents is
 otherwise diagnosed by reading a Postgres type error backwards. That state is not supported,
 even when it appears to work.
 
-To actually go back past a migration, restore the dump you took in step 2. Check the old
-code out first, so that when the stack comes back up its `migrate` service has nothing to
+To actually go back past a migration, restore the dump you took in step 2. Pin the old
+release first, so that when the stack comes back up its `migrate` service has nothing to
 apply:
 
 ```bash
-git checkout v<old-tag>
+export VLLMBENCH_VERSION=<old-version>   # or set it in .env, which survives the shell
 docker compose down
 docker volume rm vllmbench_pgdata
 docker compose up -d postgres

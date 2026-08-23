@@ -527,7 +527,11 @@ the agent is installed from a git tag.
       wheel attaches something nobody can install. Verified at `v1.0.0rc6`: five images,
       both platforms each, anonymously pullable; both wheels installing into an empty
       virtualenv on a machine with no source tree
-- [ ] Compose switches from local build to pinned published image tags
+- [x] Compose switches from local build to pinned published image tags — with a
+      `compose.build.yaml` override so `make up` still runs a developer's own code, kept
+      as a separate file because `image:` and `build:` on one service resolve differently
+      depending on the local image cache. Verified on macOS/Colima against the real
+      `v1.0.0rc6` images: arm64 pulled natively, schema unchanged, 69 existing runs intact
 - [ ] CHANGELOG generated from Conventional Commits
 
 **Definition of done:**
