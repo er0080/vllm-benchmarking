@@ -532,7 +532,9 @@ the agent is installed from a git tag.
       as a separate file because `image:` and `build:` on one service resolve differently
       depending on the local image cache. Verified on macOS/Colima against the real
       `v1.0.0rc6` images: arm64 pulled natively, schema unchanged, 69 existing runs intact
-- [ ] CHANGELOG generated from Conventional Commits
+- [x] CHANGELOG generated from Conventional Commits — `scripts/generate_changelog.py`,
+      checked in CI so the file cannot drift or be hand-edited, and read by the release
+      workflow so the Release body and the changelog cannot disagree about what shipped
 
 **Definition of done:**
 

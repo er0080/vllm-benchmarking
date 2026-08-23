@@ -28,7 +28,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      # Full history and tags: the changelog is derived from both, and a shallow clone
+      # would generate an empty file that matched an empty file.
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - uses: astral-sh/setup-uv@v7
         with:
@@ -48,6 +52,9 @@ jobs:
 
       - name: Package versions match VERSION
         run: python3 scripts/check_versions.py
+
+      - name: CHANGELOG matches the commit history
+        run: python3 scripts/generate_changelog.py --check
 
       - name: Lint
         run: |
