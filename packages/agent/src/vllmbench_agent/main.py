@@ -266,6 +266,11 @@ def create_app(settings: AgentSettings | None = None) -> FastAPI:
                 # pairs are fine, so a TP=1 control keeps comparing against itself across
                 # a change to the interconnect.
                 "peer_access": probe_peer_access(status_now.device_indices)[0],
+                # From the engine that served this benchmark, not from the agent's
+                # environment now. They are the same process's settings only while
+                # nobody has restarted the agent under a changed profile, and a run is
+                # supposed to outlive that.
+                "engine_env": dict(status_now.engine_env),
             }
         )
 

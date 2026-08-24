@@ -258,6 +258,12 @@ class RunRecord:
     #: a direct GPU-to-GPU path and one staging through host memory are identical in every
     #: field above.
     peer_access: str | None = None
+    #: The engine's launch environment, filtered to what can change a measurement. None is
+    #: a run from before protocol 9; `{}` is an agent reporting none of it was set. The
+    #: settings in here are invisible to `config_hash` by construction -- they are not in
+    #: the config -- so two runs can agree on every other field above and have run
+    #: different collectives.
+    engine_env: dict[str, str] | None = None
     #: Set when this run was imported rather than measured here, so its hardware and
     #: vLLM version were *declared by a person* rather than observed by an agent.
     imported_from: str | None = None
@@ -471,6 +477,55 @@ def peer_access_warning(records: Sequence[RunRecord]) -> str | None:
     )
 
 
+#: Environment whose value is worth naming in a warning rather than counting. Everything
+#: the agent captures is recorded; this is only about which differences are worth a
+#: sentence, because a group that happens to differ in `CUDA_HOME` is not a finding and a
+#: group that differs in `NCCL_P2P_LEVEL` is.
+#:
+#: A prefix, so a variable nobody has invented yet still gets named. The agent's capture
+#: is deliberately wider than this — recording more than we warn about is the safe
+#: direction, since the record cannot be added to after the fact and the warning can.
+_NOTABLE_ENGINE_ENV_PREFIXES = ("VLLM_", "NCCL_")
+
+
+def engine_env_warning(records: Sequence[RunRecord]) -> str | None:
+    """Say so when a group's runs were launched under different engine settings.
+
+    The gap this closes is specific and was hit in practice. `config_hash` is the hash of
+    the config text, so it cannot see anything set in the environment — and a driver patch
+    plus `NCCL_P2P_LEVEL=SYS` moved per-GPU throughput 13.4% at concurrency 16 with the
+    config text byte-identical. Without this, that is one series.
+
+    Structured like :func:`peer_access_warning`: runs recorded before protocol 9 carry
+    None, and a group mixing "nobody asked" with real observations is not evidence of a
+    difference. Only keys actually disagreeing between two runs that both reported are
+    named — an absent key in one reporting run and a set key in the other is a real
+    disagreement, and is named.
+    """
+    reported = [r.engine_env for r in records if r.engine_env is not None]
+    if len(reported) < 2:
+        return None
+
+    notable: set[str] = set()
+    for env in reported:
+        notable.update(k for k in env if k.startswith(_NOTABLE_ENGINE_ENV_PREFIXES))
+
+    differing = sorted(k for k in notable if len({env.get(k) for env in reported}) > 1)
+    if not differing:
+        return None
+
+    unknown = sum(1 for r in records if r.engine_env is None)
+    detail = (
+        f"mixes runs launched with different {', '.join(differing)}. These are not in the "
+        "config, so the runs share a config hash while the engine did something different "
+        "under it — a different all-reduce kernel or a different peer-to-peer level "
+        "changes throughput without changing a single line of YAML"
+    )
+    if unknown:
+        detail += f", and {unknown} run(s) predate the engine environment being recorded at all"
+    return detail
+
+
 def group_warnings(records: Sequence[RunRecord]) -> list[str]:
     """Differences that are worth stating but not worth splitting a chart over."""
     warnings: list[str] = []
@@ -539,6 +594,10 @@ def group_warnings(records: Sequence[RunRecord]) -> list[str]:
     interconnect = peer_access_warning(records)
     if interconnect:
         warnings.append(interconnect)
+
+    engine_env = engine_env_warning(records)
+    if engine_env:
+        warnings.append(engine_env)
 
     return warnings
 

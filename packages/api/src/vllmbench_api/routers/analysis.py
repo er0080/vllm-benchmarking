@@ -181,6 +181,7 @@ def _to_record(
         driver_version=run.driver_version,
         cuda_version=run.cuda_version,
         peer_access=run.peer_access,
+        engine_env=run.engine_env,
         imported_from=run.imported_from,
         failed_requests=summary.failed_requests,
         successful_requests=summary.successful_requests,

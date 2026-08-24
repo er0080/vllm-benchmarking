@@ -27,6 +27,59 @@ log = logging.getLogger(__name__)
 _PROBE_TIMEOUT_SECONDS = 120
 
 
+#: Name prefixes for environment that can change what a benchmark measures.
+#:
+#: Prefix-matched rather than enumerated, deliberately. An explicit list can only name the
+#: variables known when it is written, and the one that forced this field into existence —
+#: ``VLLM_CUSTOM_ALLREDUCE_PUSH``, selecting a different all-reduce kernel entirely — was
+#: invented weeks after the schema it needed. A prefix catches the next one unattended,
+#: which is the only way this stays true.
+#:
+#: The cost of the prefix is recording some settings that turn out not to matter, and that
+#: is the right side to err on: an irrelevant recorded variable is noise in a JSONB column,
+#: while an unrecorded relevant one is two populations charted as one series.
+#:
+#: ``VLLMBENCH_`` does not match ``VLLM_`` — the underscore is load-bearing — so the
+#: agent's own settings, the shared token among them, are excluded by construction rather
+#: than by the redaction below. Both are in place; neither is relied on alone.
+ENGINE_ENV_PREFIXES = ("VLLM_", "NCCL_", "TORCH_", "CUDA_")
+
+#: Loader state, which decides which shared objects the engine actually binds — including
+#: which NCCL it finds. Not prefix-shaped, so named.
+ENGINE_ENV_NAMES = ("LD_LIBRARY_PATH", "LD_PRELOAD")
+
+#: Substrings marking a value that must never leave the host. The *name* is still
+#: recorded: whether ``VLLM_API_KEY`` was set changes how the engine behaves and is
+#: provenance, while what it was is a secret, and this mapping is persisted to a database
+#: and served by a JSON API.
+_SECRET_MARKERS = ("TOKEN", "KEY", "SECRET", "PASSWORD", "CREDENTIAL")
+
+#: What a redacted value reads as. Distinct from empty string, which is a real value a
+#: variable can hold and which means something different to the engine.
+ENGINE_ENV_REDACTED = "***"
+
+
+def engine_environment(env: dict[str, str]) -> dict[str, str]:
+    """The part of an engine's launch environment that can change its measurements.
+
+    Takes the environment rather than reading ``os.environ``, and callers must pass the
+    same dict they hand to :func:`subprocess.Popen`. Rebuilding it afterwards would make
+    this a reconstruction of what the engine was *probably* launched with, and the agent's
+    own environment is exactly the thing that could have changed in between — invariant 8's
+    rule that provenance is observed and never inferred after the fact.
+
+    Sorted, so two runs launched with the same settings produce equal mappings whatever
+    order the parent's environment happened to be in.
+    """
+    collected: dict[str, str] = {}
+    for name, value in env.items():
+        if not (name.startswith(ENGINE_ENV_PREFIXES) or name in ENGINE_ENV_NAMES):
+            continue
+        secret = any(marker in name.upper() for marker in _SECRET_MARKERS)
+        collected[name] = ENGINE_ENV_REDACTED if secret else value
+    return dict(sorted(collected.items()))
+
+
 def _executable(path: Path) -> str | None:
     return str(path) if path.is_file() and os.access(path, os.X_OK) else None
 

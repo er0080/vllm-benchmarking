@@ -50,6 +50,57 @@ CONFIG = "model: facebook/opt-125m\n"
 CONFIG_HASH = "a" * 64
 
 
+class TestEngineEnvironmentProvenance:
+    """That a started engine records the settings it was actually launched with.
+
+    The unit tests in `test_engine_env.py` cover what the filter keeps. This covers the
+    part that cannot be unit-tested: that the mapping on the status is derived from the
+    same dict handed to `subprocess.Popen`, rather than reconstructed from the agent's
+    environment afterwards. Those agree right up until someone restarts the agent under a
+    changed profile, which is exactly when a run needs to be believed.
+    """
+
+    async def test_a_started_engine_records_its_environment(
+        self, server: VllmServer, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("NCCL_P2P_LEVEL", "SYS")
+        monkeypatch.setenv("VLLM_CUSTOM_ALLREDUCE_PUSH", "1")
+        status = await server.start(
+            config_yaml=CONFIG,
+            config_hash=CONFIG_HASH,
+            port=_free_port(),
+            readiness_timeout_seconds=30,
+        )
+        try:
+            assert status.engine_env["NCCL_P2P_LEVEL"] == "SYS"
+            assert status.engine_env["VLLM_CUSTOM_ALLREDUCE_PUSH"] == "1"
+            # Set by the agent rather than inherited, and just as much a fact about the
+            # engine that ran.
+            assert status.engine_env["VLLM_SERVER_DEV_MODE"] == "1"
+        finally:
+            await server.stop()
+
+    async def test_the_record_is_of_the_launch_not_of_the_present(
+        self, server: VllmServer, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Changing the agent's environment after the fact must not rewrite history."""
+        monkeypatch.setenv("NCCL_P2P_LEVEL", "SYS")
+        await server.start(
+            config_yaml=CONFIG,
+            config_hash=CONFIG_HASH,
+            port=_free_port(),
+            readiness_timeout_seconds=30,
+        )
+        try:
+            monkeypatch.setenv("NCCL_P2P_LEVEL", "PIX")
+            assert server.status().engine_env["NCCL_P2P_LEVEL"] == "SYS"
+        finally:
+            await server.stop()
+
+    async def test_a_never_started_server_reports_empty(self, server: VllmServer) -> None:
+        assert server.status().engine_env == {}
+
+
 class TestStartup:
     async def test_starts_and_becomes_ready(self, server: VllmServer) -> None:
         status = await server.start(
