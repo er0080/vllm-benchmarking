@@ -585,9 +585,25 @@ somebody's memory of which week it was.
 - [x] `peer_access` on the wire and on the run, observed over the devices a run actually
       used rather than the host's full complement, so a TP=1 control stays one series
       across a change only a multi-device run can feel (#117, protocol 8)
+- [x] What the engine was *told to do* with that interconnect — the settings that change a
+      measurement and that the config hash cannot see, because they are not in the config
+      (#124, protocol 9)
 - [ ] Which driver *build* produced that state, for the case where two builds agree on
       peer access and differ in other ways (#119)
 - [ ] The A/B itself, and whatever it says
+
+The A/B has run, and the headline is that the driver patch on its own is worth **0.00%**.
+It grants permission; NCCL still declines the peer-to-peer path at `PHB` topology unless
+told otherwise. With `NCCL_P2P_LEVEL=SYS` the same hardware gives **+3.8% / +10.5% /
++13.4%** per-GPU output throughput at concurrency 1 / 8 / 16 against the stock driver —
+three replicates per arm, standard deviations under 0.03 tok/s.
+
+The expensive lesson was in between. vLLM's custom all-reduce infers cross-process CUDA IPC
+peer access from intra-process peer access, which the patch grants and IPC does not follow;
+the kernel then returns NaN for 100% of elements while the benchmark reports a 6–15%
+speedup. Twenty-nine runs measured a model computing nothing. That is what #124 exists to
+stop being invisible, and it is why `engine_env` had to land before the next sweep rather
+than after it — runs are immutable, so a run recorded without it can never acquire it.
 
 The first of those found a live upstream typo — `nvidia-ml-py` 13.610.43 defines
 `NVML_P2P_CAPS_INDEX_READ` as `(0,)` — which would have made the field uniformly blank
