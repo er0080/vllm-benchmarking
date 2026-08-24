@@ -64,7 +64,7 @@ services:
 
   migrate:
     logging: *logging
-    image: ghcr.io/er0080/vllm-benchmarking/db:${VLLMBENCH_VERSION:-1.0.0}
+    image: ghcr.io/er0080/vllm-benchmarking/db:${VLLMBENCH_VERSION:-1.1.0}
     environment: *db-env
     working_dir: /app/packages/db
     command: ["alembic", "upgrade", "head"]
@@ -75,7 +75,7 @@ services:
 
   api:
     logging: *logging
-    image: ghcr.io/er0080/vllm-benchmarking/api:${VLLMBENCH_VERSION:-1.0.0}
+    image: ghcr.io/er0080/vllm-benchmarking/api:${VLLMBENCH_VERSION:-1.1.0}
     environment:
       <<: *db-env
       VLLMBENCH_TOKEN: ${VLLMBENCH_TOKEN:-}
@@ -102,7 +102,7 @@ services:
 
   orchestrator:
     logging: *logging
-    image: ghcr.io/er0080/vllm-benchmarking/orchestrator:${VLLMBENCH_VERSION:-1.0.0}
+    image: ghcr.io/er0080/vllm-benchmarking/orchestrator:${VLLMBENCH_VERSION:-1.1.0}
     environment:
       <<: *db-env
       VLLMBENCH_TOKEN: ${VLLMBENCH_TOKEN:-}
@@ -115,7 +115,7 @@ services:
 
   web:
     logging: *logging
-    image: ghcr.io/er0080/vllm-benchmarking/web:${VLLMBENCH_VERSION:-1.0.0}
+    image: ghcr.io/er0080/vllm-benchmarking/web:${VLLMBENCH_VERSION:-1.1.0}
     ports:
       - "${WEB_PORT:-8080}:80"
     depends_on:
@@ -126,7 +126,7 @@ services:
   mockagent:
     logging: *logging
     profiles: ["dev"]
-    image: ghcr.io/er0080/vllm-benchmarking/mockagent:${VLLMBENCH_VERSION:-1.0.0}
+    image: ghcr.io/er0080/vllm-benchmarking/mockagent:${VLLMBENCH_VERSION:-1.1.0}
     environment:
       VLLMBENCH_TOKEN: ${VLLMBENCH_TOKEN:-dev-token}
       # Failure injection. Set either to a FailureKind value — engine_out_of_memory,
