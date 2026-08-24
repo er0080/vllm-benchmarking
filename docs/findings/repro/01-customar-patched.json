@@ -1,0 +1,36 @@
+{
+  "peer_access": true,
+  "custom_ar_disabled": false,
+  "results": [
+    {
+      "bytes": 8192,
+      "nccl_us": 37.94,
+      "custom_ar_us": 16.12,
+      "speedup_x": 2.35
+    },
+    {
+      "bytes": 32768,
+      "nccl_us": 39.11,
+      "custom_ar_us": 16.75,
+      "speedup_x": 2.34
+    },
+    {
+      "bytes": 131072,
+      "nccl_us": 67.58,
+      "custom_ar_us": 31.17,
+      "speedup_x": 2.17
+    },
+    {
+      "bytes": 524288,
+      "nccl_us": 167.74,
+      "custom_ar_us": 107.89,
+      "speedup_x": 1.55
+    },
+    {
+      "bytes": 2097152,
+      "nccl_us": 568.77,
+      "custom_ar_us": 418.29,
+      "speedup_x": 1.36
+    }
+  ]
+}

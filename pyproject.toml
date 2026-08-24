@@ -36,6 +36,11 @@ dev = [
 line-length = 100
 target-version = "py311"
 src = ["packages/*/src"]
+# Reproduction scripts are shipped verbatim as evidence: each one produced a result file
+# checked in beside it. Reformatting them would mean the copy in this repository is no
+# longer the thing that produced the measurement, and anyone re-running it and getting a
+# different answer would have no way to tell why. Same reasoning as captured fixtures.
+extend-exclude = ["docs/findings/repro"]
 
 [tool.ruff.lint]
 select = [

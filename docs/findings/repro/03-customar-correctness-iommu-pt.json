@@ -1,0 +1,213 @@
+{
+  "world_size": 2,
+  "peer_access": true,
+  "custom_ar_disabled": false,
+  "expected_value": 2.0,
+  "results": [
+    {
+      "bytes": 8192,
+      "nccl": {
+        "path": "nccl",
+        "all_finite": true,
+        "all_exact": true,
+        "min": 2.0,
+        "max": 2.0,
+        "n_nan": 0,
+        "n_inf": 0,
+        "first8": [
+          2.0,
+          2.0,
+          2.0,
+          2.0,
+          2.0,
+          2.0,
+          2.0,
+          2.0
+        ]
+      },
+      "custom_ar": {
+        "path": "custom_ar",
+        "all_finite": false,
+        "all_exact": false,
+        "min": null,
+        "max": null,
+        "n_nan": 4096,
+        "n_inf": 0,
+        "first8": [
+          NaN,
+          NaN,
+          NaN,
+          NaN,
+          NaN,
+          NaN,
+          NaN,
+          NaN
+        ]
+      }
+    },
+    {
+      "bytes": 32768,
+      "nccl": {
+        "path": "nccl",
+        "all_finite": true,
+        "all_exact": true,
+        "min": 2.0,
+        "max": 2.0,
+        "n_nan": 0,
+        "n_inf": 0,
+        "first8": [
+          2.0,
+          2.0,
+          2.0,
+          2.0,
+          2.0,
+          2.0,
+          2.0,
+          2.0
+        ]
+      },
+      "custom_ar": {
+        "path": "custom_ar",
+        "all_finite": false,
+        "all_exact": false,
+        "min": null,
+        "max": null,
+        "n_nan": 16384,
+        "n_inf": 0,
+        "first8": [
+          NaN,
+          NaN,
+          NaN,
+          NaN,
+          NaN,
+          NaN,
+          NaN,
+          NaN
+        ]
+      }
+    },
+    {
+      "bytes": 131072,
+      "nccl": {
+        "path": "nccl",
+        "all_finite": true,
+        "all_exact": true,
+        "min": 2.0,
+        "max": 2.0,
+        "n_nan": 0,
+        "n_inf": 0,
+        "first8": [
+          2.0,
+          2.0,
+          2.0,
+          2.0,
+          2.0,
+          2.0,
+          2.0,
+          2.0
+        ]
+      },
+      "custom_ar": {
+        "path": "custom_ar",
+        "all_finite": false,
+        "all_exact": false,
+        "min": null,
+        "max": null,
+        "n_nan": 65536,
+        "n_inf": 0,
+        "first8": [
+          NaN,
+          NaN,
+          NaN,
+          NaN,
+          NaN,
+          NaN,
+          NaN,
+          NaN
+        ]
+      }
+    },
+    {
+      "bytes": 524288,
+      "nccl": {
+        "path": "nccl",
+        "all_finite": true,
+        "all_exact": true,
+        "min": 2.0,
+        "max": 2.0,
+        "n_nan": 0,
+        "n_inf": 0,
+        "first8": [
+          2.0,
+          2.0,
+          2.0,
+          2.0,
+          2.0,
+          2.0,
+          2.0,
+          2.0
+        ]
+      },
+      "custom_ar": {
+        "path": "custom_ar",
+        "all_finite": false,
+        "all_exact": false,
+        "min": null,
+        "max": null,
+        "n_nan": 262144,
+        "n_inf": 0,
+        "first8": [
+          NaN,
+          NaN,
+          NaN,
+          NaN,
+          NaN,
+          NaN,
+          NaN,
+          NaN
+        ]
+      }
+    },
+    {
+      "bytes": 2097152,
+      "nccl": {
+        "path": "nccl",
+        "all_finite": true,
+        "all_exact": true,
+        "min": 2.0,
+        "max": 2.0,
+        "n_nan": 0,
+        "n_inf": 0,
+        "first8": [
+          2.0,
+          2.0,
+          2.0,
+          2.0,
+          2.0,
+          2.0,
+          2.0,
+          2.0
+        ]
+      },
+      "custom_ar": {
+        "path": "custom_ar",
+        "all_finite": false,
+        "all_exact": false,
+        "min": null,
+        "max": null,
+        "n_nan": 1048576,
+        "n_inf": 0,
+        "first8": [
+          NaN,
+          NaN,
+          NaN,
+          NaN,
+          NaN,
+          NaN,
+          NaN,
+          NaN
+        ]
+      }
+    }
+  ]
+}
