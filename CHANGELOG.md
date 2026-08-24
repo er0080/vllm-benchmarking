@@ -12,7 +12,7 @@ each release candidate was for and what it caught.
 
 ### Features
 
-- record the interconnect a run was measured over
+- record the interconnect a run was measured over ([#118](https://github.com/er0080/vllm-benchmarking/pull/118))
 
 ### Fixes
 
