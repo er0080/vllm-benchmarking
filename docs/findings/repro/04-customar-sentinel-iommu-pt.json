@@ -1,0 +1,43 @@
+{
+  "sentinel": -7.0,
+  "results": [
+    {
+      "bytes": 8192,
+      "elements": 4096,
+      "still_sentinel": 0,
+      "nan": 4096,
+      "correct_2.0": 0,
+      "verdict": "kernel wrote NaN",
+      "first8": [
+        NaN,
+        NaN,
+        NaN,
+        NaN,
+        NaN,
+        NaN,
+        NaN,
+        NaN
+      ],
+      "input_intact": true
+    },
+    {
+      "bytes": 131072,
+      "elements": 65536,
+      "still_sentinel": 0,
+      "nan": 65536,
+      "correct_2.0": 0,
+      "verdict": "kernel wrote NaN",
+      "first8": [
+        NaN,
+        NaN,
+        NaN,
+        NaN,
+        NaN,
+        NaN,
+        NaN,
+        NaN
+      ],
+      "input_intact": true
+    }
+  ]
+}

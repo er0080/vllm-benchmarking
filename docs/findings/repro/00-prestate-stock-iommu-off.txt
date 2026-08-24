@@ -1,0 +1,35 @@
+# Pre-state: stock driver, intel_iommu=off
+# captured 2026-08-23T23:17:58+00:00
+
+## module
+filename:       /lib/modules/7.0.0-29-generic/updates/dkms/nvidia.ko.zst
+version:        610.43.02
+license:        Dual MIT/GPL
+srcversion:     CF35BFAB788A843184011E5
+vermagic:       7.0.0-29-generic SMP preempt mod_unload modversions 
+
+## cmdline
+BOOT_IMAGE=/vmlinuz-7.0.0-29-generic root=/dev/mapper/ubuntu--vg-ubuntu--lv ro intel_iommu=off pcie_aspm=off
+
+## topo
+	[4mGPU0	GPU1	CPU Affinity	NUMA Affinity	GPU NUMA ID[0m
+GPU0	 X 	PHB	0-15	0		N/A
+GPU1	PHB	 X 	0-15	0		N/A
+
+Legend:
+
+
+ 	[4mGPU0	GPU1	[0m
+ GPU0	X	GNS	
+ GPU1	GNS	X	
+
+Legend:
+
+
+## link (root ports are hard-wired x8 gen3; no ACS capability present)
+00:01.0  LnkCap:	Port #2, Speed 8GT/s, Width x8, ASPM L0s L1, Exit Latency L0s <256ns, L1 <8us
+00:01.1  LnkCap:	Port #3, Speed 8GT/s, Width x8, ASPM L0s L1, Exit Latency L0s <256ns, L1 <8us
+
+## BAR1
+01:00.0  Region 1: Memory at 5000000000 (64-bit, prefetchable) [size=32G]
+02:00.0  Region 1: Memory at 4000000000 (64-bit, prefetchable) [size=32G]

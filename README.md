@@ -336,6 +336,7 @@ including `make check` for everything CI runs.
 - [docs/mcp.md](docs/mcp.md) — enabling the MCP surface and pointing an agent at it
 - [docs/adr/](docs/adr/) — accepted architecture decisions and the alternatives they rejected
 - [docs/hardware-verification.md](docs/hardware-verification.md) — what real hardware found, and what it confirmed
+- [docs/findings/](docs/findings/) — upstream problems this project's measurements uncovered, written to be handed on
 - [vLLM Benchmark CLI](https://docs.vllm.ai/en/v0.25.1/benchmarking/cli/) — upstream reference
 - [vLLM Parameter Sweeps](https://docs.vllm.ai/en/v0.25.1/benchmarking/sweeps/) — upstream sweep tooling
 

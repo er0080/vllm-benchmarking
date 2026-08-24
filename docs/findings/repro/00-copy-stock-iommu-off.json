@@ -1,0 +1,39 @@
+{
+  "torch": "2.11.0+cu128",
+  "device_count": 2,
+  "devices": [
+    "NVIDIA GeForce RTX 3090",
+    "NVIDIA GeForce RTX 3090"
+  ],
+  "driver_reports_peer_access": {
+    "0->1": false,
+    "1->0": false
+  },
+  "link_state_idle": [
+    {
+      "gpu": "0",
+      "gen": "2",
+      "width": "8"
+    },
+    {
+      "gpu": "1",
+      "gen": "2",
+      "width": "8"
+    }
+  ],
+  "copy_bandwidth_gb_s_0_to_1": 3.13,
+  "link_state_under_load": [
+    {
+      "gpu": "0",
+      "gen": "3",
+      "width": "8"
+    },
+    {
+      "gpu": "1",
+      "gen": "3",
+      "width": "8"
+    }
+  ],
+  "copy_bandwidth_gb_s_1_to_0": 3.13,
+  "roundtrip_latency_us_4kb": 29.76
+}

@@ -1,0 +1,36 @@
+{
+  "world_size": 2,
+  "peer_access_0_1": true,
+  "allreduce": [
+    {
+      "bytes": 8192,
+      "latency_us": 36.89,
+      "bus_gb_s": 0.22
+    },
+    {
+      "bytes": 32768,
+      "latency_us": 37.09,
+      "bus_gb_s": 0.88
+    },
+    {
+      "bytes": 131072,
+      "latency_us": 67.5,
+      "bus_gb_s": 1.94
+    },
+    {
+      "bytes": 524288,
+      "latency_us": 166.89,
+      "bus_gb_s": 3.14
+    },
+    {
+      "bytes": 2097152,
+      "latency_us": 565.67,
+      "bus_gb_s": 3.71
+    },
+    {
+      "bytes": 8388608,
+      "latency_us": 2122.08,
+      "bus_gb_s": 3.95
+    }
+  ]
+}
