@@ -31,6 +31,7 @@ import httpx
 from vllmbench_agent.hardware import (
     child_environment,
     devices_for_process,
+    engine_environment,
     resolve_vllm_binary,
     vllm_binary_search_detail,
 )
@@ -94,14 +95,16 @@ ENGINE_ENV = {"VLLM_SERVER_DEV_MODE": "1"}
 RESET_ENDPOINTS = ("/reset_prefix_cache", "/reset_mm_cache", "/reset_encoder_cache")
 
 
-def _spawn(argv: list[str]) -> subprocess.Popen[str]:
+def _spawn(argv: list[str], env: dict[str, str]) -> subprocess.Popen[str]:
     """Launch vLLM in its own process group, in the environment it expects.
 
     ``start_new_session`` is what makes teardown reliable: vLLM forks a worker per
     device, and signalling only the parent leaves those workers alive holding VRAM.
 
-    ``VLLM_SERVER_DEV_MODE`` is set for the same reason upstream's own sweep runner sets
-    it — see :data:`ENGINE_ENV`.
+    The environment is built by the caller and passed in rather than assembled here, so
+    that the copy recorded as provenance and the copy the child receives are the same
+    object. Assembling it twice would leave a run stating what the engine was probably
+    launched with.
     """
     return subprocess.Popen(  # noqa: S603 - argv is built from a resolved executable
         argv,
@@ -110,7 +113,7 @@ def _spawn(argv: list[str]) -> subprocess.Popen[str]:
         text=True,
         bufsize=1,
         start_new_session=True,
-        env=child_environment(argv[0]) | ENGINE_ENV,
+        env=env,
     )
 
 
@@ -169,6 +172,10 @@ class VllmServer:
         self._declared_tp: int | None = None
         self._declared_pp: int | None = None
         self._speculation: Speculation | None = None
+        # Filled at spawn from the dict the child receives. Survives teardown on
+        # purpose: a status read after the engine stops still describes the engine
+        # that ran, which is what the benchmark just measured.
+        self._engine_env: dict[str, str] = {}
 
     # -- introspection -------------------------------------------------------------
 
@@ -193,6 +200,7 @@ class VllmServer:
             pipeline_parallel_size=self._declared_pp,
             speculative_method=self._speculation.method if self._speculation else None,
             speculative_tokens=self._speculation.tokens if self._speculation else None,
+            engine_env=dict(self._engine_env),
         )
 
     def base_url(self) -> str:
@@ -240,12 +248,18 @@ class VllmServer:
             argv = [executable, "serve", "--config", str(config_path), "--port", str(port)]
             log.info("starting vLLM: %s", " ".join(argv))
 
+            # Built once. `_spawn` receives this dict and `engine_environment` filters
+            # this dict, so the run's provenance describes the process that actually ran
+            # (`VLLM_SERVER_DEV_MODE`, set by this agent, included).
+            env = child_environment(argv[0]) | ENGINE_ENV
+            self._engine_env = engine_environment(env)
+
             try:
                 # Off the event loop: fork/exec of a large process can block for long
                 # enough to stall the agent's own health endpoint, and an agent that
                 # looks unresponsive while starting a server is indistinguishable from
                 # one that has died.
-                process = await asyncio.to_thread(_spawn, argv)
+                process = await asyncio.to_thread(_spawn, argv, env)
             except OSError as exc:
                 self._fail(f"could not launch vLLM: {exc}")
                 raise ServerError(str(exc)) from exc

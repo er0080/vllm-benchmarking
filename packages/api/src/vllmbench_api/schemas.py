@@ -397,6 +397,12 @@ class RunOut(BaseModel):
     def _peer_access_reported(cls, value: str | None) -> str:
         return _reported_peer_access(value)
 
+    # The engine's launch environment, filtered to settings that can change a
+    # measurement and that the config hash cannot see. Null is a run from before
+    # protocol 9; `{}` is an agent reporting that none of them were set. Values whose
+    # names look like secrets arrive already redacted by the agent.
+    engine_env: dict[str, str] | None = None
+
     # What the engine resolved for speculation, read from its own /server_info. `"none"`
     # is the engine saying it was not speculating; null is nobody having asked it, which
     # is every run recorded before protocol 7.

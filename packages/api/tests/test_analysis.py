@@ -31,6 +31,7 @@ from vllmbench_api.analysis import (
     comparability_key,
     config_diff,
     derive_per_user_rates,
+    engine_env_warning,
     group_warnings,
     imbalance,
     metric_delta,
@@ -157,6 +158,84 @@ class TestComparability:
         # "unknown" and "different" are not the same claim; an unprobed host must not
         # manufacture a mixed-driver warning.
         assert group_warnings([record(), record(driver_version=None)]) == []
+
+
+class TestEngineEnvironment:
+    """The guard for settings that change a measurement without changing a config.
+
+    `config_hash` is the hash of the config text. Everything set in the environment is
+    invisible to it, and two of those settings moved real numbers on real hardware:
+    `NCCL_P2P_LEVEL=SYS` was worth 13.4% per-GPU at concurrency 16, and
+    `VLLM_CUSTOM_ALLREDUCE_PUSH` selects a different all-reduce kernel entirely. Runs
+    differing in either share a config hash.
+    """
+
+    def test_identical_environments_are_not_a_warning(self) -> None:
+        env = {"NCCL_P2P_LEVEL": "SYS"}
+        assert engine_env_warning([record(engine_env=env), record(engine_env=dict(env))]) is None
+
+    def test_a_differing_nccl_level_warns_and_names_the_variable(self) -> None:
+        warning = engine_env_warning(
+            [
+                record(engine_env={"NCCL_P2P_LEVEL": "SYS"}),
+                record(engine_env={"NCCL_P2P_LEVEL": "PIX"}),
+            ]
+        )
+        assert warning is not None
+        assert "NCCL_P2P_LEVEL" in warning
+
+    def test_a_differing_allreduce_kernel_warns(self) -> None:
+        """The collision that motivated the column: same YAML, different collective."""
+        warning = engine_env_warning(
+            [
+                record(engine_env={"VLLM_CUSTOM_ALLREDUCE_PUSH": "1"}),
+                record(engine_env={}),
+            ]
+        )
+        assert warning is not None
+        assert "VLLM_CUSTOM_ALLREDUCE_PUSH" in warning
+
+    def test_all_unknown_is_not_a_warning(self) -> None:
+        """Every run before protocol 9 is None. That is not a mixed group."""
+        assert engine_env_warning([record(), record()]) is None
+
+    def test_one_reporting_run_cannot_disagree_with_itself(self) -> None:
+        assert engine_env_warning([record(engine_env={"NCCL_P2P_LEVEL": "SYS"}), record()]) is None
+
+    def test_unknown_alongside_a_real_difference_is_counted(self) -> None:
+        warning = engine_env_warning(
+            [
+                record(engine_env={"NCCL_P2P_LEVEL": "SYS"}),
+                record(engine_env={"NCCL_P2P_LEVEL": "PIX"}),
+                record(),
+            ]
+        )
+        assert warning is not None
+        assert "1 run(s) predate" in warning
+
+    def test_uninteresting_differences_stay_quiet(self) -> None:
+        """A group differing only in `CUDA_HOME` is not a finding.
+
+        The agent records more than this warns about deliberately: the record cannot be
+        added to after the fact, and the warning can.
+        """
+        assert (
+            engine_env_warning(
+                [
+                    record(engine_env={"CUDA_HOME": "/usr/local/cuda-13.3"}),
+                    record(engine_env={"CUDA_HOME": "/usr/local/cuda-12.4"}),
+                ]
+            )
+            is None
+        )
+
+    def test_an_empty_mapping_is_an_observation_not_a_silence(self) -> None:
+        """`{}` says the engine ran with none of these set; None says nobody asked."""
+        warning = engine_env_warning(
+            [record(engine_env={}), record(engine_env={"NCCL_P2P_LEVEL": "SYS"})]
+        )
+        assert warning is not None
+        assert "NCCL_P2P_LEVEL" in warning
 
 
 class TestPeerAccess:

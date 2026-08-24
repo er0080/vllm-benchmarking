@@ -244,6 +244,16 @@ class ServerStatus(_Wire):
     speculative_method: str | None = None
     speculative_tokens: int | None = None
 
+    # The settings this engine was launched with that can change what it measures, and
+    # which the config hash cannot see because they are not in the config. Filtered from
+    # the dict actually handed to the child process — see
+    # `vllmbench_agent.hardware.engine_environment`. Protocol 9.
+    #
+    # Empty means the engine was launched with none of them set, which is a fact. An
+    # engine that was never started reports empty too; `state` is what distinguishes
+    # those, and no consumer should read this without it.
+    engine_env: dict[str, str] = Field(default_factory=dict)
+
 
 # ---------------------------------------------------------------------------
 # Benchmark execution
@@ -386,6 +396,13 @@ class BenchResponse(_Wire):
     # only host that can see it (invariant 1). See `vllmbench_agent.dataset` for the
     # forms this takes; the control plane stores the string and never parses it.
     dataset_identity: str | None = None
+
+    # The engine's launch environment, carried through from the `ServerStatus` of the
+    # engine that served this benchmark, so the run records it rather than the host
+    # record doing so. A host's environment is whatever it is today; a run's is what it
+    # was measured under, and those stop agreeing the moment anyone edits a shell
+    # profile. Protocol 9.
+    engine_env: dict[str, str] = Field(default_factory=dict)
 
     # Telemetry sampled across the benchmark window, returned with the result rather
     # than streamed. One round trip, nothing to reconcile, and no partial series left

@@ -77,4 +77,28 @@ __version__ = "1.1.0"
 #    HostInfo, where an operator checking their setup will look for it.
 #
 #    Additive, and a bump, for the reason 6 and 7 were: `_Wire` forbids unknown fields.
-PROTOCOL_VERSION = 8
+# 9: `ServerStatus` and `BenchResponse` carry `engine_env` — the subset of the engine
+#    subprocess's launch environment that can change what it measures.
+#
+#    8 recorded the interconnect a run was measured over. This records the settings that
+#    decide what the engine does with it, which turn out to be the same class of gap and
+#    a wider one. `NCCL_P2P_LEVEL=SYS` moved per-GPU throughput 13% on this project's own
+#    GPU host, and `VLLM_CUSTOM_ALLREDUCE_PUSH` selects an entirely different all-reduce
+#    kernel; neither appears in the config YAML, so neither reaches the config hash. Runs
+#    differing in either are byte-identical in every column the schema had — the same
+#    "two populations, one series" that 8 was written for.
+#
+#    Prefix-matched rather than enumerated, because the variable that forced this did not
+#    exist when the list would have been written. See `ENGINE_ENV_PREFIXES`.
+#
+#    Observed, not reconstructed: the recorded mapping is filtered from the very dict
+#    handed to `subprocess.Popen`, not rebuilt from the agent's own environment
+#    afterwards. Invariant 8's rule — provenance is never inferred after the fact — with
+#    the agent's environment being exactly the thing that could have drifted in between.
+#
+#    Secret-looking names keep their key and lose their value. Whether `VLLM_API_KEY` was
+#    set changes how the engine behaves and is provenance; what it was is a secret, and
+#    this payload is persisted to a database and returned by a JSON API.
+#
+#    Additive, and a bump, for the reason 6, 7 and 8 were: `_Wire` forbids unknown fields.
+PROTOCOL_VERSION = 9

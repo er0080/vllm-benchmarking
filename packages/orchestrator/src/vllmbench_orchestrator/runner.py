@@ -396,6 +396,14 @@ async def execute_run(
             run.speculative_method = status.speculative_method
             run.speculative_tokens = status.speculative_tokens
 
+        # Same reasoning as speculation above: recorded at engine start as well as after
+        # the benchmark, so a run that dies mid-flight still says what it was launched
+        # under. An empty mapping is a real answer -- none of these were set -- so the
+        # guard is against the agent being too old to have sent the field at all, which
+        # protocol negotiation should already have refused.
+        if status.engine_env:
+            run.engine_env = dict(status.engine_env)
+
         run.status = RunStatus.BENCHMARKING
         await session.commit()
 
@@ -436,6 +444,8 @@ async def execute_run(
         if response.speculative_method is not None:
             run.speculative_method = response.speculative_method
             run.speculative_tokens = response.speculative_tokens
+        if response.engine_env:
+            run.engine_env = dict(response.engine_env)
 
         # Invariant 6 has required this since the first schema and nothing wrote it until
         # protocol 7. Only the agent can compute it: `--dataset-path` names a file on the

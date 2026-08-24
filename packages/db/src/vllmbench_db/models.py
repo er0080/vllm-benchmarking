@@ -383,6 +383,17 @@ class Run(Base):
     #: run before protocol 8 and is not a synonym for "peer access was unavailable".
     peer_access: Mapped[str | None] = mapped_column(String(16), index=True)
 
+    #: The settings the engine was launched with that can change what it measured and
+    #: that the config hash cannot see, filtered from the environment actually handed to
+    #: the subprocess. `NCCL_P2P_LEVEL` and `VLLM_CUSTOM_ALLREDUCE_PUSH` are the ones that
+    #: forced this: neither is in the YAML, both change the number.
+    #:
+    #: Stored whole rather than decoded into named columns, on the "raw before derived"
+    #: rule — the agent prefix-matches, so a variable nobody has invented yet is captured
+    #: without a migration. NULL is nobody having asked, which is every run before
+    #: protocol 9; `{}` is an agent saying none of them were set.
+    engine_env: Mapped[dict[str, str] | None] = mapped_column(JSONB)
+
     # -- Speculation (same rule as the topology above) ------------------------------
     # Read from the engine's own /server_info, never from the config text. `"none"` is
     # the engine saying it is not speculating; NULL is nobody having asked it, which is

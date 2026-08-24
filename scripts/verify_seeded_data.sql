@@ -24,6 +24,7 @@ DECLARE
     v_environment text;
     v_speculative text;
     v_dataset text;
+    v_engine_env jsonb;
 BEGIN
     -- The run, and its provenance.
     SELECT status INTO v_status FROM run WHERE id = expected;
@@ -103,6 +104,19 @@ BEGIN
         RAISE EXCEPTION
             'a historical run acquired dataset_identity %, which describes bytes nobody '
             'read', v_dataset;
+    END IF;
+
+    -- And the engine environment. The distinction this column has to keep is between
+    -- NULL and '{}': NULL is a run from before the agent could report what it launched
+    -- the engine with, '{}' is an agent saying none of those settings were set. A
+    -- server-side default of '{}' would turn every historical run into the second, which
+    -- reads as an observation and is not one. That matters here more than most: the
+    -- settings this column holds decide which all-reduce kernel ran.
+    SELECT engine_env INTO v_engine_env FROM run WHERE id = expected;
+    IF v_engine_env IS NOT NULL THEN
+        RAISE EXCEPTION
+            'a historical run acquired engine_env %, which claims the agent reported an '
+            'environment it had no way to send', v_engine_env;
     END IF;
 
     RAISE NOTICE 'seeded data survived the migration with every value intact';
