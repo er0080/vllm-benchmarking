@@ -253,17 +253,32 @@ Fixing the allocator interaction does not account for everything observed at `NC
 attribution arms, all 8/8, mean 127.47 tok/s with an SD of 0.14 and the same greedy hash every
 time. Whatever residual exists is not reachable this way.
 
-**Without speculation, the sweep database shows a small excess of engine crashes at `SYS`.**
-Every protocol-9 run has `PYTORCH_CUDA_ALLOC_CONF` absent — the agent's environment comes from its
-own env file, not the interactive shell — so these are all expandable-segments-off runs:
+**Without speculation, the sweep database shows a small excess of engine crashes at `SYS`:**
 
 | `NCCL_P2P_LEVEL` | runs | engine crashes |
 | --- | --- | --- |
 | `SYS` | 66 | 2 |
 | absent | 66 | 0 |
 
-Two events is not enough to distinguish from chance: Fisher's exact two-sided **p = 0.50**. It is
-recorded because it is the only signal left, not because it is established.
+Two events is not enough to distinguish from chance: Fisher's exact two-sided **p = 0.50**.
+
+**These runs cannot be attributed, and the reason is a gap in `engine_env` itself.**
+`engine_environment()` collects names matching `VLLM_`, `NCCL_`, `TORCH_` or `CUDA_`.
+`PYTORCH_CUDA_ALLOC_CONF` begins with `PYTORCH_` and matches none of them, so it is absent from
+every recorded run — absent from the *collection*, which is not the same as unset on the host, and
+the two are indistinguishable after the fact. The single most consequential variable in this
+investigation is the one the provenance column does not carry.
+
+Nor is the agent insulated from it: `start-agent.sh` launches the agent in a tmux pane whose
+interactive shell sources `~/.bashrc`, so the agent inherits whatever that file exports and passes
+it to every engine. The agent process serving these sweeps has since been replaced and its
+`/proc/PID/environ` is gone with it, so whether they ran with expandable segments is now
+unrecoverable.
+
+If they did, these two crashes are the §4 mechanism firing at a low rate — which is what the
+absence of speculation would predict, given MTP moves the same failure from occasional to
+near-certain. That is the more parsimonious reading, and it is untestable on the existing data.
+Re-running the sweep with the gap closed would settle it.
 
 Two external reports bear on it, and they point in different directions:
 
@@ -271,8 +286,8 @@ Two external reports bear on it, and they point in different directions:
 — 2× RTX 4090, same patch family, NCCL 2.26.5. `all_reduce_perf` hangs at collective setup across
 all message sizes; `NCCL_P2P_DISABLE=1` resolves it. **This cannot be the interaction documented
 here**: `nccl-tests` uses neither CUDA graphs nor PyTorch's caching allocator. It is evidence that
-a patch-level P2P fragility exists independently of anything in §5, and it is the better candidate
-for the residual above.
+a patch-level P2P fragility exists independently of anything in §5 — the one part of the residual that the `engine_env` gap
+cannot explain away.
 
 [**vllm-project/vllm #41530**](https://github.com/vllm-project/vllm/issues/41530) — the identical
 symptom chain (repeated `shm_broadcast` stalls → `sample_tokens` RPC timeout → `EngineDeadError`)
@@ -315,12 +330,16 @@ prompt over ~4,400 tokens exhausts VRAM and kills the engine mid-request regardl
 or transport settings. 0.90 fits prompts past 70,000 tokens. 0.85 will not load the model at
 `max-model-len: 262144`.
 
-**`NCCL_P2P_LEVEL` is host-wide.** The agent passes its whole environment to every engine it
-launches, so a host cannot have it for one workload and not another. It is also invisible to the
-config hash, which is why `run.engine_env` exists (protocol 9, issue #124) — without it, runs
-differing in this setting are byte-identical in every other recorded field. That column is what
-established that no run in the sweep database had expandable segments set, which is how the
-residual in §8 was scoped.
+**`NCCL_P2P_LEVEL` is host-wide, and the agent is not exempt.** `start-agent.sh` runs the agent
+in a tmux pane that sources `~/.bashrc`, and the agent passes its whole environment to every engine
+it launches. So a host cannot have this setting for one workload and not another, and changing
+`~/.bashrc` does not reach a running agent: `/proc/PID/environ` is frozen at exec, so the agent
+must be restarted before any environment change applies to the engines it starts.
+
+`NCCL_P2P_LEVEL` is invisible to the config hash, which is why `run.engine_env` exists (protocol 9,
+issue #124) — without it, runs differing in this setting are byte-identical in every other recorded
+field. **Its prefix list has a gap**: `PYTORCH_CUDA_ALLOC_CONF` matches none of `VLLM_`, `NCCL_`,
+`TORCH_` or `CUDA_`, so the variable this document is about is not recorded on any run. See §8.
 
 ---
 
