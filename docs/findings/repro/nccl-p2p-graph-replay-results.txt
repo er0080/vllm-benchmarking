@@ -1,0 +1,10 @@
+RESULT no-nccl-p2p: ok=8 failed=0 generated=3938 duration=35.30s out_tok_s=111.56 shm_stalls=0 enginedead=0
+RESULT phb: ok=2 failed=6 generated=7 duration=300.82s out_tok_s=0.02 shm_stalls=4 enginedead=9
+RESULT push-nop2p-nospec: ok=8 failed=0 gen=3829 dur=50.74s tok_s=75.46 greedy=05d9917ebb1d6e86 stalls=0 dead=0 selftest_disabled=0 push_mentions=5
+RESULT push-nop2p: ok=8 failed=0 gen=3771 dur=27.19s tok_s=138.67 greedy=402c8b268867fb72 stalls=0 dead=0 selftest_disabled=0 push_mentions=5
+RESULT push-sys: ok=0 failed=8 gen=0 dur=0.01s tok_s=0.00 greedy=NONE stalls=4 dead=2 selftest_disabled=0 push_mentions=5
+RESULT ref-nccl-nop2p: ok=8 failed=0 gen=3771 dur=31.03s tok_s=121.51 greedy=402c8b268867fb72 stalls=0 dead=0 selftest_disabled=0 push_mentions=0
+RESULT sys-eager: ok=8 failed=0 generated=3926 duration=77.33s out_tok_s=50.77 shm_stalls=1 enginedead=0
+RESULT sys-nopush: ok=2 failed=6 generated=7 duration=300.68s out_tok_s=0.02 shm_stalls=4 enginedead=9
+RESULT sys-piecewise: ok=2 failed=6 generated=4 duration=303.49s out_tok_s=0.01 shm_stalls=5 enginedead=9
+RESULT sys-proto-simple: ok=0 failed=8 generated=0 duration=300.11s out_tok_s=0.00 shm_stalls=4 enginedead=9

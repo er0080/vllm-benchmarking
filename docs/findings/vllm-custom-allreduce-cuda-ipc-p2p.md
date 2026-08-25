@@ -4,6 +4,9 @@
 **Reported by:** vllm-benchmarking project, 2026-08-24
 **Severity:** silent data corruption — no error, no warning, plausible throughput
 **Audience:** a team picking this up to attempt a fix in vLLM, in the driver patch, or both
+**Companion finding:** [`nccl-p2p-cuda-graph-replay.md`](nccl-p2p-cuda-graph-replay.md) — the
+same driver patch also hangs NCCL's peer-to-peer transport, but only under CUDA graph replay.
+Peer *writes* work in both cases; peer reads and graph-captured mappings are what fail.
 
 ---
 
