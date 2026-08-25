@@ -1,0 +1,27 @@
+model: Qwen/Qwen3.8-27B-FP8
+host: 0.0.0.0
+port: 8000
+served-model-name: Qwen3.8-27B
+
+tensor-parallel-size: 2
+max-model-len: 262144
+gpu-memory-utilization: 0.90
+
+max-num-seqs: 2
+max-num-batched-tokens: 8192
+enable-chunked-prefill: true
+enable-prefix-caching: true
+async-scheduling: true
+
+kv-cache-dtype: fp8
+
+language-model-only: true
+disable-custom-all-reduce: true
+
+reasoning-parser: qwen3
+enable-auto-tool-choice: true
+tool-call-parser: qwen3_coder
+
+speculative-config: {"method":"mtp","num_speculative_tokens":3}
+default-chat-template-kwargs: {"preserve_thinking": true, "reasoning_effort": "low"}
+

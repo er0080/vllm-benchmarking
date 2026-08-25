@@ -1,0 +1,150 @@
+=== exp-off | cfg=mtp090-base.yaml ===
+  NCCL_P2P_LEVEL                 <unset>
+  PYTORCH_CUDA_ALLOC_CONF        expandable_segments:True
+  VLLM_CUSTOM_ALLREDUCE_PUSH     1
+  gpu-mem-util                   0.90
+  custom-allreduce               true
+  free after load: 2223/2449/
+RESULT2 exp-off: ok=8 failed=0 gen=3938 dur=34.19s tok_s=115.18 greedy=402c8b268867fb72 stalls=0 dead=0
+=== exp-sys-eager | cfg=mtp090-eager.yaml ===
+  NCCL_P2P_LEVEL                 SYS
+  PYTORCH_CUDA_ALLOC_CONF        expandable_segments:True
+  VLLM_CUSTOM_ALLREDUCE_PUSH     1
+  gpu-mem-util                   0.90
+  custom-allreduce               true
+  free after load: 2497/2523/
+RESULT2 exp-sys-eager: ok=8 failed=0 gen=3926 dur=70.80s tok_s=55.45 greedy=6582e99dac76f022 stalls=0 dead=0
+=== exp-push | cfg=mtp090-push.yaml ===
+  NCCL_P2P_LEVEL                 <unset>
+  PYTORCH_CUDA_ALLOC_CONF        expandable_segments:True
+  VLLM_CUSTOM_ALLREDUCE_PUSH     1
+  gpu-mem-util                   0.90
+  custom-allreduce               false
+  free after load: 2327/2393/
+RESULT2 exp-push: ok=8 failed=0 gen=3771 dur=27.32s tok_s=138.01 greedy=402c8b268867fb72 stalls=0 dead=0
+=== exp-both | cfg=mtp090-push.yaml ===
+  NCCL_P2P_LEVEL                 SYS
+  PYTORCH_CUDA_ALLOC_CONF        expandable_segments:True
+  VLLM_CUSTOM_ALLREDUCE_PUSH     1
+  gpu-mem-util                   0.90
+  custom-allreduce               false
+  free after load: 2295/2361/
+RESULT2 exp-both: ok=0 failed=8 gen=0 dur=0.01s tok_s=0.00 greedy=NONE stalls=4 dead=1
+=== DONE ===
+--- reg0-090-sys: NCCL_GRAPH_REGISTER=0, expandable_segments ON ---
+=== reg0-090-sys | cfg=mtp090-base.yaml ===
+  NCCL_P2P_LEVEL                 SYS
+  PYTORCH_CUDA_ALLOC_CONF        expandable_segments:True
+  VLLM_CUSTOM_ALLREDUCE_PUSH     1
+  gpu-mem-util                   0.90
+  custom-allreduce               true
+  free after load: 2335/2361/
+RESULT2 reg0-090-sys: ok=8 failed=0 gen=3771 dur=29.62s tok_s=127.29 greedy=402c8b268867fb72 stalls=0 dead=0
+--- reg0-095-sys: NCCL_GRAPH_REGISTER=0, expandable_segments ON ---
+=== reg0-095-sys | cfg=mtp095-base.yaml ===
+  NCCL_P2P_LEVEL                 SYS
+  PYTORCH_CUDA_ALLOC_CONF        expandable_segments:True
+  VLLM_CUSTOM_ALLREDUCE_PUSH     1
+  gpu-mem-util                   0.95
+  custom-allreduce               true
+  free after load: 1115/1141/
+RESULT2 reg0-095-sys: ok=8 failed=0 gen=3771 dur=29.60s tok_s=127.40 greedy=402c8b268867fb72 stalls=0 dead=0
+--- reg0-090-both: NCCL_GRAPH_REGISTER=0, expandable_segments ON ---
+=== reg0-090-both | cfg=mtp090-push.yaml ===
+  NCCL_P2P_LEVEL                 SYS
+  PYTORCH_CUDA_ALLOC_CONF        expandable_segments:True
+  VLLM_CUSTOM_ALLREDUCE_PUSH     1
+  gpu-mem-util                   0.90
+  custom-allreduce               false
+  free after load: 2299/2365/
+RESULT2 reg0-090-both: ok=8 failed=0 gen=3771 dur=26.93s tok_s=140.00 greedy=402c8b268867fb72 stalls=0 dead=0
+=== DONE ===
+=== noexp-sys-r1 | cfg=mtp090-base.yaml ===
+  NCCL_P2P_LEVEL                 SYS
+  PYTORCH_CUDA_ALLOC_CONF        <unset>
+  VLLM_CUSTOM_ALLREDUCE_PUSH     1
+  gpu-mem-util                   0.90
+  custom-allreduce               true
+  free after load: 2515/2581/
+RESULT2 noexp-sys-r1: ok=8 failed=0 gen=3771 dur=29.60s tok_s=127.39 greedy=402c8b268867fb72 stalls=0 dead=0
+=== noexp-sys-r2 | cfg=mtp090-base.yaml ===
+  NCCL_P2P_LEVEL                 SYS
+  PYTORCH_CUDA_ALLOC_CONF        <unset>
+  VLLM_CUSTOM_ALLREDUCE_PUSH     1
+  gpu-mem-util                   0.90
+  custom-allreduce               true
+  free after load: 2515/2581/
+RESULT2 noexp-sys-r2: ok=8 failed=0 gen=3771 dur=29.63s tok_s=127.27 greedy=402c8b268867fb72 stalls=0 dead=0
+=== noexp-sys-r3 | cfg=mtp090-base.yaml ===
+  NCCL_P2P_LEVEL                 SYS
+  PYTORCH_CUDA_ALLOC_CONF        <unset>
+  VLLM_CUSTOM_ALLREDUCE_PUSH     1
+  gpu-mem-util                   0.90
+  custom-allreduce               true
+  free after load: 2515/2581/
+RESULT2 noexp-sys-r3: ok=8 failed=0 gen=3771 dur=29.56s tok_s=127.57 greedy=402c8b268867fb72 stalls=0 dead=0
+=== noexp-sys-r4 | cfg=mtp090-base.yaml ===
+  NCCL_P2P_LEVEL                 SYS
+  PYTORCH_CUDA_ALLOC_CONF        <unset>
+  VLLM_CUSTOM_ALLREDUCE_PUSH     1
+  gpu-mem-util                   0.90
+  custom-allreduce               true
+  free after load: 2515/2581/
+RESULT2 noexp-sys-r4: ok=8 failed=0 gen=3771 dur=29.58s tok_s=127.48 greedy=402c8b268867fb72 stalls=0 dead=0
+=== noexp-sys-r5 | cfg=mtp090-base.yaml ===
+  NCCL_P2P_LEVEL                 SYS
+  PYTORCH_CUDA_ALLOC_CONF        <unset>
+  VLLM_CUSTOM_ALLREDUCE_PUSH     1
+  gpu-mem-util                   0.90
+  custom-allreduce               true
+  free after load: 2515/2581/
+RESULT2 noexp-sys-r5: ok=8 failed=0 gen=3771 dur=29.55s tok_s=127.62 greedy=402c8b268867fb72 stalls=0 dead=0
+=== DONE ===
+=== attr-095-noexp | cfg=mtp095-base.yaml ===
+  NCCL_P2P_LEVEL                 SYS
+  PYTORCH_CUDA_ALLOC_CONF        <unset>
+  VLLM_CUSTOM_ALLREDUCE_PUSH     1
+  gpu-mem-util                   0.95
+  custom-allreduce               true
+  free after load: 1291/1357/
+RESULT2 attr-095-noexp: ok=8 failed=0 gen=3771 dur=29.70s tok_s=126.97 greedy=402c8b268867fb72 stalls=0 dead=0
+=== attr-090-exp | cfg=mtp090-base.yaml ===
+  NCCL_P2P_LEVEL                 SYS
+  PYTORCH_CUDA_ALLOC_CONF        expandable_segments:True
+  VLLM_CUSTOM_ALLREDUCE_PUSH     1
+  gpu-mem-util                   0.90
+  custom-allreduce               true
+  free after load: 2329/2357/
+RESULT2 attr-090-exp: ok=0 failed=8 gen=0 dur=0.02s tok_s=0.00 greedy=NONE stalls=5 dead=2
+=== base | cfg=mtp090-base.yaml ===
+  NCCL_P2P_LEVEL                 <unset>
+  PYTORCH_CUDA_ALLOC_CONF        <unset>
+  VLLM_CUSTOM_ALLREDUCE_PUSH     1
+  gpu-mem-util                   0.90
+  custom-allreduce               true
+  free after load: 2563/2629/
+RESULT2 base: ok=8 failed=0 gen=3771 dur=31.14s tok_s=121.12 greedy=402c8b268867fb72 stalls=0 dead=0
+=== sys | cfg=mtp090-base.yaml ===
+  NCCL_P2P_LEVEL                 SYS
+  PYTORCH_CUDA_ALLOC_CONF        <unset>
+  VLLM_CUSTOM_ALLREDUCE_PUSH     1
+  gpu-mem-util                   0.90
+  custom-allreduce               true
+  free after load: 2515/2581/
+RESULT2 sys: ok=8 failed=0 gen=3771 dur=29.66s tok_s=127.12 greedy=402c8b268867fb72 stalls=0 dead=0
+=== push | cfg=mtp090-push.yaml ===
+  NCCL_P2P_LEVEL                 <unset>
+  PYTORCH_CUDA_ALLOC_CONF        <unset>
+  VLLM_CUSTOM_ALLREDUCE_PUSH     1
+  gpu-mem-util                   0.90
+  custom-allreduce               false
+  free after load: 2529/2595/
+RESULT2 push: ok=8 failed=0 gen=3771 dur=27.25s tok_s=138.37 greedy=402c8b268867fb72 stalls=0 dead=0
+=== both | cfg=mtp090-push.yaml ===
+  NCCL_P2P_LEVEL                 SYS
+  PYTORCH_CUDA_ALLOC_CONF        <unset>
+  VLLM_CUSTOM_ALLREDUCE_PUSH     1
+  gpu-mem-util                   0.90
+  custom-allreduce               false
+  free after load: 2515/2581/
+RESULT2 both: ok=8 failed=0 gen=3771 dur=26.95s tok_s=139.94 greedy=402c8b268867fb72 stalls=0 dead=0
